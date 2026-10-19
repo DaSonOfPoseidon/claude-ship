@@ -3,6 +3,10 @@
 #
 # PreToolUse hook: blocks `git push` and `gh pr create` until an independent reviewer (a fresh headless
 # Claude session with no context from the current one) has reviewed the branch diff against origin/main.
+# A push may send only HEAD, to origin, and GitHub MCP or `gh api` writes of commits, refs or PRs are blocked.
+#
+# It catches Claude's own slips; it isn't a security boundary. It judges command text, and its state is
+# writable by any shell. Branch protection requiring the `codex-review` status is the server-side backstop.
 #
 # Opt-in per GitHub repo: it runs only where the repo variable CLAUDE_AUTONOMOUS is `true`
 #   gh variable set CLAUDE_AUTONOMOUS --body true -R <owner/repo>
@@ -111,9 +115,25 @@ if printf '%s' "$cmd" | grep -Eq "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|sk
 fi
 
 # `git push`, also with global options (`git -C dir push`), anywhere in a chain; and `gh pr create`.
-git_push='(^|[^[:alnum:]_./-])git([[:space:]]+(-[Cc][[:space:]]+[^[:space:]]+|-[^[:space:]]+))*[[:space:]]+push([^[:alnum:]_-]|$)'
+git_global='(^|[^[:alnum:]_./-])git([[:space:]]+(-[Cc][[:space:]]+[^[:space:]]+|-[^[:space:]]+))*[[:space:]]+'
+git_push="${git_global}push([^[:alnum:]_-]|\$)"
 pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
-if ! printf '%s' "$cmd" | grep -Eq "$git_push|$pr_create"; then
+# `gh api` calls that write commits, refs or PRs, which would land code without a review. Comments, reviews
+# and `resolveReviewThread` stay allowed: the ship skill uses them. A call writes when its method isn't
+# GET, which is gh's default once it has fields or an --input.
+api_write=
+if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])gh[[:space:]]+api([^[:alnum:]_-]|$)'; then
+	if printf '%s' "$cmd" | grep -Eq 'graphql' &&
+		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge)([^[:alnum:]]|$)'; then
+		api_write=graphql
+	elif printf '%s' "$cmd" | grep -Eq "repos/[^/[:space:]\"']+/[^/[:space:]\"']+/(contents|git/(refs|commits|trees|blobs|tags)|merges|merge-upstream|pulls/?([[:space:]\"'?]|\$)|pulls/[0-9]+/?([[:space:]\"'?]|\$)|pulls/[0-9]+/(merge|update-branch))" &&
+		{ printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?(POST|PUT|PATCH|DELETE)' ||
+			{ printf '%s' "$cmd" | grep -Eq '[[:space:]](-f|-F|--field|--raw-field|--input)([[:space:]=]|$)' &&
+				! printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?GET'; }; }; then
+		api_write=rest
+	fi
+fi
+if [ -z "$api_write" ] && ! printf '%s' "$cmd" | grep -Eq "$git_push|$pr_create"; then
 	exit 0
 fi
 
@@ -151,10 +171,34 @@ cd "$where" 2>/dev/null || {
 	echo "Blocked: the review gate can't enter $where, where the push runs." >&2
 	exit 2
 }
+
+# The GitHub repo of the origin remote here, if there is one.
+origin_slug() {
+	git remote get-url origin 2>/dev/null | sed -nE 's#^(https://|git@|ssh://git@)github\.com[:/]([^/]+/[^/]+)$#\2#p' | sed 's/\.git$//'
+}
+
+# A `gh api` write targets the repo in its endpoint, or (for `{owner}/{repo}` and GraphQL) the one here.
+if [ -n "$api_write" ]; then
+	api_slug=
+	if [ "$api_write" = rest ]; then
+		api_slug=$(printf '%s' "$cmd" | sed -nE "s#.*repos/([^/{[:space:]\"']+/[^/{[:space:]\"']+)/.*#\1#p" | head -1)
+	fi
+	[ -n "$api_slug" ] || api_slug=$(origin_slug)
+	if [ -z "$api_slug" ] || ! api_flag=$(autonomous "$api_slug"); then
+		echo "Blocked: this \`gh api\` call writes commits, refs or PRs, and the review gate can't tell whether ${api_slug:-its repo} opted in. Use \`git push\` and \`gh pr create\` instead." >&2
+		exit 2
+	fi
+	if [ -n "$api_flag" ]; then
+		echo "Blocked: \`gh api\` writes to commits, refs or PRs bypass the pre-push review gate in $api_slug. Use \`git push\` and \`gh pr create\` instead." >&2
+		exit 2
+	fi
+	printf '%s' "$cmd" | grep -Eq "$git_push|$pr_create" || exit 0
+fi
+
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 # Which GitHub repo this pushes to, and whether it opted in.
-slug=$(git remote get-url origin 2>/dev/null | sed -nE 's#^(https://|git@|ssh://git@)github\.com[:/]([^/]+/[^/]+)$#\2#p' | sed 's/\.git$//')
+slug=$(origin_slug)
 [ -n "$slug" ] || exit 0
 if ! flag=$(autonomous "$slug"); then
 	echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $slug from GitHub. Check \`gh auth status\` and retry." >&2
@@ -164,6 +208,61 @@ fi
 owner=${slug%/*}
 name=${slug#*/}
 use_state
+
+# The review covers HEAD, so a push may send only HEAD, to origin. Prints why not and fails otherwise.
+# Options outside the list below block, since some (--all, --mirror, --tags, --delete) send other refs.
+push_scope() (
+	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ]; then
+		echo "it runs more than one \`git push\`"
+		return 1
+	fi
+	args=$(printf '%s\n' "$cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\5#p" | head -1 |
+		sed -E 's/(^|[[:space:]]+)[0-9]*[<>].*//' | tr -d "\"'")
+	branch=$(git symbolic-ref -q --short HEAD) || branch=HEAD
+	remote=
+	refspecs=
+	set -f
+	for a in $args; do
+		case $a in
+		-u | --set-upstream | -f | --force | --force-with-lease | --force-with-lease=* | --force-if-includes | \
+			-q | --quiet | -v | --verbose | -n | --dry-run | --follow-tags | --no-verify | --progress | --atomic) ;;
+		-*)
+			echo "the gate doesn't allow \`$a\`"
+			return 1
+			;;
+		*)
+			if [ -z "$remote" ]; then
+				remote=$a
+				continue
+			fi
+			refspecs=1
+			src=${a#+}
+			src=${src%%:*}
+			case $src in
+			HEAD | "$branch" | "refs/heads/$branch") ;;
+			*)
+				echo "\`$a\` pushes something other than HEAD ($branch)"
+				return 1
+				;;
+			esac
+			;;
+		esac
+	done
+	[ -n "$remote" ] || remote=$(git config "branch.$branch.pushRemote" || git config remote.pushDefault ||
+		git config "branch.$branch.remote" || echo origin)
+	if [ "$remote" != origin ]; then
+		echo "it pushes to \`$remote\`, not origin"
+		return 1
+	fi
+	if [ -z "$refspecs" ] && [ "$(git config push.default)" = matching ]; then
+		echo "push.default is \`matching\`, so a bare \`git push\` sends every branch"
+		return 1
+	fi
+)
+if printf '%s' "$cmd" | grep -Eq "$git_push" && ! why=$(push_scope); then
+	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
+	exit 2
+fi
 
 if [ -n "$(git status --porcelain)" ]; then
 	echo "Blocked: the working tree has uncommitted changes. Commit or stash them first; the review covers HEAD, which is what gets pushed." >&2
@@ -233,11 +332,13 @@ fi
 # Runs a headless reviewer: run_reviewer <stage> <model> <prompt file> <schema> <output file>.
 # Reviewers only read: `--tools` makes Read, Grep and Glob the only built-in tools (no shell, since even
 # `git diff --output=<file>` writes), and `--strict-mcp-config` with no config loads no MCP or plugin tools,
-# whatever the user's settings allow. The prompt carries the diff and log, and the working tree is the commit
-# being pushed (the gate refuses a dirty tree).
+# whatever the user's settings allow. The branch can't steer its own review: `--safe-mode` skips CLAUDE.md,
+# hooks, skills and plugins, and `--restricted` ignores every settings file and keeps the file tools inside
+# the repo (`--bare` would too, but needs an API key). The prompt carries the diff and log, and the working
+# tree is the commit being pushed (the gate refuses a dirty tree and pushes of anything but HEAD).
 run_reviewer() {
 	echo "review-gate: $1 ($2) on $(git rev-parse --short HEAD) ($range)..." >&2
-	REVIEW_GATE_INNER=1 timeout 1100 claude -p --model "$2" --no-session-persistence \
+	REVIEW_GATE_INNER=1 timeout 1100 claude -p --model "$2" --no-session-persistence --safe-mode --restricted \
 		--tools Read,Grep,Glob --strict-mcp-config --allowedTools Read Grep Glob \
 		--output-format json --json-schema "$4" <"$3" >"$5" 2>"$5.err"
 	rc=$?

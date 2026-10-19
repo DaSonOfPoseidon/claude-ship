@@ -42,6 +42,11 @@ After a PR merges, run `./install.sh` again to deploy it. The installed files, t
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because
 changes to it go through the same review as any other repo.
 
+The gate reviews HEAD, so it lets a push send only HEAD, to origin, and blocks `gh api` and GitHub MCP writes
+of commits, refs or PRs. It catches Claude's own slips but isn't a security boundary: it matches command text,
+and its state is protected by those patterns alone. Branch protection requiring the `codex-review` status is
+the server-side backstop.
+
 ## Costs
 
 Every reviewer run appends `{date, repo, head, stage, model, cost_usd, findings}` to
