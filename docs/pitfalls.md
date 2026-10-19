@@ -25,8 +25,9 @@ review finds a new class.
   any option or variable you don't explicitly allow.
 - **Shell quoting and expansion hide the real argument from a text check.** `repos/o/r/con''tents`,
   `repos/${OWNER}/${REPO}/git/refs` and `-f query="$(cat q.graphql)"` don't contain the text gh finally sends.
-  `git -c "a=b c" push` hid the push itself. Read words the way the shell splits them (quoted spaces kept,
-  quotes dropped) before matching, and treat anything you can't read as the worst case.
+  `git -c "a=b c" push` hid the push itself. Split words with a left-to-right scanner (the gate's is jq) that
+  keeps every quoted character distinct; four rounds of sed patches each missed a case (claude-ship #9). Treat
+  quoting you can't read as the worst case.
 - **A missing argument under `set -u` exits 1, which a caller may read as a result.** `codex-wait.sh` with no
   PR number looked like a 30-minute timeout (claude-ship #8). Check required arguments and exit 2 on misuse.
 - **Checking one side of a pair leaves the other open.** The push check read a refspec's source but not its

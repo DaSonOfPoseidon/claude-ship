@@ -123,29 +123,44 @@ fi
 # push` still counts as a push; push_scope then allows only `-C`.
 git_global='(^|[^[:alnum:]_./-])git(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+'
 git_push="${git_global}push([^[:alnum:]_-]|\$)"
-# The command split into words as the shell would: a space inside quotes or after a backslash becomes `@SP@`,
-# a `;&|()` there becomes `@OP@` (it's part of a word, not a separator), then quotes and backslashes go, so
-# `git -c "a=b c" push` and `git "push"` read as the push they are. Pushes are looked for in both forms (odd
-# quoting can confuse this one), and every form that shows one must pass the checks below.
-# sed reads one line at a time, so newlines become \036 first: inside quotes one is part of the word (like a
-# space), outside it separates commands again, and a backslash before one joins the lines.
-nl=$(printf '\036')
-words=$(printf '%s' "$cmd" | tr '\n' '\036' | sed -E \
-	-e "s/\\\\$nl//g" \
-	-e ':d' -e "s/^(([^\"]*\"[^\"]*\")*[^\"]*\"[^\" $nl]*)[ $nl]/\\1@SP@/" -e 'td' \
-	-e ':D' -e 's/^(([^"]*"[^"]*")*[^"]*"[^";&|()]*)[;&|()]/\1@OP@/' -e 'tD' \
-	-e ':s' -e "s/^(([^']*'[^']*')*[^']*'[^' $nl]*)[ $nl]/\\1@SP@/" -e 'ts' \
-	-e ':S' -e "s/^(([^']*'[^']*')*[^']*'[^';&|()]*)[;&|()]/\\1@OP@/" -e 'tS' \
-	-e 's/\\ /@SP@/g' -e 's/\\[;&|()]/@OP@/g' | tr '\036' '\n' | tr -d "\"'\\\\")
+# The command split into words as the shell would, left to right, by jq: quotes and backslashes go, and every
+# character they made literal becomes a marker, so `git -c "a=b c" push` and `git "push"` read as the push they
+# are and a quoted `;` can't pass for a separator. Space @SP@, newline @NL@, `;&|<>` @OP@, `(` @LP@, `)` @RP@,
+# `$` @DL@, a backtick @BQ@, `"` @DQ@, `'` @SQ@. Inside double quotes `$` and backticks still expand, so they
+# stay. Quoting it can't read (unterminated, or bash's `$'...'`) becomes @UQ@. Pushes are looked for in both
+# forms, and every form that shows one must pass the checks below.
+shell_words='
+def enc(dq): gsub(" |\t"; "@SP@") | gsub("\n"; "@NL@") | gsub("[;&|<>]"; "@OP@") | gsub("\\("; "@LP@")
+	| gsub("\\)"; "@RP@") | gsub("\""; "@DQ@") | gsub("\u0027"; "@SQ@")
+	| if dq then . else gsub("\\$"; "@DL@") | gsub("`"; "@BQ@") end;
+def dquoted:
+	if test("^\"(?:\\\\[\\s\\S]|[^\"\\\\])*\"$") then
+		.[1:-1] | [scan("\\\\[\\s\\S]|[^\\\\]+")] | map(
+			if startswith("\\") then
+				(.[1:] as $c | if $c == "\n" then "" elif ($c | test("^[$`\"\\\\]$")) then ($c | enc(false))
+				else ("\\" + $c | enc(true)) end)
+			else enc(true) end) | join("")
+	else "@UQ@" end;
+[scan("\\$\u0027(?:\\\\[\\s\\S]|[^\u0027\\\\])*\u0027?|\\$?\"(?:\\\\[\\s\\S]|[^\"\\\\])*\"?|\u0027[^\u0027]*\u0027?|\\\\[\\s\\S]?|[^\u0027\"\\\\$]+|\\$")]
+| map(
+	if startswith("$\u0027") then "@UQ@"
+	elif startswith("$\"") then .[1:] | dquoted
+	elif startswith("\"") then dquoted
+	elif startswith("\u0027") then (if length > 1 and endswith("\u0027") then .[1:-1] | enc(false) else "@UQ@" end)
+	elif startswith("\\") then (.[1:] as $c | if $c == "\n" or $c == "" then "" else ($c | enc(false)) end)
+	else . end)
+| join("")'
+words=$(printf '%s' "$input" | jq -r ".tool_input.command // \"\" | $shell_words")
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then
 	push_cmd=$words
 fi
-# A literal marker would read back as a space, so the gate could check a different directory than git uses;
-# a quoted or escaped `;&|()` in the push itself is a word the regexes here would cut short.
-if { printf '%s' "$cmd" | grep -Eq '@(SP|OP)@' && printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push"; } ||
-	printf '%s' "$words" | grep -Eo "${git_global}push[^;&|]*" | grep -q '@OP@'; then
-	echo "Blocked: the review gate can't read this push's words. Push without quoted or escaped \`;&|()\`." >&2
+# A command that already holds a marker, quoting the scanner can't read, or a push whose own words have literal
+# separators, quotes, `$` or newlines can't be checked word by word, so it blocks.
+if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_./-])(git|gh)([^[:alnum:]_-]|$)" &&
+	{ printf '%s' "$cmd" | grep -Eq '@(SP|NL|OP|LP|RP|DL|BQ|DQ|SQ|UQ)@' || printf '%s' "$words" | grep -q '@UQ@' ||
+		printf '%s' "$words" | grep -Eo "${git_global}push[^;&|]*" | grep -Eq '@(NL|OP|LP|RP|DL|BQ|DQ|SQ)@'; }; then
+	echo "Blocked: the review gate can't read this command's quoting. Write git and gh commands with plain quotes, without \`\$'...'\` or quoted \`;&|()\$\`." >&2
 	exit 2
 fi
 pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
@@ -191,6 +206,10 @@ api_scan() (
 		--input=*) fields=1 query=@ ;;
 		-H | --header | -q | --jq | -t | --template | --hostname | --cache | -p | --preview) skip=other ;;
 		-*) ;;
+		# A redirection (`2>/dev/null`, `> out`, `2>&1`) isn't an argument; a bare operator takes the next word.
+		'>'* | '<'* | [0-9]'>'* | [0-9]'<'* | @RD@*)
+			[ -n "$(printf '%s' "$w" | sed -E 's/^[0-9]*[<>|]*(@RD@)?[<>]*//')" ] || skip=other
+			;;
 		*)
 			n=$((n + 1))
 			ep=$w
@@ -207,7 +226,7 @@ api_scan() (
 		exit 0
 	fi
 	case $ep in
-	*'$'* | *'`'* | *@SP@* | *@OP@* | *://*)
+	*'$'* | *'`'* | *@*@* | *://*)
 		echo "block the review gate can't read its endpoint ($ep)"
 		exit 0
 		;;
@@ -218,38 +237,62 @@ api_scan() (
 	if [ "$ep" = graphql ]; then
 		# GraphQL names its target inside the mutation, so only the ship skill's own mutations pass, in any repo.
 		# A query the gate can't read whole (a file, stdin or a shell expansion) blocks.
-		q=$(printf '%s' "$query" | sed 's/@SP@/ /g')
-		case $q in
-		'' | @* | *'$('* | *'`'* | *'${'*)
-			echo "block the review gate can't read its GraphQL query"
+		case $query in
+		*'$'* | *'`'*)
+			echo "block its GraphQL query holds a shell expansion the review gate can't read"
 			exit 0
 			;;
 		esac
-		case $(printf '%s' "$q" | sed -E 's/^[[:space:]]*//') in
+		q=$(printf '%s' "$query" | sed 's/@SP@/ /g; s/@NL@/\
+/g; s/@LP@/(/g; s/@RP@/)/g; s/@DL@/$/g; s/@BQ@/`/g; s/@DQ@/"/g; s/@SQ@/'"'"'/g; s/@OP@/;/g')
+		# Strings and comments hold no structure; then top-level fields are names at brace depth 1, outside
+		# arguments, that aren't aliases (`alias: field`).
+		nl=$(printf '\036')
+		doc=$(printf '%s' "$q" | tr '\n' '\036' |
+			sed -E -e 's/"""([^"]|"[^"]|""[^"])*"""/""/g' -e 's/"([^"\\]|\\.)*"/""/g' -e "s/#[^$nl]*//g" |
+			tr '\036' ' ' | sed -E 's/([{}():])/ \1 /g; s/,/ /g')
+		case $(printf '%s' "$doc" | sed -E 's/^[[:space:]]*//') in
 		'{'* | query* | mutation* | fragment* | subscription*) ;;
 		*)
 			echo "block the review gate can't read its GraphQL query"
 			exit 0
 			;;
 		esac
-		# A `$name` the query doesn't declare as `$name:` is a shell variable, not a GraphQL one.
-		for v in $(printf '%s' "$q" | grep -Eo '\$[[:alpha:]_][[:alnum:]_]*' | sort -u); do
-			if ! printf '%s' "$q" | grep -Fq "$v:"; then
-				echo "block the review gate can't read its GraphQL query (\`$v\` isn't a GraphQL variable)"
-				exit 0
-			fi
-		done
-		if printf '%s' "$q" | grep -Eq '(^|[^[:alnum:]_])mutation([^[:alnum:]_]|$)'; then
-			for m in $(printf '%s' "$query" | grep -Eo '[[:alpha:]_][[:alnum:]_]*(@SP@)*@OP@' | sed 's/@SP@//g; s/@OP@//'); do
-				case $m in
-				mutation | resolveReviewThread | unresolveReviewThread | addPullRequestReviewThreadReply | addComment | \
-					updateIssueComment | addPullRequestReview | addPullRequestReviewComment | submitPullRequestReview) ;;
-				*)
-					echo "block its GraphQL mutation \`$m\` isn't one the ship skill uses"
-					exit 0
-					;;
+		printf '%s' "$doc" | grep -Eq '(^|[^[:alnum:]_])mutation([^[:alnum:]_]|$)' || exit 0
+		if printf '%s' "$doc" | grep -Fq '...'; then
+			echo "block its GraphQL mutation uses a fragment, which the review gate doesn't follow"
+			exit 0
+		fi
+		b=0
+		p=0
+		field=
+		for t in $doc; do
+			case $t in
+			'{' | '}' | '(')
+				if [ "$p" -eq 0 ] && [ -n "$field" ]; then
+					case $field in
+					resolveReviewThread | unresolveReviewThread | addPullRequestReviewThreadReply | addComment | \
+						updateIssueComment | addPullRequestReview | addPullRequestReviewComment | submitPullRequestReview) ;;
+					*)
+						echo "block its GraphQL mutation \`$field\` isn't one the ship skill uses"
+						exit 0
+						;;
+					esac
+				fi
+				field=
+				case $t in
+				'{') [ "$p" -gt 0 ] || b=$((b + 1)) ;;
+				'}') [ "$p" -gt 0 ] || b=$((b - 1)) ;;
+				'(') p=$((p + 1)) ;;
 				esac
-			done
+				;;
+			')') p=$((p - 1)) ;;
+			':') [ "$p" -gt 0 ] || field= ;;
+			*) [ "$p" -gt 0 ] || [ "$b" -ne 1 ] || field=$t ;;
+			esac
+		done
+		if [ -n "$field" ]; then
+			echo "block its GraphQL mutation \`$field\` isn't one the ship skill uses"
 		fi
 		exit 0
 	fi
@@ -275,7 +318,8 @@ api_found=
 if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 	# One line per simple command (separators split it), each `gh api` call scanned on its own.
 	# A segment that ends in `$` was cut by an unquoted `$(`, which hides the rest of its words, like a backtick.
-	api_found=$(printf '%s\n' "$words" | tr ';&|()' '\n\n\n\n\n' | grep -E "$gh_api" | while IFS= read -r seg; do
+	api_found=$(printf '%s\n' "$words" | sed -E 's/([<>])&/\1@RD@/g; s/&>/@RD@>/g' | tr ';&|()' '\n\n\n\n\n' |
+		grep -E "$gh_api" | while IFS= read -r seg; do
 		case $seg in
 		*'$' | *'`'*) echo "block the review gate can't read a command substitution in it" ;;
 		*) api_scan "$(printf '%s' "$seg" | sed -E "s/.*${gh_api}//")" ;;
