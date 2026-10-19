@@ -26,22 +26,25 @@ short=$(echo "$head" | cut -c1-7)
 head_repo=$(gh api "repos/$repo/pulls/$pr" --jq .head.repo.full_name)
 head_ref=$(gh api "repos/$repo/pulls/$pr" --jq .head.ref)
 
+# Each GitHub call is its own assignment, so `set -e` stops on a failed call instead of reading
+# a pipeline's last exit status (an empty result would look like "no findings").
 # When this exact commit was last pushed to the PR's branch, from GitHub's own push records.
 # Codex's summary names commits by a 7-character SHA, which someone could forge a collision
 # for, so a review only counts if it finished after this push. A new branch's first push is
 # recorded as `branch_creation`, not `push`.
-pushed_at=$(gh api --paginate "repos/$head_repo/activity?ref=refs/heads/$head_ref" \
-	--jq ".[] | select(.activity_type == \"push\" or .activity_type == \"force_push\" or .activity_type == \"branch_creation\") | select(.after == \"$head\") | .timestamp" |
-	sort | tail -1 | cut -c1-19)
+ref=$(jq -rn --arg r "refs/heads/$head_ref" '$r | @uri')
+pushes=$(gh api --paginate "repos/$head_repo/activity?ref=$ref" \
+	--jq ".[] | select(.activity_type == \"push\" or .activity_type == \"force_push\" or .activity_type == \"branch_creation\") | select(.after == \"$head\") | .timestamp")
+pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 
 # Codex keeps one summary comment per PR and edits it as reviews run. Its Code Review row names
 # the commit it reviewed and the status.
-row=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body" |
-	grep 'Code Review' | grep -F "\`$short\`" || true)
+summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
+row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
 
 # Unresolved review threads Codex started, on any commit. GraphQL drops the [bot] suffix.
-findings=$(gh api graphql --paginate -F owner="$owner" -F name="$name" -F pr="$pr" -f query='
+threads=$(gh api graphql --paginate -F owner="$owner" -F name="$name" -F pr="$pr" -f query='
 	query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
 		repository(owner: $owner, name: $name) {
 			pullRequest(number: $pr) {
@@ -54,7 +57,8 @@ findings=$(gh api graphql --paginate -F owner="$owner" -F name="$name" -F pr="$p
 	}' --jq '.data.repository.pullRequest.reviewThreads.nodes[]
 		| select(.isResolved | not)
 		| select(.comments.nodes[0].author.login == "chatgpt-codex-connector")
-		| 1' | wc -l | tr -d ' ')
+		| 1')
+findings=$(printf '%s' "$threads" | grep -c . || true)
 
 # The time Codex finished, from its row: <relative-time datetime="...">, to the second.
 completed_at=$(echo "$row" | grep -o 'datetime="[^"]*"' | head -1 | cut -d'"' -f2 | cut -c1-19)
