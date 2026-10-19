@@ -127,12 +127,16 @@ git_push="${git_global}push([^[:alnum:]_-]|\$)"
 # a `;&|()` there becomes `@OP@` (it's part of a word, not a separator), then quotes and backslashes go, so
 # `git -c "a=b c" push` and `git "push"` read as the push they are. Pushes are looked for in both forms (odd
 # quoting can confuse this one), and every form that shows one must pass the checks below.
-words=$(printf '%s' "$cmd" | sed -E \
-	-e ':d' -e 's/^(([^"]*"[^"]*")*[^"]*"[^" ]*) /\1@SP@/' -e 'td' \
+# sed reads one line at a time, so newlines become \036 first: inside quotes one is part of the word (like a
+# space), outside it separates commands again, and a backslash before one joins the lines.
+nl=$(printf '\036')
+words=$(printf '%s' "$cmd" | tr '\n' '\036' | sed -E \
+	-e "s/\\\\$nl//g" \
+	-e ':d' -e "s/^(([^\"]*\"[^\"]*\")*[^\"]*\"[^\" $nl]*)[ $nl]/\\1@SP@/" -e 'td' \
 	-e ':D' -e 's/^(([^"]*"[^"]*")*[^"]*"[^";&|()]*)[;&|()]/\1@OP@/' -e 'tD' \
-	-e ':s' -e "s/^(([^']*'[^']*')*[^']*'[^' ]*) /\\1@SP@/" -e 'ts' \
+	-e ':s' -e "s/^(([^']*'[^']*')*[^']*'[^' $nl]*)[ $nl]/\\1@SP@/" -e 'ts' \
 	-e ':S' -e "s/^(([^']*'[^']*')*[^']*'[^';&|()]*)[;&|()]/\\1@OP@/" -e 'tS' \
-	-e 's/\\ /@SP@/g' -e 's/\\[;&|()]/@OP@/g' | tr -d "\"'\\\\")
+	-e 's/\\ /@SP@/g' -e 's/\\[;&|()]/@OP@/g' | tr '\036' '\n' | tr -d "\"'\\\\")
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then
 	push_cmd=$words
