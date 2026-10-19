@@ -115,7 +115,8 @@ if printf '%s' "$cmd" | grep -Eq "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|sk
 fi
 
 # `git push`, also with global options (`git -C dir push`), anywhere in a chain; and `gh pr create`.
-git_global='(^|[^[:alnum:]_./-])git([[:space:]]+(-[Cc][[:space:]]+[^[:space:]]+|-[^[:space:]]+))*[[:space:]]+'
+# Global options that take a separate argument are skipped with it, so `git --git-dir x push` still counts.
+git_global='(^|[^[:alnum:]_./-])git([[:space:]]+(-[Cc][[:space:]]+[^[:space:]]+|--(git-dir|work-tree|namespace|config-env)[[:space:]]+[^[:space:]]+|-[^[:space:]]+))*[[:space:]]+'
 git_push="${git_global}push([^[:alnum:]_-]|\$)"
 pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
 # `gh api` calls that write commits, refs or PRs, which would land code without a review. Comments, reviews
@@ -123,9 +124,9 @@ pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]
 # GET, which is gh's default once it has fields or an --input.
 api_write=
 if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])gh[[:space:]]+api([^[:alnum:]_-]|$)'; then
-	# A GraphQL query read from a file or stdin can't be checked, so it counts as a write.
+	# A GraphQL query the gate can't read whole (from a file, stdin or a shell expansion) counts as a write.
 	if printf '%s' "$cmd" | grep -Eq 'graphql' &&
-		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge)([^[:alnum:]]|$)|query=@|[[:space:]]--input([[:space:]=]|$)'; then
+		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge|enqueuePullRequest)([^[:alnum:]]|$)|query="?(@|\$)|[[:space:]]--input([[:space:]=]|$)|\$\(|`'; then
 		api_write=graphql
 	elif printf '%s' "$cmd" | grep -Eq "repos/[^/[:space:]\"']+/[^/[:space:]\"']+/(contents|git/(refs|commits|trees|blobs|tags)|merges|merge-upstream|pulls/?([[:space:]\"'?]|\$)|pulls/[0-9]+/?([[:space:]\"'?]|\$)|pulls/[0-9]+/(merge|update-branch))" &&
 		{ printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?(POST|PUT|PATCH|DELETE)' ||
@@ -182,7 +183,13 @@ origin_slug() {
 # Every repo the command names is checked, since telling which word is the endpoint is guesswork.
 if [ -n "$api_write" ]; then
 	api_slugs=$(printf '%s' "$cmd" | grep -Eo "repos/[^/{[:space:]\"']+/[^/{[:space:]\"']+" | cut -d/ -f2-3 | sort -u)
-	if [ "$api_write" = graphql ] || [ -z "$api_slugs" ] || printf '%s' "$cmd" | grep -q '{owner}'; then
+	case $api_slugs in
+	*'$'* | *'`'* | *:*)
+		echo "Blocked: this \`gh api\` call writes commits, refs or PRs to a repo the review gate can't read (\`$api_slugs\`). Use \`git push\` and \`gh pr create\` instead." >&2
+		exit 2
+		;;
+	esac
+	if [ "$api_write" = graphql ] || [ -z "$api_slugs" ] || printf '%s' "$cmd" | grep -Eq '\{owner\}|\{repo\}|:owner|:repo'; then
 		here=$(origin_slug)
 		if [ -z "$here" ]; then
 			echo "Blocked: this \`gh api\` call writes commits, refs or PRs, and the review gate can't tell which repo it targets. Use \`git push\` and \`gh pr create\` instead." >&2
@@ -224,7 +231,7 @@ push_scope() (
 		echo "it runs more than one \`git push\`"
 		return 1
 	fi
-	args=$(printf '%s\n' "$cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\5#p" | head -1 |
+	args=$(printf '%s\n' "$cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\6#p" | head -1 |
 		sed -E 's/(^|[[:space:]]+)[0-9]*[<>].*//' | tr -d "\"'")
 	branch=$(git symbolic-ref -q --short HEAD) || branch=HEAD
 	remote=
@@ -270,9 +277,14 @@ push_scope() (
 		echo "remote.origin.push sets what a bare \`git push\` sends"
 		return 1
 	fi
-	# `git -c push.default=matching push` and the like change the above from the command line.
-	if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])git[[:space:]]+([^;&|]*[[:space:]])?(-c|--config-env)([[:space:]=]|$)[^;&|]*[[:space:]]push([^[:alnum:]_-]|$)'; then
-		echo "it sets git config on the command line"
+	if [ "$(git config --bool remote.origin.mirror)" = true ]; then
+		echo "remote.origin.mirror makes every push a mirror push"
+		return 1
+	fi
+	# `git -c push.default=matching push`, GIT_CONFIG_* or GIT_DIR and the like change the above, or the
+	# repo pushed, from the command line.
+	if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])git[[:space:]]+([^;&|]*[[:space:]])?(-c|--config-env|--git-dir|--work-tree|--namespace)([[:space:]=]|$)[^;&|]*[[:space:]]push([^[:alnum:]_-]|$)|GIT_(CONFIG|DIR|WORK_TREE|NAMESPACE)'; then
+		echo "it sets git's config or repo on the command line"
 		return 1
 	fi
 )
