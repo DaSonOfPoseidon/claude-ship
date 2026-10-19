@@ -231,13 +231,14 @@ else
 fi
 
 # Runs a headless reviewer: run_reviewer <stage> <model> <prompt file> <schema> <output file>.
-# Reviewers only read: no shell, since even `git diff --output=<file>` writes. The prompt carries the diff and
-# log, and the working tree is the commit being pushed (the gate refuses a dirty tree).
+# Reviewers only read: `--tools` makes Read, Grep and Glob the only built-in tools (no shell, since even
+# `git diff --output=<file>` writes), and `--strict-mcp-config` with no config loads no MCP or plugin tools,
+# whatever the user's settings allow. The prompt carries the diff and log, and the working tree is the commit
+# being pushed (the gate refuses a dirty tree).
 run_reviewer() {
 	echo "review-gate: $1 ($2) on $(git rev-parse --short HEAD) ($range)..." >&2
 	REVIEW_GATE_INNER=1 timeout 1100 claude -p --model "$2" --no-session-persistence \
-		--allowedTools Read Grep Glob \
-		--disallowedTools Bash Edit Write NotebookEdit Agent \
+		--tools Read,Grep,Glob --strict-mcp-config --allowedTools Read Grep Glob \
 		--output-format json --json-schema "$4" <"$3" >"$5" 2>"$5.err"
 	rc=$?
 	mkdir -p "$(dirname "$costs")"
