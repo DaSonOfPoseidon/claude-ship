@@ -182,9 +182,9 @@ origin_slug() {
 # A `gh api` write targets the repos in its endpoints and, for `{owner}/{repo}` and GraphQL, the one here.
 # Every repo the command names is checked, since telling which word is the endpoint is guesswork.
 if [ -n "$api_write" ]; then
-	api_slugs=$(printf '%s' "$cmd" | grep -Eo "repos/[^/{[:space:]\"']+/[^/{[:space:]\"']+" | cut -d/ -f2-3 | sort -u)
+	api_slugs=$(printf '%s' "$cmd" | grep -Eo "repos/[^/{:[:space:]\"']+/[^/{:[:space:]\"']+" | cut -d/ -f2-3 | sort -u)
 	case $api_slugs in
-	*'$'* | *'`'* | *:*)
+	*'$'* | *'`'*)
 		echo "Blocked: this \`gh api\` call writes commits, refs or PRs to a repo the review gate can't read (\`$api_slugs\`). Use \`git push\` and \`gh pr create\` instead." >&2
 		exit 2
 		;;
