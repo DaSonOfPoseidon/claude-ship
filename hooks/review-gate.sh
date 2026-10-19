@@ -121,13 +121,18 @@ git_global='(^|[^[:alnum:]_./-])git(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[
 git_push="${git_global}push([^[:alnum:]_-]|\$)"
 # The command split into words as the shell would: a space inside quotes or after a backslash becomes `@SP@`,
 # then quotes and backslashes go, so `git -c "a=b c" push` and `git "push"` read as the push they are.
-# Pushes are looked for in both forms (odd quoting can confuse this one), and parsed from this one when it
-# shows a push.
+# Pushes are looked for in both forms (odd quoting can confuse this one), and every form that shows one must
+# pass the checks below.
 words=$(printf '%s' "$cmd" | sed -E -e ':d' -e 's/^(([^"]*"[^"]*")*[^"]*"[^" ]*) /\1@SP@/' -e 'td' \
 	-e ':s' -e "s/^(([^']*'[^']*')*[^']*'[^' ]*) /\\1@SP@/" -e 'ts' -e 's/\\ /@SP@/g' | tr -d "\"'\\\\")
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then
 	push_cmd=$words
+fi
+# A literal `@SP@` would read back as a space, so the gate could check a different directory than git uses.
+if printf '%s' "$cmd" | grep -q '@SP@' && printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push"; then
+	echo "Blocked: the review gate can't read a push command that contains \`@SP@\`." >&2
+	exit 2
 fi
 pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
 # `gh api` calls that write commits, refs or PRs, which would land code without a review. Comments, reviews
@@ -174,8 +179,16 @@ if [ "$cds" -eq 1 ]; then
 	*) where=$where/$to ;;
 	esac
 fi
-c_dir=$(printf '%s' "$push_cmd" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:];&|)]+).*/\1/p' | tr -d "\"'" |
-	sed 's/@SP@/ /g')
+# The `-C` directory of a form of the command.
+c_dir_of() {
+	printf '%s' "$1" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:];&|)]+).*/\1/p' | tr -d "\"'" |
+		sed 's/@SP@/ /g'
+}
+c_dir=$(c_dir_of "$push_cmd")
+if [ "$push_cmd" != "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$git_push" && [ "$(c_dir_of "$cmd")" != "$c_dir" ]; then
+	echo "Blocked: the review gate reads two different \`git -C\` directories in this command. Quote it plainly." >&2
+	exit 2
+fi
 case $c_dir in
 '') ;;
 '~'* | *'$'* | *'`'*)
@@ -321,10 +334,12 @@ push_scope() (
 		return 1
 	fi
 )
-if printf '%s' "$push_cmd" | grep -Eq "$git_push" && ! why=$(push_scope); then
-	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
-	exit 2
-fi
+for push_cmd in "$cmd" "$words"; do
+	if printf '%s' "$push_cmd" | grep -Eq "$git_push" && ! why=$(push_scope); then
+		echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
+		exit 2
+	fi
+done
 
 if [ -n "$(git status --porcelain)" ]; then
 	echo "Blocked: the working tree has uncommitted changes. Commit or stash them first; the review covers HEAD, which is what gets pushed." >&2
