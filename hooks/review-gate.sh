@@ -119,6 +119,16 @@ fi
 # push` still counts as a push; push_scope then allows only `-C`.
 git_global='(^|[^[:alnum:]_./-])git(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+'
 git_push="${git_global}push([^[:alnum:]_-]|\$)"
+# The command split into words as the shell would: a space inside quotes or after a backslash becomes `@SP@`,
+# then quotes and backslashes go, so `git -c "a=b c" push` and `git "push"` read as the push they are.
+# Pushes are looked for in both forms (odd quoting can confuse this one), and parsed from this one when it
+# shows a push.
+words=$(printf '%s' "$cmd" | sed -E -e ':d' -e 's/^(([^"]*"[^"]*")*[^"]*"[^" ]*) /\1@SP@/' -e 'td' \
+	-e ':s' -e "s/^(([^']*'[^']*')*[^']*'[^' ]*) /\\1@SP@/" -e 'ts' -e 's/\\ /@SP@/g' | tr -d "\"'\\\\")
+push_cmd=$cmd
+if printf '%s' "$words" | grep -Eq "$git_push"; then
+	push_cmd=$words
+fi
 pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
 # `gh api` calls that write commits, refs or PRs, which would land code without a review. Comments, reviews
 # and `resolveReviewThread` stay allowed: the ship skill uses them. A call writes when its method isn't
@@ -140,7 +150,7 @@ if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])gh[[:space:]]+api([^[:alnu
 		api_write=rest
 	fi
 fi
-if [ -z "$api_write" ] && ! printf '%s' "$cmd" | grep -Eq "$git_push|$pr_create"; then
+if [ -z "$api_write" ] && ! printf '%s' "$push_cmd" | grep -Eq "$git_push|$pr_create"; then
 	exit 0
 fi
 
@@ -164,7 +174,8 @@ if [ "$cds" -eq 1 ]; then
 	*) where=$where/$to ;;
 	esac
 fi
-c_dir=$(printf '%s' "$cmd" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:];&|)]+).*/\1/p' | tr -d "\"'")
+c_dir=$(printf '%s' "$push_cmd" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:];&|)]+).*/\1/p' | tr -d "\"'" |
+	sed 's/@SP@/ /g')
 case $c_dir in
 '') ;;
 '~'* | *'$'* | *'`'*)
@@ -213,7 +224,7 @@ if [ -n "$api_write" ]; then
 			exit 2
 		fi
 	done
-	printf '%s' "$cmd" | grep -Eq "$git_push|$pr_create" || exit 0
+	printf '%s' "$push_cmd" | grep -Eq "$git_push|$pr_create" || exit 0
 fi
 
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
@@ -233,11 +244,12 @@ use_state
 # The review covers HEAD, so a push may send only HEAD, to origin. Prints why not and fails otherwise.
 # Options outside the list below block, since some (--all, --mirror, --tags, --delete) send other refs.
 push_scope() (
-	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ]; then
+	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ] ||
+		[ "$(printf '%s' "$words" | grep -Eo "$git_push" | wc -l)" -gt 1 ]; then
 		echo "it runs more than one \`git push\`"
 		return 1
 	fi
-	args=$(printf '%s\n' "$cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\6#p" | head -1 |
+	args=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\6#p" | head -1 |
 		sed -E 's/(^|[[:space:]]+)[0-9]*[<>].*//' | tr -d "\"'")
 	branch=$(git symbolic-ref -q --short HEAD) || branch=HEAD
 	remote=
@@ -289,7 +301,7 @@ push_scope() (
 	fi
 	# Global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) and environment overrides
 	# (GIT_*, HOME, `env`, `export`, `VAR=x git`) can change what's pushed or from which repo. All block.
-	globals=$(printf '%s\n' "$cmd" | sed -nE "s#.*${git_global}push([^[:alnum:]_-].*|$)#\\2#p" | head -1 |
+	globals=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([^[:alnum:]_-].*|$)#\\2#p" | head -1 |
 		sed -E 's/(^|[[:space:]]+)-C[[:space:]]+[^[:space:]]+//g')
 	case $globals in
 	*-*)
@@ -299,17 +311,17 @@ push_scope() (
 	esac
 	# The sed above reads only one `git … push`; these hold for the whole command, and so does a single `-C`
 	# (the directory check earlier follows only one).
-	if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--bare|--super-prefix)([[:space:]=]|$)' ||
-		[ "$(printf '%s' "$cmd" | grep -Eo '(^|[[:space:]])-C([[:space:]]|$)' | wc -l)" -gt 1 ]; then
+	if printf '%s' "$push_cmd" | grep -Eq '(^|[[:space:]])(-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--bare|--super-prefix)([[:space:]=]|$)' ||
+		[ "$(printf '%s' "$push_cmd" | grep -Eo '(^|[[:space:]])-C([[:space:]]|$)' | wc -l)" -gt 1 ]; then
 		echo "it passes git global options; only one \`-C <dir>\` is allowed"
 		return 1
 	fi
-	if printf '%s' "$cmd" | grep -Eq 'GIT_[A-Z_]*=|(^|[^[:alnum:]_])((export|env)[[:space:]]|HOME=|XDG_[A-Z_]*=)|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+git[[:space:]]'; then
+	if printf '%s' "$push_cmd" | grep -Eq 'GIT_[A-Z_]*=|(^|[^[:alnum:]_])((export|env)[[:space:]]|HOME=|XDG_[A-Z_]*=)|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+git[[:space:]]'; then
 		echo "it sets environment variables, which can change what git pushes"
 		return 1
 	fi
 )
-if printf '%s' "$cmd" | grep -Eq "$git_push" && ! why=$(push_scope); then
+if printf '%s' "$push_cmd" | grep -Eq "$git_push" && ! why=$(push_scope); then
 	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
 	exit 2
 fi
