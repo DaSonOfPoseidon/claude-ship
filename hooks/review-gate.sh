@@ -125,14 +125,18 @@ pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]
 # GET, which is gh's default once it has fields or an --input.
 api_write=
 if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])gh[[:space:]]+api([^[:alnum:]_-]|$)'; then
+	# Shell quoting is dropped before matching paths, so `repos/o/r/con''tents` reads as gh will send it.
+	api_text=$(printf '%s' "$cmd" | tr -d "\"'\\\\")
 	# A GraphQL query the gate can't read whole (from a file, stdin or a shell expansion) counts as a write.
 	if printf '%s' "$cmd" | grep -Eq 'graphql' &&
 		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge|enqueuePullRequest)([^[:alnum:]]|$)|query["'"'"'\\]*=["'"'"'\\]*(@|\$)|[[:space:]]--input([[:space:]=]|$)|\$\(|`'; then
 		api_write=graphql
-	elif printf '%s' "$cmd" | grep -Eq "repos/[^/[:space:]\"']+/[^/[:space:]\"']+/(contents|git/(refs|commits|trees|blobs|tags)|merges|merge-upstream|pulls/?([[:space:]\"'?]|\$)|pulls/[0-9]+/?([[:space:]\"'?]|\$)|pulls/[0-9]+/(merge|update-branch))|repos/[^[:space:]]*[\$\`]" &&
-		{ printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?(POST|PUT|PATCH|DELETE)' ||
-			{ printf '%s' "$cmd" | grep -Eq '[[:space:]](-f|-F|--field|--raw-field|--input)([[:space:]=]|$)' &&
-				! printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?GET'; }; }; then
+	# The write endpoints, under any owner and repo, even shell-expanded ones (the slug check below then
+	# refuses those); a command substitution right after `repos/` hides the whole path, so it counts too.
+	elif printf '%s' "$api_text" | grep -Eq "repos/[^[:space:]\"']+/(contents|git/(refs|commits|trees|blobs|tags)|merges|merge-upstream|pulls/?([[:space:]\"'?]|\$)|pulls/[0-9]+/?([[:space:]\"'?]|\$)|pulls/[0-9]+/(merge|update-branch))|repos/[\"']?(\\\$\\(|\`)" &&
+		{ printf '%s' "$api_text" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?(POST|PUT|PATCH|DELETE)' ||
+			{ printf '%s' "$api_text" | grep -Eq '[[:space:]](-f|-F|--field|--raw-field|--input)([[:space:]=]|$)' &&
+				! printf '%s' "$api_text" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?GET'; }; }; then
 		api_write=rest
 	fi
 fi
@@ -186,8 +190,8 @@ if [ -n "$api_write" ]; then
 	# gh fills `{owner}`/`{repo}` (and `:owner`/`:repo`) from the repo here; so does the gate, then checks every
 	# `repos/<owner>/<repo>`. One it can't read as a plain name (a shell expansion, say) blocks.
 	here=$(origin_slug)
-	api_cmd=$cmd
-	if printf '%s' "$cmd" | grep -Eq '\{owner\}|\{repo\}|:owner|:repo'; then
+	api_cmd=$api_text
+	if printf '%s' "$api_cmd" | grep -Eq '\{owner\}|\{repo\}|:owner|:repo'; then
 		[ -n "$here" ] || api_cmd=
 		api_cmd=$(printf '%s' "$api_cmd" | sed -E "s#\\{owner\\}|:owner#${here%/*}#g; s#\\{repo\\}|:repo#${here#*/}#g")
 	fi
@@ -293,6 +297,13 @@ push_scope() (
 		return 1
 		;;
 	esac
+	# The sed above reads only one `git … push`; these hold for the whole command, and so does a single `-C`
+	# (the directory check earlier follows only one).
+	if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--bare|--super-prefix)([[:space:]=]|$)' ||
+		[ "$(printf '%s' "$cmd" | grep -Eo '(^|[[:space:]])-C([[:space:]]|$)' | wc -l)" -gt 1 ]; then
+		echo "it passes git global options; only one \`-C <dir>\` is allowed"
+		return 1
+	fi
 	if printf '%s' "$cmd" | grep -Eq 'GIT_[A-Z_]*=|(^|[^[:alnum:]_])((export|env)[[:space:]]|HOME=|XDG_[A-Z_]*=)|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+git[[:space:]]'; then
 		echo "it sets environment variables, which can change what git pushes"
 		return 1
