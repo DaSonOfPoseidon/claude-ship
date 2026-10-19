@@ -115,8 +115,9 @@ if printf '%s' "$cmd" | grep -Eq "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|sk
 fi
 
 # `git push`, also with global options (`git -C dir push`), anywhere in a chain; and `gh pr create`.
-# Global options that take a separate argument are skipped with it, so `git --git-dir x push` still counts.
-git_global='(^|[^[:alnum:]_./-])git([[:space:]]+(-[Cc][[:space:]]+[^[:space:]]+|--(git-dir|work-tree|namespace|config-env)[[:space:]]+[^[:space:]]+|-[^[:space:]]+))*[[:space:]]+'
+# Any global options (each with at most one value word) may come before the subcommand, so `git --git-dir x
+# push` still counts as a push; push_scope then allows only `-C`.
+git_global='(^|[^[:alnum:]_./-])git(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+'
 git_push="${git_global}push([^[:alnum:]_-]|\$)"
 pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
 # `gh api` calls that write commits, refs or PRs, which would land code without a review. Comments, reviews
@@ -126,9 +127,9 @@ api_write=
 if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])gh[[:space:]]+api([^[:alnum:]_-]|$)'; then
 	# A GraphQL query the gate can't read whole (from a file, stdin or a shell expansion) counts as a write.
 	if printf '%s' "$cmd" | grep -Eq 'graphql' &&
-		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge|enqueuePullRequest)([^[:alnum:]]|$)|query="?(@|\$)|[[:space:]]--input([[:space:]=]|$)|\$\(|`'; then
+		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge|enqueuePullRequest)([^[:alnum:]]|$)|query["'"'"'\\]*=["'"'"'\\]*(@|\$)|[[:space:]]--input([[:space:]=]|$)|\$\(|`'; then
 		api_write=graphql
-	elif printf '%s' "$cmd" | grep -Eq "repos/[^/[:space:]\"']+/[^/[:space:]\"']+/(contents|git/(refs|commits|trees|blobs|tags)|merges|merge-upstream|pulls/?([[:space:]\"'?]|\$)|pulls/[0-9]+/?([[:space:]\"'?]|\$)|pulls/[0-9]+/(merge|update-branch))" &&
+	elif printf '%s' "$cmd" | grep -Eq "repos/[^/[:space:]\"']+/[^/[:space:]\"']+/(contents|git/(refs|commits|trees|blobs|tags)|merges|merge-upstream|pulls/?([[:space:]\"'?]|\$)|pulls/[0-9]+/?([[:space:]\"'?]|\$)|pulls/[0-9]+/(merge|update-branch))|repos/[^[:space:]]*[\$\`]" &&
 		{ printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?(POST|PUT|PATCH|DELETE)' ||
 			{ printf '%s' "$cmd" | grep -Eq '[[:space:]](-f|-F|--field|--raw-field|--input)([[:space:]=]|$)' &&
 				! printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?GET'; }; }; then
@@ -182,20 +183,21 @@ origin_slug() {
 # A `gh api` write targets the repos in its endpoints and, for `{owner}/{repo}` and GraphQL, the one here.
 # Every repo the command names is checked, since telling which word is the endpoint is guesswork.
 if [ -n "$api_write" ]; then
-	api_slugs=$(printf '%s' "$cmd" | grep -Eo "repos/[^/{:[:space:]\"']+/[^/{:[:space:]\"']+" | cut -d/ -f2-3 | sort -u)
-	case $api_slugs in
-	*'$'* | *'`'*)
-		echo "Blocked: this \`gh api\` call writes commits, refs or PRs to a repo the review gate can't read (\`$api_slugs\`). Use \`git push\` and \`gh pr create\` instead." >&2
-		exit 2
-		;;
-	esac
-	if [ "$api_write" = graphql ] || [ -z "$api_slugs" ] || printf '%s' "$cmd" | grep -Eq '\{owner\}|\{repo\}|:owner|:repo'; then
-		here=$(origin_slug)
-		if [ -z "$here" ]; then
-			echo "Blocked: this \`gh api\` call writes commits, refs or PRs, and the review gate can't tell which repo it targets. Use \`git push\` and \`gh pr create\` instead." >&2
-			exit 2
-		fi
+	# gh fills `{owner}`/`{repo}` (and `:owner`/`:repo`) from the repo here; so does the gate, then checks every
+	# `repos/<owner>/<repo>`. One it can't read as a plain name (a shell expansion, say) blocks.
+	here=$(origin_slug)
+	api_cmd=$cmd
+	if printf '%s' "$cmd" | grep -Eq '\{owner\}|\{repo\}|:owner|:repo'; then
+		[ -n "$here" ] || api_cmd=
+		api_cmd=$(printf '%s' "$api_cmd" | sed -E "s#\\{owner\\}|:owner#${here%/*}#g; s#\\{repo\\}|:repo#${here#*/}#g")
+	fi
+	api_slugs=$(printf '%s' "$api_cmd" | grep -Eo "repos/[^/[:space:]\"']+/[^/[:space:]\"']+" | cut -d/ -f2-3 | sort -u)
+	if [ "$api_write" = graphql ] || [ -z "$api_slugs" ]; then
 		api_slugs=$(printf '%s\n%s\n' "$api_slugs" "$here" | sed '/^$/d' | sort -u)
+	fi
+	if [ -z "$api_cmd" ] || [ -z "$api_slugs" ] || printf '%s\n' "$api_slugs" | grep -Evq '^[[:alnum:]_.-]+/[[:alnum:]_.-]+$'; then
+		echo "Blocked: this \`gh api\` call writes commits, refs or PRs, and the review gate can't tell which repo it targets. Use \`git push\` and \`gh pr create\` instead." >&2
+		exit 2
 	fi
 	for api_slug in $api_slugs; do
 		if ! api_flag=$(autonomous "$api_slug"); then
@@ -281,10 +283,18 @@ push_scope() (
 		echo "remote.origin.mirror makes every push a mirror push"
 		return 1
 	fi
-	# `git -c push.default=matching push`, GIT_CONFIG_* or GIT_DIR and the like change the above, or the
-	# repo pushed, from the command line.
-	if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])git[[:space:]]+([^;&|]*[[:space:]])?(-c|--config-env|--git-dir|--work-tree|--namespace)([[:space:]=]|$)[^;&|]*[[:space:]]push([^[:alnum:]_-]|$)|GIT_(CONFIG|DIR|WORK_TREE|NAMESPACE)'; then
-		echo "it sets git's config or repo on the command line"
+	# Global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) and environment overrides
+	# (GIT_*, HOME, `env`, `export`, `VAR=x git`) can change what's pushed or from which repo. All block.
+	globals=$(printf '%s\n' "$cmd" | sed -nE "s#.*${git_global}push([^[:alnum:]_-].*|$)#\\2#p" | head -1 |
+		sed -E 's/(^|[[:space:]]+)-C[[:space:]]+[^[:space:]]+//g')
+	case $globals in
+	*-*)
+		echo "it passes git global options (\`$globals\`); only \`-C <dir>\` is allowed"
+		return 1
+		;;
+	esac
+	if printf '%s' "$cmd" | grep -Eq 'GIT_[A-Z_]*=|(^|[^[:alnum:]_])((export|env)[[:space:]]|HOME=|XDG_[A-Z_]*=)|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+git[[:space:]]'; then
+		echo "it sets environment variables, which can change what git pushes"
 		return 1
 	fi
 )
