@@ -58,10 +58,15 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 
 1. Open the PR if there isn't one (Conventional Commit title, `Fixes #N` in the body, the repo's template).
 2. `round=$(~/.claude/skills/ship/codex-round.sh <pr>)`. If it's already 3, don't request another; go to 5.
-3. `gh pr comment <pr> -b "@codex review"`. This is round `round+1`.
-4. Wait without polling turns: one `Monitor` until-loop that runs
-   `DRY_RUN=1 scripts/codex-status.sh <pr>` every 60s until it stops printing `pending`
-   (timeout ~30 min; if Codex never answers, tell the user).
+3. `~/.claude/skills/ship/codex-request.sh <pr>` from the checkout that pushed (Bash timeout 300000). It
+   waits until GitHub shows HEAD as the PR's head, then posts `@codex review`; posted earlier, Codex
+   reviews the previous commit and the round is wasted. This is round `round+1`. If it fails, don't post
+   the comment by hand: find out why the PR's head isn't HEAD.
+4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background (Bash
+   `run_in_background`); you're notified when it exits. It prints the status once it's no longer
+   `pending` for HEAD, exits 1 after 30 min (tell the user Codex never answered), and exits 2 on any error
+   from `codex-status.sh` (fix that, don't retry blindly). Before triage, check the status it printed
+   names HEAD's SHA.
 
 ## 4. Triage
 
