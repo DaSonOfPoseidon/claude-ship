@@ -29,3 +29,9 @@ review finds a new class.
   quotes dropped) before matching, and treat anything you can't read as the worst case.
 - **A missing argument under `set -u` exits 1, which a caller may read as a result.** `codex-wait.sh` with no
   PR number looked like a 30-minute timeout (claude-ship #8). Check required arguments and exit 2 on misuse.
+- **Checking one side of a pair leaves the other open.** The push check read a refspec's source but not its
+  destination (`HEAD:refs/tags/x`), and origin's fetch URL but not its push URL (claude-ship #9). Check every
+  side git actually uses: `git remote get-url --push --all`, and both ends of a refspec.
+- **A list of what's dangerous misses what nobody listed; list what's allowed.** GraphQL mutations name their
+  target inside the query and new ones keep appearing, so the gate allows only the mutations the ship skill
+  uses instead of blocking known write mutations (claude-ship #9).

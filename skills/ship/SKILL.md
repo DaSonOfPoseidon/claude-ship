@@ -106,7 +106,8 @@ Then:
 
 ## 5. Done
 
-The PR is ready for the user when CI is green, the `codex-review` status passes, and any repo PR gate
+The PR is ready for the user when CI is green, the `codex-review` status passes (on the bootstrap PR,
+which can't get the status, `DRY_RUN=1 scripts/codex-status.sh <pr>` prints `success` instead), and any repo PR gate
 passes (OBDCracker: `scripts/pr-gate.sh`), and every new class of bug this PR's reviews found (gate or
 Codex) has an entry in `docs/pitfalls.md`. Report the rounds used, the issues filed, and anything that
 needed a decision. After round 3, never request another Codex review unless the user asks.

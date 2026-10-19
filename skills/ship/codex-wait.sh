@@ -33,5 +33,9 @@ while :; do
 		echo "Timed out: $out" >&2
 		exit 1
 	fi
-	sleep 60
+	# Never sleep past the deadline.
+	left=$((deadline - $(date +%s)))
+	if [ "$left" -gt 0 ]; then
+		sleep $((left < 60 ? left : 60))
+	fi
 done

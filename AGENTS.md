@@ -32,7 +32,8 @@ or anything CI already checks (shellcheck, actionlint).
 - The branch can't steer its reviewer: `--safe-mode` keeps its CLAUDE.md, hooks and skills from loading and
   `--restricted` ignores every settings file (`--bare` would need an API key; we run on a Pro plan).
 - What's reviewed is what's pushed: a push may send only HEAD, to origin (no `--all`, `--tags`, other
-  branches or refspecs), and `gh api` or GitHub MCP writes of commits, refs or PRs are blocked.
+  branches, tags or other destinations), and `gh api` or GitHub MCP writes of commits, refs, tags, releases,
+  PRs or what guards them (branch protection, rulesets, Actions variables) are blocked.
 - The gate catches Claude's own slips; it isn't a security boundary. It matches command text, and its state is
   writable by any shell. Branch protection requiring `codex-review` is the server-side backstop.
 - Only the user changes the opt-in variables, waives a review, or edits the installed gate, its state or
