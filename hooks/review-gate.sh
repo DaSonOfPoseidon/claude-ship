@@ -317,7 +317,7 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 					}
 				}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)
 					| select(.comments.nodes[0] | .author.login == "chatgpt-codex-connector"
-						or (.authorAssociation | IN("OWNER", "MEMBER", "COLLABORATOR")))
+						or (.authorAssociation | IN("OWNER", "COLLABORATOR")))
 					| "### \(.path):\(.line // "?")\n\(.comments.nodes[0].body)\n"' 2>/dev/null)
 			if [ -n "$threads" ]; then
 				echo
