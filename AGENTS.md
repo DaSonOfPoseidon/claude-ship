@@ -25,6 +25,8 @@ or anything CI already checks (shellcheck, actionlint).
 
 - The gate fails closed: when it can't tell (GitHub unreachable, reviewer error, unreadable output), it blocks.
 - A branch can't weaken its own review: the rules come from main's `AGENTS.md` when it has them.
+- Reviewers only read: Read, Grep and Glob, no shell (even `git diff --output` writes). Text from outside
+  (PR threads) goes into a prompt only from Codex or collaborators, and is marked as data, not instructions.
 - Only the user changes the opt-in variables, waives a review, or edits the installed gate, its state or
   the settings that register it. `install.sh` deploys only `origin/main`.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`), and use only `git`, `gh`, `jq` and coreutils.

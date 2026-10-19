@@ -3,9 +3,9 @@ bot (Codex) will review it after the push using the same project rules and P0–
 finding it makes costs a full fix-and-push round. Your job is to find, before the push, every problem that
 reviewer would find.
 
-Review every change in the diff below. Use Read, Grep, Glob and `git diff`/`git log`/`git show` to read the
-surrounding code, the callers, the tests and the docs a change touches. Check that tests actually exercise
-what they claim to, and that every claim a changed doc or comment makes holds on every path.
+Review every change in the diff below. Use Read, Grep and Glob to read the surrounding code, the callers,
+the tests and the docs a change touches; the working tree is the commit being pushed. Check that tests
+actually exercise what they claim to, and that every claim a changed doc or comment makes holds on every path.
 
 Report only real, demonstrable problems: bugs, wrong or unverified claims in docs and comments, missing
 validation of untrusted input, broken invariants, tests that don't test what they say, script/CI behaviour
