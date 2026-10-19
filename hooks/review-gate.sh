@@ -123,8 +123,9 @@ pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]
 # GET, which is gh's default once it has fields or an --input.
 api_write=
 if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])gh[[:space:]]+api([^[:alnum:]_-]|$)'; then
+	# A GraphQL query read from a file or stdin can't be checked, so it counts as a write.
 	if printf '%s' "$cmd" | grep -Eq 'graphql' &&
-		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge)([^[:alnum:]]|$)'; then
+		printf '%s' "$cmd" | grep -Eq '(createCommitOnBranch|createRef|updateRefs?|mergeBranch|createPullRequest|mergePullRequest|updatePullRequestBranch|enablePullRequestAutoMerge)([^[:alnum:]]|$)|query=@|[[:space:]]--input([[:space:]=]|$)'; then
 		api_write=graphql
 	elif printf '%s' "$cmd" | grep -Eq "repos/[^/[:space:]\"']+/[^/[:space:]\"']+/(contents|git/(refs|commits|trees|blobs|tags)|merges|merge-upstream|pulls/?([[:space:]\"'?]|\$)|pulls/[0-9]+/?([[:space:]\"'?]|\$)|pulls/[0-9]+/(merge|update-branch))" &&
 		{ printf '%s' "$cmd" | grep -Eiq '(-X|--method)[[:space:]=]*["'"'"']?(POST|PUT|PATCH|DELETE)' ||
@@ -177,21 +178,28 @@ origin_slug() {
 	git remote get-url origin 2>/dev/null | sed -nE 's#^(https://|git@|ssh://git@)github\.com[:/]([^/]+/[^/]+)$#\2#p' | sed 's/\.git$//'
 }
 
-# A `gh api` write targets the repo in its endpoint, or (for `{owner}/{repo}` and GraphQL) the one here.
+# A `gh api` write targets the repos in its endpoints and, for `{owner}/{repo}` and GraphQL, the one here.
+# Every repo the command names is checked, since telling which word is the endpoint is guesswork.
 if [ -n "$api_write" ]; then
-	api_slug=
-	if [ "$api_write" = rest ]; then
-		api_slug=$(printf '%s' "$cmd" | sed -nE "s#.*repos/([^/{[:space:]\"']+/[^/{[:space:]\"']+)/.*#\1#p" | head -1)
+	api_slugs=$(printf '%s' "$cmd" | grep -Eo "repos/[^/{[:space:]\"']+/[^/{[:space:]\"']+" | cut -d/ -f2-3 | sort -u)
+	if [ "$api_write" = graphql ] || [ -z "$api_slugs" ] || printf '%s' "$cmd" | grep -q '{owner}'; then
+		here=$(origin_slug)
+		if [ -z "$here" ]; then
+			echo "Blocked: this \`gh api\` call writes commits, refs or PRs, and the review gate can't tell which repo it targets. Use \`git push\` and \`gh pr create\` instead." >&2
+			exit 2
+		fi
+		api_slugs=$(printf '%s\n%s\n' "$api_slugs" "$here" | sed '/^$/d' | sort -u)
 	fi
-	[ -n "$api_slug" ] || api_slug=$(origin_slug)
-	if [ -z "$api_slug" ] || ! api_flag=$(autonomous "$api_slug"); then
-		echo "Blocked: this \`gh api\` call writes commits, refs or PRs, and the review gate can't tell whether ${api_slug:-its repo} opted in. Use \`git push\` and \`gh pr create\` instead." >&2
-		exit 2
-	fi
-	if [ -n "$api_flag" ]; then
-		echo "Blocked: \`gh api\` writes to commits, refs or PRs bypass the pre-push review gate in $api_slug. Use \`git push\` and \`gh pr create\` instead." >&2
-		exit 2
-	fi
+	for api_slug in $api_slugs; do
+		if ! api_flag=$(autonomous "$api_slug"); then
+			echo "Blocked: this \`gh api\` call writes commits, refs or PRs, and the review gate can't tell whether $api_slug opted in. Use \`git push\` and \`gh pr create\` instead." >&2
+			exit 2
+		fi
+		if [ -n "$api_flag" ]; then
+			echo "Blocked: \`gh api\` writes to commits, refs or PRs bypass the pre-push review gate in $api_slug. Use \`git push\` and \`gh pr create\` instead." >&2
+			exit 2
+		fi
+	done
 	printf '%s' "$cmd" | grep -Eq "$git_push|$pr_create" || exit 0
 fi
 
@@ -256,6 +264,15 @@ push_scope() (
 	fi
 	if [ -z "$refspecs" ] && [ "$(git config push.default)" = matching ]; then
 		echo "push.default is \`matching\`, so a bare \`git push\` sends every branch"
+		return 1
+	fi
+	if [ -z "$refspecs" ] && [ -n "$(git config --get-all remote.origin.push)" ]; then
+		echo "remote.origin.push sets what a bare \`git push\` sends"
+		return 1
+	fi
+	# `git -c push.default=matching push` and the like change the above from the command line.
+	if printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]_./-])git[[:space:]]+([^;&|]*[[:space:]])?(-c|--config-env)([[:space:]=]|$)[^;&|]*[[:space:]]push([^[:alnum:]_-]|$)'; then
+		echo "it sets git config on the command line"
 		return 1
 	fi
 )
