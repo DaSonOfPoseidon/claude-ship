@@ -19,3 +19,12 @@ review finds a new class.
   stop on any error.
 - **A pipeline's exit status is its last command's.** `x=$(gh api … | wc -l)` succeeds when `gh` fails,
   so a failed call reads as an empty result. Assign each call on its own, then pipe the result.
+- **Options and environment before a subcommand change what it does.** `git -c push.default=matching push`,
+  `git --git-dir x push`, `GIT_DIR=x git push` and `env … git push` all push something other than what a check
+  of `git push`'s own arguments sees (claude-ship #3, five gate rounds). Check the whole command, and block
+  any option or variable you don't explicitly allow.
+- **Shell quoting and expansion hide the real argument from a text check.** `repos/o/r/con''tents`,
+  `repos/${OWNER}/${REPO}/git/refs` and `-f query="$(cat q.graphql)"` don't contain the text gh finally sends.
+  Strip quoting before matching, and treat anything you can't read as the worst case.
+- **A missing argument under `set -u` exits 1, which a caller may read as a result.** `codex-wait.sh` with no
+  PR number looked like a 30-minute timeout (claude-ship #8). Check required arguments and exit 2 on misuse.

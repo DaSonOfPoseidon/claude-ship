@@ -16,4 +16,7 @@ Rate each finding P0–P3 with the rubric in the project rules. P3 findings are 
 rather than fixed in this change, so report them too, but only when they meet the same bar of a concrete
 failure scenario. Keep each summary to one sentence and each failure scenario to two.
 
+When the known pitfalls (if listed below) don't cover a finding's class of bug, end its summary with
+"(new class)" so the fix also adds a pitfalls entry.
+
 Return every finding in the structured output. If there are none, return an empty list.

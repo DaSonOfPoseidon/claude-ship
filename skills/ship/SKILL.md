@@ -31,7 +31,9 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 3. Copy `templates/codex-status.sh` to `scripts/codex-status.sh` and `templates/codex-review.yml` to
    `.github/workflows/codex-review.yml`. Lint it:
    `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7`.
-4. Create `docs/pitfalls.md` with a one-line intro if it doesn't exist.
+4. Create `docs/pitfalls.md` if it doesn't exist, with the title `# Pitfalls` and this intro: "Classes of
+   bug that reviews have caught here. Check every change against them, and add an entry when a review
+   finds a new class." AGENTS.md's Known pitfalls section links to it, and the gate shows it to reviewers.
 5. Create the label `review:p3` (`gh label create review:p3 --color c5def5 --description "Minor finding from an AI review"`).
    If the repo's issue conventions need more labels on auto-filed P3s (e.g. a milestone label a PR gate
    checks), ask the user to set them: `! gh variable set CLAUDE_P3_LABELS --body "review:p3,<more>"`.
@@ -52,12 +54,15 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    - Blocked: fix every blocking finding test-first, sweep, then push again (a re-push of the same commit
      re-blocks without a new review). If a finding is wrong, explain why and ask the user to waive it with
      `! ~/.claude/hooks/review-gate.sh --waive "<why>"`. Never work around the gate.
+   - When a blocking finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in
+     the same push: the class, what to check, and where it bit (PR or issue).
    - The gate files confirmed P3s as issues itself. Don't fix them in this PR.
 
 ## 3. Request the Codex round
 
 1. Open the PR if there isn't one (Conventional Commit title, `Fixes #N` in the body, the repo's template).
 2. `round=$(~/.claude/skills/ship/codex-round.sh <pr>)`. If it's already 3, don't request another; go to 5.
+   If it fails, stop and fix the cause: a failed count isn't round 0.
 3. `~/.claude/skills/ship/codex-request.sh <pr>` from the checkout that pushed (Bash timeout 300000). It
    waits until GitHub shows HEAD as the PR's head, then posts `@codex review`; posted earlier, Codex
    reviews the previous commit and the round is wasted. This is round `round+1`. If it fails, don't post
@@ -91,7 +96,7 @@ right-hand column.
   the thread with the issue link, then resolve the thread.
 - Resolve threads with GraphQL `resolveReviewThread(input: {threadId: "<id>"})`, using the ids
   `codex-findings.sh` prints.
-- When a finding is a new class of bug, add it to `docs/pitfalls.md` in the same push.
+- When a finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in the same push.
 
 Then:
 - **Something was fixed:** go back to step 2 (the gate reviews only the new commits) and request the next
@@ -102,7 +107,8 @@ Then:
 ## 5. Done
 
 The PR is ready for the user when CI is green, the `codex-review` status passes, and any repo PR gate
-passes (OBDCracker: `scripts/pr-gate.sh`). Report the rounds used, the issues filed, and anything that
+passes (OBDCracker: `scripts/pr-gate.sh`), and every new class of bug this PR's reviews found (gate or
+Codex) has an entry in `docs/pitfalls.md`. Report the rounds used, the issues filed, and anything that
 needed a decision. After round 3, never request another Codex review unless the user asks.
 
 **Process docs** (review rules, contribution steps): when a review finds a gap in a rule, rewrite the whole
