@@ -4,6 +4,11 @@
 # Usage: codex-request.sh <pr> [owner/repo]   (run in the checkout that pushed; CODEX_REQUEST_TRIES sets
 # how many 10s checks to make, default 18)
 set -eu
+# A missing PR number exits 2 (usage), so a caller never reads it as a result or a timeout.
+if [ -z "${1:-}" ]; then
+	echo "usage: codex-request.sh <pr> [owner/repo]" >&2
+	exit 2
+fi
 pr=$1
 slug=${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
 want=$(git rev-parse HEAD)

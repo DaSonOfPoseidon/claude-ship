@@ -5,6 +5,11 @@
 # Any failure of the status script ends the wait with its error rather than reading as "not done yet".
 # Usage: codex-wait.sh <pr>   (from anywhere in the checkout; CODEX_WAIT_SECS caps the wait, default 1800)
 set -eu
+# A missing PR number exits 2 (usage), so a caller never reads it as a result or a timeout.
+if [ -z "${1:-}" ]; then
+	echo "usage: codex-wait.sh <pr>" >&2
+	exit 2
+fi
 pr=$1
 status="$(git rev-parse --show-toplevel)/scripts/codex-status.sh"
 if [ ! -x "$status" ]; then
