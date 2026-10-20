@@ -24,6 +24,8 @@ on:
         required: true
 
 permissions:
+  # codex-status.sh reads the branch's push activity, which needs contents read.
+  contents: read
   issues: read
   pull-requests: read
   statuses: write
