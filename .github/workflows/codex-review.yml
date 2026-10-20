@@ -47,8 +47,9 @@ jobs:
       cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
-      # The pinned action decides, not this repo's files. (A PR that changes this ref needs write
-      # access; fork PRs get a read-only token, which can't set statuses.)
+      # claude-ship's v1 tag decides, not this repo's files. v1 moves (owner only) when claude-ship
+      # releases, which changes this check here without a PR in this repo. (A PR that changes this ref
+      # needs write access; fork PRs get a read-only token, which can't set statuses.)
       - uses: DaSonOfPoseidon/claude-ship@v1
         with:
           pr: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
