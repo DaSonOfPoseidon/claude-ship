@@ -313,7 +313,11 @@ api_scan() (
 		exit 0
 		;;
 	repos/*/*) ;;
-	*) exit 0 ;;
+	# Other endpoints (orgs, users, ...) name no repo, so they count against the repos where the command runs.
+	*)
+		echo here
+		exit 0
+		;;
 	esac
 	slug=$(printf '%s' "$ep" | cut -d/ -f2-3)
 	rest=$(printf '%s' "$ep" | cut -d/ -f4- | sed 's#/*$##')
@@ -452,16 +456,18 @@ remote_slugs() {
 
 # The repos a `gh api` write names, each checked for opt-in. `{owner}/{repo}` is whichever repo gh picks from
 # the remotes where it runs, so every GitHub remote counts, in both the session's directory and the one a `cd`
-# moves to: the call may run before or after it.
+# moves to: the call may run before or after it. A write that names no repo (`here`) counts against them too.
 if [ -n "$api_write" ]; then
 	api_slugs=$(printf '%s\n' "$api_write" | sed -n 's/^repo //p' | sort -u)
-	if printf '%s\n' "$api_slugs" | grep -Fqx '{owner}/{repo}'; then
+	placeholder=
+	printf '%s\n' "$api_slugs" | grep -Fqx '{owner}/{repo}' && placeholder=1
+	if [ -n "$placeholder" ] || printf '%s\n' "$api_write" | grep -qx here; then
 		here=$(
 			remote_slugs
 			cd "$start" 2>/dev/null && remote_slugs
 		)
 		readable_slugs "$here"
-		if [ -z "$here" ]; then
+		if [ -z "$here" ] && [ -n "$placeholder" ]; then
 			echo "Blocked: this \`gh api\` call writes with \`{owner}/{repo}\`, and the review gate finds no GitHub remote here." >&2
 			exit 2
 		fi
