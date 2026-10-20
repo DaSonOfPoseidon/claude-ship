@@ -7,7 +7,9 @@ review finds a new class.
   old HEAD. Commit and push in separate commands.
 - **Pattern checks match text, not intent.** The push check also fires on `git push` inside a quoted string,
   and the write check fired on read-only `jq` (removed) and on `>` inside an awk comparison. Test a new
-  pattern against read-only commands that mention the same paths.
+  pattern against read-only commands that mention the same paths. It cuts both ways: a word boundary that
+  excluded `/` missed `/usr/bin/gh api` and `/usr/bin/git push` (claude-ship #9). Test every way the command
+  can be named, too.
 - **Process rules are a table, not a list of special cases.** Patching one sentence per review finding moved
   the gap each round (OBDCracker #128, three rounds). State a rule once, as a table, and check every cell.
 - **A command interrupted midway may have done part of its work.** Check what exists (issues, commits)

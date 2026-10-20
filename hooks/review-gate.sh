@@ -104,8 +104,9 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 
 # `git push`, also with global options (`git -C dir push`), anywhere in a chain; and `gh pr create`.
 # Any global options (each with at most one value word) may come before the subcommand, so `git --git-dir x
-# push` still counts as a push; push_scope then allows only `-C`.
-git_global='(^|[^[:alnum:]_./-])git(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+'
+# push` still counts as a push; push_scope then allows only `-C`. A path may come before git and gh
+# (`/usr/bin/git`, `./gh`), so `/` counts as a boundary; `.`, `_` and `-` don't (`.git/`, `my-gh`).
+git_global='(^|[^[:alnum:]_.-])git(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+'
 git_push="${git_global}push([^[:alnum:]_-]|\$)"
 # The command split into words as the shell would, left to right, by jq: quotes and backslashes go, and every
 # character they made literal becomes a marker, so `git -c "a=b c" push` and `git "push"` read as the push they
@@ -167,13 +168,13 @@ if printf '%s' "$words" | grep -Eq "$git_push"; then
 fi
 # A command that already holds a marker, quoting the scanner can't read, or a push whose own words have literal
 # separators, quotes, `$` or newlines can't be checked word by word, so it blocks.
-if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_./-])(git|gh)([^[:alnum:]_-]|$)" &&
+if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_.-])(git|gh)([^[:alnum:]_-]|$)" &&
 	{ printf '%s' "$cmd" | grep -Eq '@(SP|NL|OP|LP|RP|DL|BQ|DQ|SQ|UQ)@' || printf '%s' "$words" | grep -q '@UQ@' ||
 		printf '%s' "$words" | grep -Eo "${git_global}push[^;&|]*" | grep -Eq '@(NL|OP|LP|RP|DL|BQ|DQ|SQ)@'; }; then
 	echo "Blocked: the review gate can't read this command's quoting. Write git and gh commands with plain quotes, without \`\$'...'\` or quoted \`;&|()\$\`." >&2
 	exit 2
 fi
-pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
+pr_create='(^|[^[:alnum:]_.-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
 # `gh api` writes in an opted-in repo pass only if the ship skill makes them: comments, replies, reviews,
 # reactions, issues, labels, workflow runs and its GraphQL mutations. Anything else (commits, refs, PRs,
 # statuses, checks, settings, Actions variables like CLAUDE_AUTONOMOUS) could land code or change what guards
@@ -330,7 +331,7 @@ api_scan() (
 	fi
 	echo "repo $slug"
 )
-gh_api='(^|[^[:alnum:]_./-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
+gh_api='(^|[^[:alnum:]_.-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
 api_found=
 if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 	# One line per simple command (separators split it), each `gh api` call scanned on its own.
