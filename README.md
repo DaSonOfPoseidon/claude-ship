@@ -32,7 +32,9 @@ the caller, since an action can't set them; copy the whole template.
 git fetch origin && git tag -f v1 origin/main && git push -f origin v1
 ```
 
-Claude's gate blocks tag pushes, so the owner runs this.
+Claude's gate blocks tag pushes, so the owner runs this. The same command creates `v1` the first time. Until
+`v1` exists, every caller's `codex-review` run fails to resolve the action and sets no status, so create it
+right after the PR that added `action.yml` merges, before any repo switches to the action.
 
 ## Per-repo opt-in
 
