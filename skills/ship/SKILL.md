@@ -28,8 +28,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    Keep them short and repo-specific: what must never break, what input is untrusted, what must stay out
    of the repo.
 2. Add a line `@AGENTS.md` to CLAUDE.md (create it if missing) so the rules aren't duplicated.
-3. Copy `templates/codex-status.sh` to `scripts/codex-status.sh` and `templates/codex-review.yml` to
-   `.github/workflows/codex-review.yml`. Lint it:
+3. Copy `templates/codex-review.yml` to `.github/workflows/codex-review.yml`. It calls the claude-ship
+   action (`DaSonOfPoseidon/claude-ship@v1`), so the repo keeps no copy of the status script. Lint it:
    `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7`.
 4. Create `docs/pitfalls.md` if it doesn't exist, with the title `# Pitfalls` and this intro: "Classes of
    bug that reviews have caught here. Check every change against them, and add an entry when a review
@@ -40,8 +40,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 6. Show the user the invariants you wrote, then ship the branch with the steps below.
 7. After the bootstrap PR merges, ask the user before turning on branch protection that requires
    `codex-review` and the CI checks. It's outward-facing, so get an explicit yes first. Not before the
-   merge: the workflow runs main's copy of `codex-status.sh`, so the bootstrap PR itself never gets the
-   status and couldn't merge.
+   merge: Codex reports a clean review by editing a comment, which runs main's workflow, so the bootstrap
+   PR itself never gets the status and couldn't merge.
 8. Remind the user to turn off **Automatic review** for the repo in the Codex settings.
 
 ## 2. Before every push (local, no review tokens)
@@ -107,7 +107,7 @@ Then:
 ## 5. Done
 
 The PR is ready for the user when CI is green, the `codex-review` status passes (on the bootstrap PR,
-which can't get the status, `DRY_RUN=1 scripts/codex-status.sh <pr>` prints `success` instead), and any repo PR gate
+which can't get the status, `DRY_RUN=1 ~/.claude/skills/ship/codex-status.sh <pr>` prints `success` instead), and any repo PR gate
 passes (OBDCracker: `scripts/pr-gate.sh`), and every new class of bug this PR's reviews found (gate or
 Codex) has an entry in `docs/pitfalls.md`. Report the rounds used, the issues filed, and anything that
 needed a decision. After round 3, never request another Codex review unless the user asks.

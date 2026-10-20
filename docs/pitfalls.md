@@ -49,3 +49,6 @@ review finds a new class.
 - **A hook sees the whole command at once, but each step runs in the state of its own moment.** The gate
   resolved `{owner}/{repo}` in the directory after a trailing `cd`, while the `gh api` before it ran in the
   first one (claude-ship #9). Check each state a step could run in.
+- **A permission that looks like it belongs to one step may serve others.** Dropping `actions/checkout` took
+  `contents: read` with it, but the status script's activity lookup needed it too (claude-ship #18). Before
+  removing a permission, list every API call that runs under the token, and keep each permission they need.
