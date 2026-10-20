@@ -102,22 +102,6 @@ esac
 
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 
-# Waivers and the opt-in flags are the user's call, made with `!` (which doesn't run hooks).
-if printf '%s' "$cmd" | grep -q 'review-gate\.sh.*--waive'; then
-	echo "Blocked: only the user can waive a review. Ask them to run \`! ~/.claude/hooks/review-gate.sh --waive \"<why>\"\`." >&2
-	exit 2
-fi
-if printf '%s' "$cmd" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|delete|remove)[[:space:]].*CLAUDE_(AUTONOMOUS|P3_LABELS)'; then
-	echo "Blocked: CLAUDE_AUTONOMOUS and CLAUDE_P3_LABELS are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
-	exit 2
-fi
-# Writing gate state or the installed gate would bypass the review; reading its reports is fine.
-if printf '%s' "$cmd" | grep -Eq "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship)|\.git/review-gate|disableAllHooks" &&
-	printf '%s' "$cmd" | grep -Eq '>|(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)'; then
-	echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine." >&2
-	exit 2
-fi
-
 # `git push`, also with global options (`git -C dir push`), anywhere in a chain; and `gh pr create`.
 # Any global options (each with at most one value word) may come before the subcommand, so `git --git-dir x
 # push` still counts as a push; push_scope then allows only `-C`.
@@ -151,6 +135,32 @@ def dquoted:
 	else . end)
 | join("")'
 words=$(printf '%s' "$input" | jq -r ".tool_input.command // \"\" | $shell_words")
+
+# Turns the markers on stdin back into the characters they stand for.
+unmark() {
+	sed 's/@SP@/ /g; s/@NL@/\
+/g; s/@LP@/(/g; s/@RP@/)/g; s/@DL@/$/g; s/@BQ@/`/g; s/@DQ@/"/g; s/@SQ@/'"'"'/g; s/@OP@/;/g'
+}
+# Checks that read text, not structure, see both the raw command and its unmarked words, so quoting
+# (`CLAUDE_AUTONO''MOUS`, `c''d`) can't split a name apart.
+cmd_plain=$(printf '%s' "$words" | unmark)
+cmd_all=$(printf '%s\n%s\n' "$cmd" "$cmd_plain")
+
+# Waivers and the opt-in flags are the user's call, made with `!` (which doesn't run hooks).
+if printf '%s' "$cmd_all" | grep -q 'review-gate\.sh.*--waive'; then
+	echo "Blocked: only the user can waive a review. Ask them to run \`! ~/.claude/hooks/review-gate.sh --waive \"<why>\"\`." >&2
+	exit 2
+fi
+if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|delete|remove)[[:space:]].*CLAUDE_(AUTONOMOUS|P3_LABELS)'; then
+	echo "Blocked: CLAUDE_AUTONOMOUS and CLAUDE_P3_LABELS are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
+	exit 2
+fi
+# Writing gate state or the installed gate would bypass the review; reading its reports is fine.
+if printf '%s' "$cmd_all" | grep -Eq "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship)|\.git/review-gate|disableAllHooks" &&
+	printf '%s' "$cmd_all" | grep -Eq '>|(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)'; then
+	echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine." >&2
+	exit 2
+fi
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then
 	push_cmd=$words
@@ -164,10 +174,11 @@ if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_./-])(
 	exit 2
 fi
 pr_create='(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
-# `gh api` calls that land code or change what guards it, without a review: commits, refs, tags, releases, PRs,
-# branch protection, rulesets, Actions variables (CLAUDE_AUTONOMOUS is one). Comments, reviews and
-# `resolveReviewThread` stay allowed: the ship skill uses them. Each call is read word by word from $words:
-# it writes when its method isn't GET, which is gh's default once it has fields or an --input.
+# `gh api` writes in an opted-in repo pass only if the ship skill makes them: comments, replies, reviews,
+# reactions, issues, labels, workflow runs and its GraphQL mutations. Anything else (commits, refs, PRs,
+# statuses, checks, settings, Actions variables like CLAUDE_AUTONOMOUS) could land code or change what guards
+# it without a review. Each call is read word by word from $words: it writes when its method isn't GET, which is
+# gh's default once it has fields or an --input.
 # api_scan <words after `gh api`> prints nothing (no such write), `block <why>`, or `repo <owner/repo>`
 # (`{owner}/{repo}` for gh's placeholders), one line per repo it writes to.
 api_scan() (
@@ -243,8 +254,7 @@ api_scan() (
 			exit 0
 			;;
 		esac
-		q=$(printf '%s' "$query" | sed 's/@SP@/ /g; s/@NL@/\
-/g; s/@LP@/(/g; s/@RP@/)/g; s/@DL@/$/g; s/@BQ@/`/g; s/@DQ@/"/g; s/@SQ@/'"'"'/g; s/@OP@/;/g')
+		q=$(printf '%s' "$query" | unmark)
 		# Strings and comments hold no structure; then top-level fields are names at brace depth 1, outside
 		# arguments, that aren't aliases (`alias: field`).
 		nl=$(printf '\036')
@@ -271,7 +281,8 @@ api_scan() (
 			'{' | '}' | '(')
 				if [ "$p" -eq 0 ] && [ -n "$field" ]; then
 					case $field in
-					resolveReviewThread | unresolveReviewThread | addPullRequestReviewThreadReply | addComment | \
+					# Not unresolveReviewThread: it changes what codex-status.sh counts without rerunning it.
+					resolveReviewThread | addPullRequestReviewThreadReply | addComment | \
 						updateIssueComment | addPullRequestReview | addPullRequestReviewComment | submitPullRequestReview) ;;
 					*)
 						echo "block its GraphQL mutation \`$field\` isn't one the ship skill uses"
@@ -301,12 +312,14 @@ api_scan() (
 		echo "block it writes to a repo by id ($ep), which the review gate can't check"
 		exit 0
 		;;
-	repos/*/*/*) ;;
+	repos/*/*) ;;
 	*) exit 0 ;;
 	esac
 	slug=$(printf '%s' "$ep" | cut -d/ -f2-3)
-	rest=$(printf '%s' "$ep" | cut -d/ -f4-)
-	printf '%s' "$rest" | grep -Eq '^(contents(/|$)|git/(refs|commits|trees|blobs|tags)(/|$)|merges/?$|merge-upstream/?$|pulls/?$|pulls/[0-9]+/?$|pulls/[0-9]+/(merge|update-branch)/?$|releases(/|$)|branches/[^/]+/(rename|protection)(/|$)|rulesets(/|$)|actions/variables(/|$)|environments/[^/]+/variables(/|$))' || exit 0
+	rest=$(printf '%s' "$ep" | cut -d/ -f4- | sed 's#/*$##')
+	# Only the writes the ship skill makes pass, as in GraphQL: comments, replies, reviews, reactions, issues,
+	# labels and workflow runs. Everything else (code, refs, PRs, statuses, checks, settings) is checked below.
+	printf '%s %s' "${method:-POST}" "$rest" | grep -Eq '^(POST (issues|issues/[0-9]+/(comments|labels|reactions)|issues/comments/[0-9]+/reactions|pulls/[0-9]+/(comments|reviews)|pulls/[0-9]+/comments/[0-9]+/replies|pulls/comments/[0-9]+/reactions|labels|actions/workflows/[^/]+/dispatches)|PATCH (issues/[0-9]+|issues/comments/[0-9]+|labels/[^/]+))$' && exit 0
 	if ! printf '%s' "$slug" | grep -Eq '^([[:alnum:]_.-]+/[[:alnum:]_.-]+|\{owner\}/\{repo\})$'; then
 		echo "block the review gate can't read its repo ($slug)"
 		exit 0
@@ -333,8 +346,10 @@ if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 		echo "Blocked: this \`gh api\` call ${blocked#block }. Use \`git push\` and \`gh pr create\` for code; write other calls plainly." >&2
 		exit 2
 	fi
-	# gh reads the repo from GH_REPO, or from the remotes here; the gate follows only the remotes.
-	if printf '%s' "$api_found" | grep -Fq '{owner}/{repo}' && printf '%s' "$cmd" | grep -q 'GH_REPO'; then
+	# gh reads the repo from GH_REPO, or from the remotes here; the gate follows only the remotes. GH_REPO may be
+	# quoted apart (`GH_RE''PO`) or inherited, so the word-split form and the environment count too.
+	if printf '%s' "$api_found" | grep -Fq '{owner}/{repo}' &&
+		{ printf '%s\n%s\n' "$cmd" "$words" | grep -q 'GH_REPO' || [ -n "${GH_REPO:-}" ]; }; then
 		echo "Blocked: this \`gh api\` call writes with \`{owner}/{repo}\` under GH_REPO, which the review gate doesn't follow." >&2
 		exit 2
 	fi
@@ -348,7 +363,14 @@ fi
 # More than one `cd`, or one this can't follow, blocks rather than guessing which branch is pushed.
 where=$(printf '%s' "$input" | jq -r '.cwd // ""')
 [ -n "$where" ] || where=$PWD
-cds=$(printf '%s' "$cmd" | grep -Eo '(^|[;&|(])[[:space:]]*cd([[:space:]]|$)' | wc -l)
+start=$where
+# The `cd`s are counted in both forms, so a quoted-apart `c''d` counts; the target is read from the raw command,
+# and one only the words show can't be read there, so it blocks below.
+cds_of() {
+	printf '%s' "$1" | grep -Eo '(^|[;&|(])[[:space:]]*cd([[:space:]]|$)' | wc -l
+}
+cds=$(cds_of "$cmd")
+[ "$(cds_of "$words")" -le "$cds" ] || cds=$(cds_of "$words")
 if [ "$cds" -gt 1 ]; then
 	echo "Blocked: the review gate can't tell which directory pushes after several \`cd\`s. Push from the worktree with a single \`cd <dir> &&\`, or with \`git -C <dir> push\`." >&2
 	exit 2
@@ -394,9 +416,25 @@ cd "$where" 2>/dev/null || {
 	exit 2
 }
 
-# GitHub repos from remote URLs on stdin, one per line.
+# GitHub repos from remote URLs on stdin, one per line: any scheme, user and port, any host case, and GitHub's
+# ssh-over-443 host. A URL that names GitHub but doesn't parse prints as `?<url>`, so callers fail closed on it.
 github_slugs() {
-	sed -nE 's#^(https://|git@|ssh://git@)github\.com[:/]([^/]+/[^/]+)$#\2#p' | sed 's/\.git$//' | sort -u
+	while IFS= read -r url; do
+		s=$(printf '%s\n' "$url" | sed -E 's#/+$##; s#\.git$##' |
+			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm](:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
+		if [ -n "$s" ]; then
+			echo "$s"
+		elif printf '%s' "$url" | grep -qi github; then
+			echo "?$url"
+		fi
+	done | sort -u
+}
+# Fails, naming the URL, when a list from github_slugs holds one it couldn't read.
+readable_slugs() {
+	if bad=$(printf '%s\n' "$1" | grep -m1 '^?'); then
+		echo "Blocked: the review gate can't read the GitHub repo in the remote URL ${bad#?}. Use https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git." >&2
+		exit 2
+	fi
 }
 # Where `git push origin` writes: origin's push URLs (insteadOf and pushInsteadOf applied), as GitHub repos.
 push_slugs() {
@@ -411,11 +449,16 @@ remote_slugs() {
 }
 
 # The repos a `gh api` write names, each checked for opt-in. `{owner}/{repo}` is whichever repo gh picks from
-# the remotes here, so every GitHub remote counts.
+# the remotes where it runs, so every GitHub remote counts, in both the session's directory and the one a `cd`
+# moves to: the call may run before or after it.
 if [ -n "$api_write" ]; then
 	api_slugs=$(printf '%s\n' "$api_write" | sed -n 's/^repo //p' | sort -u)
 	if printf '%s\n' "$api_slugs" | grep -Fqx '{owner}/{repo}'; then
-		here=$(remote_slugs)
+		here=$(
+			remote_slugs
+			cd "$start" 2>/dev/null && remote_slugs
+		)
+		readable_slugs "$here"
 		if [ -z "$here" ]; then
 			echo "Blocked: this \`gh api\` call writes with \`{owner}/{repo}\`, and the review gate finds no GitHub remote here." >&2
 			exit 2
@@ -424,11 +467,11 @@ if [ -n "$api_write" ]; then
 	fi
 	for api_slug in $api_slugs; do
 		if ! api_flag=$(autonomous "$api_slug"); then
-			echo "Blocked: this \`gh api\` call writes code or its guards in $api_slug, and the review gate can't tell whether it opted in. Use \`git push\` and \`gh pr create\` instead." >&2
+			echo "Blocked: this \`gh api\` call makes a write the ship skill doesn't in $api_slug, and the review gate can't tell whether it opted in. Use \`git push\` and \`gh pr create\` for code." >&2
 			exit 2
 		fi
 		if [ -n "$api_flag" ]; then
-			echo "Blocked: \`gh api\` writes of code or its guards bypass the pre-push review gate in $api_slug. Use \`git push\` and \`gh pr create\` instead." >&2
+			echo "Blocked: in $api_slug, \`gh api\` may make only the ship skill's writes (comments, replies, reviews, reactions, issues, labels, workflow runs); others could bypass the pre-push review gate. Use \`git push\` and \`gh pr create\` for code." >&2
 			exit 2
 		fi
 	done
@@ -439,6 +482,7 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 # Which GitHub repo this pushes to, and whether it opted in.
 slug=$(push_slugs)
+readable_slugs "$slug"
 [ -n "$slug" ] || exit 0
 if [ "$(printf '%s\n' "$slug" | wc -l)" -gt 1 ]; then
 	echo "Blocked: origin pushes to more than one GitHub repo ($(echo $slug)); the review gate checks one." >&2
@@ -449,6 +493,13 @@ if ! flag=$(autonomous "$slug"); then
 	exit 2
 fi
 [ -n "$flag" ] || exit 0
+# The review diffs against origin/main and reads its rules, which come from origin's fetch URL, so that must
+# be the repo the push lands in.
+fetch_slug=$(git remote get-url --all origin 2>/dev/null | github_slugs)
+if [ "$fetch_slug" != "$slug" ]; then
+	echo "Blocked: origin fetches from $(echo ${fetch_slug:-a non-GitHub URL}) but pushes to $slug, so the review would diff against the wrong main. Point both at $slug." >&2
+	exit 2
+fi
 owner=${slug%/*}
 name=${slug#*/}
 use_state
