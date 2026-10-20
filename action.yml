@@ -1,0 +1,21 @@
+name: Codex review status
+description: Sets the `codex-review` commit status on a PR's head from Codex's reviews and review threads.
+# The status script is this action's own copy, at the ref the caller pins (@v1), so nothing in the calling
+# repo, including a PR's changes, decides it. Triggers, permissions (statuses: write) and the bot-only
+# filter live in the caller; see skills/ship/templates/codex-review.yml.
+inputs:
+  pr:
+    description: Pull request number
+    required: true
+  token:
+    description: Token that can read the PR and write commit statuses
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - shell: sh
+      run: '"$GITHUB_ACTION_PATH/scripts/codex-status.sh" "$PR"'
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ inputs.pr }}

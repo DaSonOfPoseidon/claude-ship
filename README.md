@@ -8,8 +8,31 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   `hooks/review-*.md` files.
 - `skills/ship/`: the `ship` skill (bootstrap a repo, request Codex reviews, triage by the outcome table,
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
-- `scripts/codex-status.sh` and `.github/workflows/codex-review.yml`: this repo's own Codex sign-off. The
-  master copies for other repos are in `skills/ship/templates/`.
+- `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. It sets the `codex-review` commit
+  status that branch protection requires (success once Codex reviewed the PR's head and every Codex thread is
+  resolved). Every opted-in repo, this one included, calls it from `.github/workflows/codex-review.yml`, a
+  copy of `skills/ship/templates/codex-review.yml`.
+
+## The codex-review action
+
+Repos call it at `@v1`; the script is never copied into them:
+
+```yaml
+- uses: DaSonOfPoseidon/claude-ship@v1
+  with:
+    pr: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+```
+
+The triggers, the filter that only Codex's own comments count, and `permissions: statuses: write` stay in
+the caller, since an action can't set them; copy the whole template.
+
+**Releasing.** Merging to main changes no repo's guard. To release a merged change, move the tag:
+
+```sh
+git fetch origin && git tag -f v1 origin/main && git push -f origin v1
+```
+
+Claude's gate blocks tag pushes, so the owner runs this.
 
 ## Per-repo opt-in
 
@@ -26,7 +49,7 @@ same section.
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks and ~/.claude/skills/ship
+./install.sh   # deploys origin/main into ~/.claude/hooks and ~/.claude/skills/ship (with codex-status.sh)
 ```
 
 Register the hook once in `~/.claude/settings.json`:
