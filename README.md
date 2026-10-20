@@ -33,7 +33,7 @@ Register the hook once in `~/.claude/settings.json`:
 
 ```json
 {"hooks": {"PreToolUse": [{
-  "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__github__push_files|mcp__github__create_or_update_file|mcp__github__create_pull_request|mcp__github__update_pull_request_branch",
+  "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*github.*",
   "hooks": [{"type": "command", "command": "~/.claude/hooks/review-gate.sh", "timeout": 1200}]
 }]}}
 ```
@@ -41,6 +41,17 @@ Register the hook once in `~/.claude/settings.json`:
 After a PR merges, run `./install.sh` again to deploy it. The installed files, the gate's state in
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because
 changes to it go through the same review as any other repo.
+
+The matcher sends every GitHub MCP tool to the gate, which blocks the ones that write files, branches or PRs
+(`push_files`, `create_or_update_file`, `delete_file`, `create_branch`, `create_pull_request`,
+`update_pull_request`, `update_pull_request_branch`, `merge_pull_request`) in opted-in repos.
+
+The gate reviews HEAD, so it lets a push send only HEAD's branch, to origin, and only when origin fetches from
+and pushes to the same GitHub repo. In opted-in repos, `gh api` may make only the writes the ship skill uses
+(comments, replies, reviews, reactions, issues, labels, workflow runs and its own GraphQL mutations); any other
+write, such as commits, refs, PRs, statuses, checks or settings, blocks. It catches Claude's own slips but isn't a security boundary: it matches command text,
+and its state is protected by those patterns alone. Branch protection requiring the `codex-review` status is
+the server-side backstop.
 
 ## Costs
 

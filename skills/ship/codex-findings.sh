@@ -3,6 +3,11 @@
 # One block per thread: <thread id> <priority> <path>:<line>, the finding's title, its first paragraph.
 # Usage: codex-findings.sh <pr> [owner/repo]   (repo defaults to the current checkout's)
 set -eu
+# A missing PR number exits 2 (usage), so a caller never reads it as a result or a timeout.
+if [ -z "${1:-}" ]; then
+	echo "usage: codex-findings.sh <pr> [owner/repo]" >&2
+	exit 2
+fi
 pr=$1
 slug=${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
 # shellcheck disable=SC2016 # GraphQL variables, not shell ones

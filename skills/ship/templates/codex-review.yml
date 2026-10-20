@@ -6,6 +6,9 @@ name: Codex review
 # GitHub runs issue_comment workflows from the default branch, so that trigger uses main's copy.
 # Resolving a thread doesn't trigger workflows, so after resolving run it by hand:
 #   gh workflow run codex-review.yml -f pr=<number>
+# Every run uses main's copy of scripts/codex-status.sh, so a repo's first PR (the one that adds
+# it) skips and never sets the status. Require `codex-review` in branch protection only after
+# that PR merges, or it can't merge without an admin override.
 on:
   pull_request:
     types: [opened, synchronize, reopened]

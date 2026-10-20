@@ -29,6 +29,14 @@ or anything CI already checks (shellcheck, actionlint).
   `git diff --output` writes) and no MCP or plugin tools (`--strict-mcp-config`), whatever the user's settings
   allow. Text from outside (PR threads) goes into a prompt only from Codex, the owner or collaborators (not
   org members), and is marked as data, not instructions.
+- The branch can't steer its reviewer: `--safe-mode` keeps its CLAUDE.md, hooks and skills from loading and
+  `--restricted` ignores every settings file (`--bare` would need an API key; we run on a Pro plan).
+- What's reviewed is what's pushed: a push may send only HEAD, to origin (no `--all`, `--tags`, other
+  branches, tags or other destinations), and GitHub MCP writes of code or PRs are blocked. `gh api` may make
+  only the writes the ship skill uses (an allowlist, REST and GraphQL); any other write, including statuses,
+  checks and settings, blocks. A GitHub URL the gate can't read blocks too.
+- The gate catches Claude's own slips; it isn't a security boundary. It matches command text, and its state is
+  writable by any shell. Branch protection requiring `codex-review` is the server-side backstop.
 - Only the user changes the opt-in variables, waives a review, or edits the installed gate, its state or
   the settings that register it. `install.sh` deploys only `origin/main`.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`), and use only `git`, `gh`, `jq` and coreutils.
