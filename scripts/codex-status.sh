@@ -5,7 +5,7 @@
 #   failure  a Codex thread is unresolved, or Codex's review failed
 #   pending  no completed review of the head commit yet
 # Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
-# This is the only copy: repos run it through this repo's action (action.yml, pinned @v1), and install.sh
+# This is the only copy: repos run it through this repo's action (action.yml, called @v1), and install.sh
 # deploys it into the ship skill for local checks.
 # Usage: codex-status.sh <pr>. With DRY_RUN=1 it prints the status instead of setting it.
 # Needs `gh` (authenticated, or GH_TOKEN) and REPO (defaults to this repository).
