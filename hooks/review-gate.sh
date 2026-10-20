@@ -390,6 +390,8 @@ if [ "$cds" -eq 1 ]; then
 	*) where=$where/$to ;;
 	esac
 fi
+# A later `git -C` replaces $where, but other calls in the command still run in the `cd` target.
+cd_dir=$where
 # The `-C` directory of a form of the command: the whole word after `-C`, so `-C "/a)b"` can't read as `/a`.
 c_dir_of() {
 	printf '%s' "$1" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:]]+).*/\1/p' | tr -d "\"'" |
@@ -455,8 +457,9 @@ remote_slugs() {
 }
 
 # The repos a `gh api` write names, each checked for opt-in. `{owner}/{repo}` is whichever repo gh picks from
-# the remotes where it runs, so every GitHub remote counts, in both the session's directory and the one a `cd`
-# moves to: the call may run before or after it. A write that names no repo (`here`) counts against them too.
+# the remotes where it runs, so every GitHub remote counts, in the session's directory, the one a `cd` moves to
+# and a `git -C` one: the call may run before or after either. A write that names no repo (`here`) counts against
+# them too.
 if [ -n "$api_write" ]; then
 	api_slugs=$(printf '%s\n' "$api_write" | sed -n 's/^repo //p' | sort -u)
 	placeholder=
@@ -464,7 +467,9 @@ if [ -n "$api_write" ]; then
 	if [ -n "$placeholder" ] || printf '%s\n' "$api_write" | grep -qx here; then
 		here=$(
 			remote_slugs
-			cd "$start" 2>/dev/null && remote_slugs
+			for d in "$start" "$cd_dir"; do
+				(cd "$d" 2>/dev/null && remote_slugs)
+			done
 		)
 		readable_slugs "$here"
 		if [ -z "$here" ] && [ -n "$placeholder" ]; then
