@@ -417,14 +417,16 @@ cd "$where" 2>/dev/null || {
 }
 
 # GitHub repos from remote URLs on stdin, one per line: any scheme, user and port, any host case, and GitHub's
-# ssh-over-443 host. A URL that names GitHub but doesn't parse prints as `?<url>`, so callers fail closed on it.
+# ssh-over-443 host. A URL whose host is github.com (or under it) but doesn't parse prints as `?<url>`, so
+# callers fail closed on it; other hosts and local paths aren't GitHub.
 github_slugs() {
 	while IFS= read -r url; do
 		s=$(printf '%s\n' "$url" | sed -E 's#/+$##; s#\.git$##' |
 			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm](:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
+		host=$(printf '%s\n' "$url" | sed -E 's#^[[:alpha:]+]+://##; s#^[^@/]*@##; s#[:/].*##')
 		if [ -n "$s" ]; then
 			echo "$s"
-		elif printf '%s' "$url" | grep -qi github; then
+		elif printf '%s' "$host" | grep -Eqi '(^|\.)github\.com$'; then
 			echo "?$url"
 		fi
 	done | sort -u
