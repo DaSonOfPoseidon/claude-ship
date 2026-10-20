@@ -23,8 +23,9 @@ Repos call it at `@v1`; the script is never copied into them:
     pr: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
 ```
 
-The triggers, the filter that only Codex's own comments count, and `permissions: statuses: write` stay in
-the caller, since an action can't set them; copy the whole template.
+The triggers, the filter that only Codex's own comments count, and the permissions stay in the caller, since
+an action can't set them; copy the whole template. The script needs `contents`, `issues` and `pull-requests`
+read, and `statuses` write.
 
 **Releasing.** Merging to main changes no repo's guard. To release a merged change, move the tag:
 
