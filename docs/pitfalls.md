@@ -36,3 +36,14 @@ review finds a new class.
 - **A list of what's dangerous misses what nobody listed; list what's allowed.** GraphQL mutations name their
   target inside the query and new ones keep appearing, so the gate allows only the mutations the ship skill
   uses instead of blocking known write mutations (claude-ship #9).
+- **A parser that returns nothing for input it doesn't recognize fails open.** The gate read
+  `https://user@github.com/…`, `ssh://…:2222/…` and `GitHub.com` remotes as "not GitHub" and let the push through
+  (claude-ship #9). Parse every form you know, and treat anything that looks like yours but doesn't parse as
+  yours.
+- **A status computed from events goes stale when its inputs change some other way.** `codex-review` reruns on
+  pushes, reviews and comments, but not when a thread is unresolved, so allowing `unresolveReviewThread` left a
+  green status over an open finding (claude-ship #9). Every write a check allows must either trigger it or be
+  unable to change what it counts.
+- **A hook sees the whole command at once, but each step runs in the state of its own moment.** The gate
+  resolved `{owner}/{repo}` in the directory after a trailing `cd`, while the `gh api` before it ran in the
+  first one (claude-ship #9). Check each state a step could run in.
