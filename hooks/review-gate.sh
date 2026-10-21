@@ -705,10 +705,11 @@ fi
 # Runs a headless reviewer: run_reviewer <stage> <model> <prompt file> <schema> <output file>.
 # Reviewers only read: `--tools` makes Read, Grep and Glob the only built-in tools (no shell, since even
 # `git diff --output=<file>` writes), and `--strict-mcp-config` with no config loads no MCP or plugin tools,
-# whatever the user's settings allow. The branch can't steer its own review: `--safe-mode` skips CLAUDE.md,
-# hooks, skills and plugins, and `--restricted` ignores every settings file and keeps the file tools inside
-# the repo (`--bare` would too, but needs an API key). The prompt carries the diff and log, and the working
-# tree is the commit being pushed (the gate refuses a dirty tree and pushes of anything but HEAD).
+# whatever the user's settings allow. The branch can't steer its own review: `--safe-mode` skips its CLAUDE.md,
+# hooks, skills and plugins, and `--restricted` ignores the user and project settings files and keeps the file
+# tools inside the repo (`--bare` would too, but needs an API key). Managed settings and policy hooks still
+# load under both; they're the machine owner's, not the branch's. The prompt carries the diff and log, and the
+# working tree is the commit being pushed (the gate refuses a dirty tree and pushes of anything but HEAD).
 run_reviewer() {
 	echo "review-gate: $1 ($2) on $(git rev-parse --short HEAD) ($range)..." >&2
 	REVIEW_GATE_INNER=1 timeout 1100 claude -p --model "$2" --no-session-persistence --safe-mode --restricted \

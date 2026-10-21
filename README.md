@@ -37,6 +37,9 @@ Claude's gate blocks tag pushes, so the owner runs this. The same command create
 `v1` exists, every caller's `codex-review` run fails to resolve the action and sets no status, so create it
 right after the PR that added `action.yml` merges, before any repo switches to the action.
 
+Other repos can call the action because claude-ship is public. If it ever goes private, every caller fails to
+resolve the action the same way, unless Settings → Actions → General → Access allows them.
+
 ## Per-repo opt-in
 
 The gate and autonomous commits apply only where the repo variable `CLAUDE_AUTONOMOUS` is `true`:
