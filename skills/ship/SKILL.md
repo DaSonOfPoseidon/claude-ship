@@ -71,8 +71,9 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    `run_in_background`); you're notified when it exits. It prints the status once it's no longer
    `pending` for HEAD, exits 1 after 30 min (tell the user Codex never answered), and exits 2 on any error
    from `codex-status.sh` (fix that, don't retry blindly). If the status stays `pending` with "not tied
-   to one request", an earlier review failed or overlapped: re-requesting or pushing won't clear it. Wait for a running review,
-   or ask the user to delete the failed review's `@codex review` comment and rerun the workflow. Before triage, check the status it printed
+   to one request", an earlier review failed or overlapped: re-requesting or pushing won't clear it. Let every running review
+   finish first. Only once a review has visibly failed, ask the user to delete that review's `@codex review`
+   comment and rerun the workflow; deleting the request of a review still running gives a false success. Before triage, check the status it printed
    names HEAD's SHA.
 
 ## 4. Triage

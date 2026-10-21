@@ -61,6 +61,8 @@ review finds a new class.
   MEMBER and COLLABORATOR comments, and when a result can't be tied to its trigger (the summary's edit history
   and Codex's reactions don't say), fail closed: accept it only when exactly one trusted request is outstanding. A failed review leaves no
   marker, so after one a clean blank-commit retry stays pending, and neither re-requesting nor pushing clears
-  it (the failed request stays outstanding): a trusted writer must delete that request comment and rerun the
-  workflow. Don't widen the markers to every Codex comment; an unrelated comment would reset the window
+  it (the failed request stays outstanding). Let every running review finish first; only once a review has
+  visibly failed may a trusted writer delete that request's comment and rerun the workflow. Deleting the
+  request of a review that is still running leaves one request, so the old head's completion is published
+  as a false success for the new head. Don't widen the markers to every Codex comment; an unrelated comment would reset the window
   and reopen the race.

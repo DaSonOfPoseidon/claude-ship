@@ -113,13 +113,14 @@ $r1" 'receipt 2026-10-21T15:00:00Z'
 expect pending 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" 'receipt 2026-10-21T15:41:19Z'
 # Two requests after the push with one completion: also ambiguous, and the description says how to recover.
-WANT_MSG='delete the failed' expect pending 'two requests after push' '—' $p $c "$r1
+WANT_MSG='if one failed' expect pending 'two requests after push' '—' $p $c "$r1
 2026-10-21T15:27:00Z OWNER" ''
-# A failed review leaves no marker, so a clean retry sees both requests: stuck until the failed request comment is deleted and the workflow rerun.
-WANT_MSG='delete the failed' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
+# A failed review leaves no marker, so a clean retry sees both requests: stuck until the failed review's request
+# comment is deleted and the workflow rerun (never while a review is still running).
+WANT_MSG='if one failed' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
 $r1" ''
 # A new commit doesn't clear it: the failed request is still outstanding. Deleting that comment does.
-WANT_MSG='delete the failed' expect pending 'new commit after failure' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z "2026-10-21T15:00:00Z OWNER
+WANT_MSG='if one failed' expect pending 'new commit after failure' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z "2026-10-21T15:00:00Z OWNER
 2026-10-21T15:55:00Z OWNER" ''
 expect success 'stale request deleted' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z '2026-10-21T15:55:00Z OWNER' ''
 # A waiting review (no request yet) keeps the plain message.

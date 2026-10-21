@@ -128,7 +128,7 @@ elif echo "$row" | grep -qiE 'Failed|Error'; then
 	description="Codex's review of $short failed; ask for another with @codex review"
 elif [ -n "$ambiguous" ]; then
 	state=pending
-	description="Review of $short not tied to one request: wait, or delete the failed review's @codex review comment and rerun"
+	description="Review of $short not tied to one request: let running reviews finish; if one failed, delete its request and rerun"
 else
 	state=pending
 	description="Waiting for Codex to review $short"
