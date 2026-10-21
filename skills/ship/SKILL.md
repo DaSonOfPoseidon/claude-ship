@@ -70,7 +70,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background (Bash
    `run_in_background`); you're notified when it exits. It prints the status once it's no longer
    `pending` for HEAD, exits 1 after 30 min (tell the user Codex never answered), and exits 2 on any error
-   from `codex-status.sh` (fix that, don't retry blindly). Before triage, check the status it printed
+   from `codex-status.sh` (fix that, don't retry blindly). If the status stays `pending` with "can't be tied
+   to one request", an earlier review failed or overlapped: re-requesting won't clear it; push a new commit. Before triage, check the status it printed
    names HEAD's SHA.
 
 ## 4. Triage

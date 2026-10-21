@@ -38,7 +38,7 @@ fail=0
 check() {
 	out=$(REPO=o/r DRY_RUN=1 PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
 	case $out in
-	"$1":*) ;;
+	"$1":*"${WANT_MSG:-}"*) ;;
 	*)
 		echo "FAIL (want $1): $2"
 		echo "  $out"
@@ -105,8 +105,20 @@ $r1" 'receipt 2026-10-21T15:00:00Z'
 # completion comes after both, but it can't be told apart from the new one's, so two requests stay pending.
 expect pending 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" 'receipt 2026-10-21T15:41:19Z'
-# Two requests after the push with one completion: also ambiguous.
-expect pending 'two requests after push' '—' $p $c "$r1
+# Two requests after the push with one completion: also ambiguous, and the description says to push.
+WANT_MSG='push a new commit' expect pending 'two requests after push' '—' $p $c "$r1
 2026-10-21T15:27:00Z OWNER" ''
+# A failed review leaves no marker, so a clean retry sees both requests: stuck until a new commit.
+WANT_MSG='push a new commit' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
+$r1" ''
+# A waiting review (no request yet) keeps the plain message.
+WANT_MSG='Waiting for Codex' expect pending 'plain waiting' '—' $p $c '' ''
+# Reviews less than a minute apart: the receipt nearest the completion is its own, the one before it is
+# the previous completion.
+expect success "close rounds" "—" $p $c "2026-10-21T15:20:00Z OWNER
+2026-10-21T15:40:45Z OWNER" 'receipt 2026-10-21T15:40:40Z
+receipt 2026-10-21T15:41:19Z'
+# No receipt of its own near the completion: the latest marker is a previous one.
+expect success 'no own receipt' '—' $p $c "$r1" 'receipt 2026-10-21T15:00:00Z'
 
 exit $fail

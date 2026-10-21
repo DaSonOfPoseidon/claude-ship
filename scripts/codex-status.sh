@@ -50,6 +50,7 @@ row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || 
 # after this push, and the review finished after it. Overlapping requests stay pending until a later
 # re-request leaves only one.
 requested_at=
+ambiguous=
 if [ -z "$row" ]; then
 	row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F '| — |' || true)
 	completed=$(echo "$row" | grep -o 'datetime="[^"]*"' | head -1 | cut -d'"' -f2 | cut -c1-19)
@@ -65,15 +66,22 @@ if [ -z "$row" ]; then
 			--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
 		reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
 			--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
-		# The summary's time and its own receipt are seconds apart, so a completion counts as an earlier
-		# one only when it came more than a minute before. If the date can't be computed, stay pending.
-		cutoff=$(date -u -d "$completed UTC - 60 seconds" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || cutoff=
-		if [ -n "$cutoff" ]; then
-			previous=$(printf '%s\n%s\n' "$receipts" "$reviews" | cut -c1-19 | awk -v c="$cutoff" 'NF && $0 < c' | sort | tail -1)
+		# The summary's time and its own receipt are seconds apart. The latest marker within a minute of
+		# the completion is its own receipt, and the one before it is the previous completion. With no
+		# marker that close, the latest earlier one is the previous. If the date can't be computed,
+		# stay pending.
+		lo=$(date -u -d "$completed UTC - 60 seconds" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || lo=
+		hi=$(date -u -d "$completed UTC + 60 seconds" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || hi=
+		if [ -n "$lo" ] && [ -n "$hi" ]; then
+			previous=$(printf '%s\n%s\n' "$receipts" "$reviews" | cut -c1-19 | awk -v h="$hi" 'NF && $0 <= h' | sort |
+				awk -v l="$lo" '{ a[NR] = $0 } END { if (NR && a[NR] >= l) print a[NR - 1]; else if (NR) print a[NR] }')
 			since=$(printf '%s\n' "$requests" | cut -c1-19 | awk -v p="$previous" 'NF && $0 > p')
-			if [ "$(printf '%s\n' "$since" | grep -c .)" = 1 ]; then
+			outstanding=$(printf '%s\n' "$since" | grep -c . || true)
+			if [ "$outstanding" = 1 ]; then
 				requested_at=$since
 				row_ok=1
+			elif [ "$outstanding" -gt 1 ]; then
+				ambiguous=1
 			fi
 		fi
 	fi
@@ -118,6 +126,9 @@ elif echo "$row" | grep -q 'Completed' && after_push; then
 elif echo "$row" | grep -qiE 'Failed|Error'; then
 	state=failure
 	description="Codex's review of $short failed; ask for another with @codex review"
+elif [ -n "$ambiguous" ]; then
+	state=pending
+	description="Codex's review of $short can't be tied to one request (overlapping or failed reviews); wait for a running review, or push a new commit"
 else
 	state=pending
 	description="Waiting for Codex to review $short"

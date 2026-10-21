@@ -59,4 +59,7 @@ review finds a new class.
   counted `@codex review` from any non-bot, so an outsider could reset a success, and a slow review of the old
   head finishing after the new head's request looked like the new review (claude-ship #33). Count only OWNER,
   MEMBER and COLLABORATOR comments, and when a result can't be tied to its trigger (the summary's edit history
-  and Codex's reactions don't say), fail closed: accept it only when exactly one trusted request is outstanding.
+  and Codex's reactions don't say), fail closed: accept it only when exactly one trusted request is outstanding. A failed review leaves no
+  marker, so after one a clean blank-commit retry stays pending: recovery is pushing a new commit, not
+  re-requesting. Don't widen the markers to every Codex comment; an unrelated comment would reset the window
+  and reopen the race.
