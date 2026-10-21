@@ -105,10 +105,10 @@ $r1" 'receipt 2026-10-21T15:00:00Z'
 # completion comes after both, but it can't be told apart from the new one's, so two requests stay pending.
 expect pending 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" 'receipt 2026-10-21T15:41:19Z'
-# Two requests after the push with one completion: also ambiguous, and the description says to push.
+# Two requests after the push with one completion: also ambiguous, and the description says how to recover.
 WANT_MSG='delete the failed' expect pending 'two requests after push' '—' $p $c "$r1
 2026-10-21T15:27:00Z OWNER" ''
-# A failed review leaves no marker, so a clean retry sees both requests: stuck until a new commit.
+# A failed review leaves no marker, so a clean retry sees both requests: stuck until the failed request comment is deleted and the workflow rerun.
 WANT_MSG='delete the failed' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
 $r1" ''
 # A new commit doesn't clear it: the failed request is still outstanding. Deleting that comment does.
