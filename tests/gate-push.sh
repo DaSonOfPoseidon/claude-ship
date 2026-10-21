@@ -38,7 +38,9 @@ expect() {
 fixture https://github.com/acme/app.git
 expect 0 'git push -u origin HEAD'
 expect 0 'git status && git push origin HEAD 2>&1 | tail -3'
-expect 0 'git fetch -q origin main && git push origin HEAD'
+expect 0 'git ls-remote origin && git push origin HEAD'
+# A fetch can move the branch the gate just reviewed (`--update-head-ok`).
+expect 2 'git fetch --update-head-ok origin main:feat && git push origin HEAD'
 # Config written earlier in the same command is read by the push but not by the gate.
 expect 2 'git config push.followTags true && git push origin HEAD'
 expect 2 'git -C . config remote.origin.mirror true; git push origin HEAD'
@@ -55,11 +57,17 @@ expect 2 'sh -c "git config push.default matching" && git push'
 expect 2 'echo "[push] followTags = true" >> .git/config && git push origin HEAD'
 expect 2 'printf x >> ~/.gitconfig; git push origin HEAD'
 expect 2 'cat x >> ~/.config/git/config; git push origin HEAD'
+expect 2 'cat x >> /etc/gitconfig; git push'
 
 # A fetch URL that isn't the pushed repo, even one that isn't GitHub's, supplies the review's base and rules.
 fixture /tmp/base.git
 git -C "$repo" remote set-url --add origin https://github.com/acme/app.git
 git -C "$repo" remote set-url --push origin https://github.com/acme/app.git
+expect 2 'git push origin HEAD'
+# A push goes to every push URL, so one the gate can't check blocks too.
+fixture https://github.com/acme/app.git
+git -C "$repo" remote set-url --push origin https://github.com/acme/app.git
+git -C "$repo" remote set-url --push --add origin /srv/mirror.git
 expect 2 'git push origin HEAD'
 fixture https://github.com/acme/app.git
 git -C "$repo" remote set-url --add origin https://github.com/acme/other.git
