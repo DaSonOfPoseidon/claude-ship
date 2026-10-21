@@ -206,9 +206,11 @@ api_scan() (
 			continue
 		fi
 		# gh reads a short-flag cluster one letter at a time until a flag that takes a value, so `-iFa=b` is
-		# `-i -Fa=b` and `-iXPOST` is `-i -XPOST`. `-i` is the only short flag of gh api that takes none.
+		# `-i -Fa=b` and `-iXPOST` is `-i -XPOST`. `-i` is the only short flag of gh api that takes none, and
+		# `-i=false` gives it one.
 		while :; do
 			case $w in
+			-i=*) break ;;
 			-i?*) w=-${w#-i} ;;
 			*) break ;;
 			esac
@@ -229,7 +231,7 @@ api_scan() (
 		-H | --header | -q | --jq | -t | --template | --hostname | --cache | -p | --preview) skip=other ;;
 		# Long options, and short ones with their value attached (`-Haccept:x`); a short cluster the gate can't
 		# read could hide a field or a method, so it blocks.
-		--* | -i | -h | -H?* | -q?* | -t?* | -p?* | -) ;;
+		--* | -i | -i=* | -h | -H?* | -q?* | -t?* | -p?* | -) ;;
 		-*)
 			echo "block the review gate can't read the flags \`$w\`"
 			exit 0

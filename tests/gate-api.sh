@@ -38,6 +38,8 @@ bash 2 'gh api -iX PATCH repos/acme/app'
 bash 2 'gh api -if body=x repos/acme/app/pulls/1/merge'
 bash 2 'gh api -zFx=y repos/acme/app/git/refs'
 bash 0 'gh api -i repos/acme/app/pulls/1'
+bash 0 'gh api -i=false repos/acme/app/pulls/1'
+bash 2 'gh api -i=true -f x=y repos/acme/app/git/refs'
 bash 0 'gh api -iHaccept:application/json repos/acme/app/pulls/1'
 bash 0 'gh api -i repos/acme/app/issues/1/comments -f body=hi'
 # A branch name with slashes is still a branch the allowlist doesn't cover.
