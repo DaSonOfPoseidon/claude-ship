@@ -52,3 +52,6 @@ review finds a new class.
 - **A permission that looks like it belongs to one step may serve others.** Dropping `actions/checkout` took
   `contents: read` with it, but the status script's activity lookup needed it too (claude-ship #18). Before
   removing a permission, list every API call that runs under the token, and keep each permission they need.
+- **Another tool's output can leave out a field you match on.** Codex's summary names the reviewed commit,
+  except on some clean reviews, where it shows `—`, and `codex-status.sh` waited forever (claude-ship #30).
+  Decide what each missing field means, fail closed, and test the blank case.

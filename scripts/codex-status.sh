@@ -1,7 +1,7 @@
 #!/bin/sh
 # Sets the `codex-review` commit status on a PR's head commit:
-#   success  Codex completed a review of the head commit after it was pushed, and every Codex
-#            review thread is resolved
+#   success  Codex completed a review of the head commit after it was pushed (when its summary names no
+#            commit, one asked for after the push), and every Codex review thread is resolved
 #   failure  a Codex thread is unresolved, or Codex's review failed
 #   pending  no completed review of the head commit yet
 # Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
@@ -44,6 +44,16 @@ pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
+# A clean review's row can name no commit (`—`, #30). It then counts only if the latest `@codex review`
+# came after this push, so the commit Codex reviewed can only be this one.
+requested_at=
+if [ -z "$row" ]; then
+	row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F '| — |' || true)
+	requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+		--jq '.[] | select(.user.type != "Bot") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
+	requested_at=$(printf '%s\n' "$requests" | sort | tail -1 | cut -c1-19)
+	[ -n "$requested_at" ] || row=
+fi
 
 # Unresolved review threads Codex started, on any commit. GraphQL drops the [bot] suffix.
 threads=$(gh api graphql --paginate -F owner="$owner" -F name="$name" -F pr="$pr" -f query='
@@ -64,10 +74,14 @@ findings=$(printf '%s' "$threads" | grep -c . || true)
 
 # The time Codex finished, from its row: <relative-time datetime="...">, to the second.
 completed_at=$(echo "$row" | grep -o 'datetime="[^"]*"' | head -1 | cut -d'"' -f2 | cut -c1-19)
-# ISO 8601 times to the second sort as text, so the later one sorts last.
+# later <a> <b>: a is strictly after b. ISO 8601 times to the second sort as text, so the later one sorts last.
+later() {
+	[ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] &&
+		[ "$(printf '%s\n%s\n' "$2" "$1" | sort | tail -1)" = "$1" ]
+}
 after_push() {
-	[ -n "$pushed_at" ] && [ -n "$completed_at" ] && [ "$completed_at" != "$pushed_at" ] &&
-		[ "$(printf '%s\n%s\n' "$pushed_at" "$completed_at" | sort | tail -1)" = "$completed_at" ]
+	later "$completed_at" "$pushed_at" &&
+		{ [ -z "$requested_at" ] || { later "$requested_at" "$pushed_at" && later "$completed_at" "$requested_at"; }; }
 }
 
 if [ "$findings" -gt 0 ]; then
