@@ -158,14 +158,11 @@ if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|de
 fi
 # Writing gate state or the installed gate would bypass the review; reading its reports is fine. A command that
 # names a protected path writes when it runs a writing tool, or redirects output anywhere but another descriptor
-# (`2>&1`, `>&2`) or /dev/null, stdout or stderr. Only an unquoted `>` redirects, so redirects are read from the
-# words (a quoted `>` is a marker there), or from the raw command when the scanner can't read its quoting.
+# (`2>&1`, `>&2`) or /dev/null, stdout or stderr. A quoted `>` counts too, since `sh -c "… > f"` redirects.
 protected=$(printf '%s' "$cmd_all" |
 	grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
 if [ -n "$protected" ]; then
-	redirects=$words
-	case $words in *@UQ@*) redirects=$cmd ;; esac
-	write=$(printf '%s' "$redirects" |
+	write=$(printf '%s' "$cmd_all" |
 		sed -E 's/[0-9]*>&([0-9]+|-)//g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)([^[:alnum:]_/.-]|$)#\3#g' |
 		grep -Eo '[^[:space:]]*>[^[:space:]]*([[:space:]]+[^[:space:];&|]+)?' | head -1)
 	[ -n "$write" ] || write=$(printf '%s' "$cmd_all" |

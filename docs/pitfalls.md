@@ -7,7 +7,8 @@ review finds a new class.
   old HEAD. Commit and push in separate commands.
 - **Pattern checks match text, not intent.** The push check also fires on `git push` inside a quoted string,
   and the write check fired on read-only `jq` (removed), on `>` inside an awk comparison and on a `2>&1`
-  stderr merge (claude-ship #21). A redirect writes only through its target. Test a new
+  stderr merge (claude-ship #21). A redirect writes only through its target, but a quoted one still writes
+  inside `sh -c` or `awk`, so quoting doesn't make it text. Test a new
   pattern against read-only commands that mention the same paths. It cuts both ways: a word boundary that
   excluded `/` missed `/usr/bin/gh api` and `/usr/bin/git push` (claude-ship #9). Test every way the command
   can be named, too.

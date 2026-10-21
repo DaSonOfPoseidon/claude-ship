@@ -31,9 +31,7 @@ expect 0 '~/.claude/skills/ship/codex-wait.sh 29 >/dev/null 2>&1'
 expect 0 '~/.claude/skills/ship/codex-wait.sh 29 &>/dev/null'
 expect 0 'ls ~/x/.git/review-gate/ >&2'
 expect 0 'cat ~/.claude/hooks/review-prompt.md'
-expect 0 "jq . ~/.claude/settings.json | awk '\$1 > 5'"
-expect 0 'echo x ">" ~/.claude/hooks/review-gate.sh'
-expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-request.sh 29 2>&1 → blocked > x"'
+expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-request.sh 29 2>&1 | tail"'
 
 # Writes block, by redirect or by tool.
 expect 2 'echo x > ~/.claude/hooks/review-gate.sh'
@@ -45,6 +43,12 @@ expect 2 'echo x 2>/dev/null >~/.claude/skills/ship/SKILL.md'
 expect 2 ': > /repo/.git/review-gate/abc.pass'
 expect 2 'cd ~/.claude/hooks && echo x >review-gate.sh'
 expect 2 "echo \$'x' > ~/.claude/hooks/x"
+# A quoted `>` may still redirect, inside a shell or interpreter the command runs.
+expect 2 'sh -c "echo x > ~/.claude/hooks/review-gate.sh"'
+expect 2 "bash -c 'echo x >> ~/.claude/settings.json'"
+expect 2 "eval 'echo x > /repo/.git/review-gate/abc.pass'"
+expect 2 "awk 'BEGIN { print \"x\" > \"/repo/.git/review-gate/abc.pass\" }'"
+expect 2 'gh issue create --title t --body "echo x > ~/.claude/hooks/x"'
 expect 2 'cp /tmp/x ~/.claude/hooks/review-gate.sh'
 expect 2 'echo x | tee ~/.claude/skills/ship/SKILL.md'
 expect 2 'sed -i s/a/b/ ~/.claude/hooks/review-prompt.md'
