@@ -37,6 +37,13 @@ fail=0
 # check <state> <label>: runs the script on the fixtures in $tmp.
 check() {
 	out=$(REPO=o/r DRY_RUN=1 PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
+	# GitHub rejects a commit status description over 140 characters.
+	desc=${out#*: }
+	desc=${desc% (*}
+	if [ "${#desc}" -gt 140 ]; then
+		echo "FAIL: description is ${#desc} characters (max 140): $2"
+		fail=1
+	fi
 	case $out in
 	"$1":*"${WANT_MSG:-}"*) ;;
 	*)
