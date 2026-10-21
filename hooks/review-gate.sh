@@ -206,12 +206,12 @@ api_scan() (
 			continue
 		fi
 		# gh reads a short-flag cluster one letter at a time until a flag that takes a value, so `-iFa=b` is
-		# `-i -Fa=b` and `-iXPOST` is `-i -XPOST`. `-i` is the only short flag of gh api that takes none, and
-		# `-i=false` gives it one.
+		# `-i -Fa=b` and `-iXPOST` is `-i -XPOST`. `-i` and `-h` (help) are the only short flags of gh api that
+		# take none, and `-i=false` gives -i one.
 		while :; do
 			case $w in
 			-i=*) break ;;
-			-i?*) w=-${w#-i} ;;
+			-i?* | -h?*) w=-${w#-?} ;;
 			*) break ;;
 			esac
 		done
