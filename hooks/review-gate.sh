@@ -156,11 +156,25 @@ if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|de
 	echo "Blocked: CLAUDE_AUTONOMOUS and CLAUDE_P3_LABELS are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
 	exit 2
 fi
-# Writing gate state or the installed gate would bypass the review; reading its reports is fine.
-if printf '%s' "$cmd_all" | grep -Eq "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship)|\.git/review-gate|disableAllHooks" &&
-	printf '%s' "$cmd_all" | grep -Eq '>|(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)'; then
-	echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine." >&2
-	exit 2
+# Writing gate state or the installed gate would bypass the review; reading its reports is fine. A command that
+# names a protected path writes when it runs a writing tool, or redirects output anywhere but another descriptor
+# (`2>&1`, `>&2`) or /dev/null, stdout or stderr. Only an unquoted `>` redirects, so redirects are read from the
+# words (a quoted `>` is a marker there), or from the raw command when the scanner can't read its quoting.
+protected=$(printf '%s' "$cmd_all" |
+	grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
+if [ -n "$protected" ]; then
+	redirects=$words
+	case $words in *@UQ@*) redirects=$cmd ;; esac
+	write=$(printf '%s' "$redirects" |
+		sed -E 's/[0-9]*>&([0-9]+|-)//g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)([^[:alnum:]_/.-]|$)#\3#g' |
+		grep -Eo '[^[:space:]]*>[^[:space:]]*([[:space:]]+[^[:space:];&|]+)?' | head -1)
+	[ -n "$write" ] || write=$(printf '%s' "$cmd_all" |
+		grep -Eo '(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)' |
+		head -1 | sed -E 's/^[^[:alpha:]]//; s/[^[:alpha:]]$//')
+	if [ -n "$write" ]; then
+		echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names \`$protected\` and writes with \`$write\`." >&2
+		exit 2
+	fi
 fi
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then

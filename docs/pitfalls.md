@@ -6,7 +6,8 @@ review finds a new class.
 - **Hooks judge a whole command before any of it runs.** A `git commit && git push` chain is reviewed at the
   old HEAD. Commit and push in separate commands.
 - **Pattern checks match text, not intent.** The push check also fires on `git push` inside a quoted string,
-  and the write check fired on read-only `jq` (removed) and on `>` inside an awk comparison. Test a new
+  and the write check fired on read-only `jq` (removed), on `>` inside an awk comparison and on a `2>&1`
+  stderr merge (claude-ship #21). A redirect writes only through its target. Test a new
   pattern against read-only commands that mention the same paths. It cuts both ways: a word boundary that
   excluded `/` missed `/usr/bin/gh api` and `/usr/bin/git push` (claude-ship #9). Test every way the command
   can be named, too.
