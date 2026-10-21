@@ -543,30 +543,40 @@ push_scope() (
 		echo "it runs more than one \`git push\`"
 		return 1
 	fi
-	# The checks below read git config before the command runs, so nothing earlier in it may change that config:
-	# next to a push, git may only read, and no config file may be named (`echo … >> .git/config`).
-	# Each git call's subcommand is its first word that isn't an option: `-C` is the only global option a pushing
-	# command may give a value (the checks below block the others), so `git --no-pager config` reads as `config`.
-	others=$(printf '%s\n' "$push_cmd" | grep -Eo '(^|[^[:alnum:]_.-])git([[:space:]][^;&|)]*)?' |
-		while IFS= read -r call; do
-			set -f
-			# shellcheck disable=SC2086
-			set -- ${call#*git}
-			while [ $# -gt 0 ]; do
-				case $1 in
-				-C) [ $# -ge 2 ] && shift 2 || shift ;;
-				-*) shift ;;
-				*) break ;;
-				esac
-			done
-			[ $# -eq 0 ] || printf '%s\n' "$1"
-		done | grep -Evx 'push|status|log|diff|show|rev-parse|ls-remote' | sort -u | tr '\n' ' ')
-	if [ -n "$others" ]; then
-		echo "it also runs \`git ${others% }\`, which may change what the push sends after the gate checked it; run that in its own command first"
-		return 1
-	fi
-	if printf '%s' "$push_cmd" | grep -Eq '(^|[/[:space:].])(gitconfig|config(\.worktree)?)([[:space:];&|)]|$)'; then
-		echo "it names a git config file, which may change what the push sends after the gate checked it; change config in its own command first"
+	# The checks below read git config, refs and files before the command runs, so anything earlier in the command
+	# (or a later step that reruns it) can change what the push sends after they passed: `git show --output=…`,
+	# `printf … > /tmp/settings` behind an `include.path`. So a pushing command holds only the push, with at most a
+	# leading `cd <dir> &&`, harmless redirects (whole descriptor duplications, /dev/null, /dev/stdout,
+	# /dev/stderr) and trailing pipes into read-only filters. Redirects are taken out first, then every simple
+	# command (split at `;&|()` and newlines) must be one of those.
+	bare=$(printf '%s' "$push_cmd" | sed -E 's/&>>?[[:space:]]*\/dev\/(null|stdout|stderr)/ /g;
+		s/[0-9]*>>?[[:space:]]*\/dev\/(null|stdout|stderr)([^[:alnum:]_.\/-]|$)/ \2/g; s/[0-9]*>&([0-9]+|-)([^[:alnum:]_]|$)/ \2/g')
+	extra=$(
+		seen=
+		first=1
+		printf '%s\n' "$bare" | sed -E 's/&&|\|\||[;&|()`]/\
+/g' | while IFS= read -r part; do
+			part=$(printf '%s' "$part" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+			[ -n "$part" ] || continue
+			if printf '%s' "$part" | grep -Eq "$git_push"; then
+				seen=1
+			elif [ -z "$seen" ] && [ "$first" = 1 ] && printf '%s' "$part" | grep -Eq '^cd[[:space:]]+[^[:space:]]+$'; then
+				:
+			elif [ -n "$seen" ] && printf '%s' "$part" | grep -Eq '^(tail|head|cat|grep)([[:space:]]|$)'; then
+				:
+			else
+				printf '%s\n' "$part"
+				break
+			fi
+			first=
+		done
+	)
+	# Shell syntax the split above can't place (substitutions, a trailing `&`, a redirect, a second line, a `;`
+	# before the push) fails the whole-command shape check.
+	shape="^[[:space:]]*(cd[[:space:]]+[^[:space:];&|<>()\$\`]+[[:space:]]*&&[[:space:]]*)?([^[:space:];&|<>()\$\`]*/)?git([[:space:]][^;&|<>()\$\`]*)?([[:space:]]*\\|[[:space:]]*(tail|head|cat|grep)([[:space:]][^;&|<>()\$\`]*)?)*[[:space:]]*\$"
+	if [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; then
+		[ -n "$extra" ] || extra=$(printf '%s' "$bare" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
+		echo "it also runs \`$extra\`, which may change what the push sends after the gate checked it; run that in its own command first"
 		return 1
 	fi
 	args=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\6#p" | head -1 |
@@ -651,8 +661,8 @@ push_scope() (
 		echo "remote.origin.mirror makes every push a mirror push"
 		return 1
 	fi
-	# Global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) and environment overrides
-	# (GIT_*, HOME, `env`, `export`, `VAR=x git`) can change what's pushed or from which repo. All block.
+	# Global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) can change what's pushed or
+	# from which repo, and block. (Environment overrides never get this far: only the push may run.)
 	globals=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([^[:alnum:]_-].*|$)#\\2#p" | head -1 |
 		sed -E 's/(^|[[:space:]]+)-C[[:space:]]+[^[:space:]]+//g')
 	case $globals in
@@ -666,10 +676,6 @@ push_scope() (
 	if printf '%s' "$push_cmd" | grep -Eq '(^|[[:space:]])(-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--bare|--super-prefix)([[:space:]=]|$)' ||
 		[ "$(printf '%s' "$push_cmd" | grep -Eo '(^|[[:space:]])-C([[:space:]]|$)' | wc -l)" -gt 1 ]; then
 		echo "it passes git global options; only one \`-C <dir>\` is allowed"
-		return 1
-	fi
-	if printf '%s' "$push_cmd" | grep -Eq 'GIT_[A-Z_]*=|(^|[^[:alnum:]_])((export|env)[[:space:]]|HOME=|XDG_[A-Z_]*=)|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+git[[:space:]]'; then
-		echo "it sets environment variables, which can change what git pushes"
 		return 1
 	fi
 )
