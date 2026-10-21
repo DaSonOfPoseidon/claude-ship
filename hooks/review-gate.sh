@@ -579,7 +579,7 @@ push_scope() (
 	# words are data: it has to be that single command, with no unquoted separator, redirect or expansion.
 	data_only=
 	if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment)[[:space:]]' &&
-		! printf '%s' "$words" | grep -Eq '[;&|<>()$`]' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
+		! printf '%s' "$words" | grep -Eq '[;&|<>()`]|\$(\(|@LP@|\[)' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
 		data_only=1
 	fi
 	if [ -z "$data_only" ] && { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then

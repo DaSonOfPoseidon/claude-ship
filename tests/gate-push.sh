@@ -50,6 +50,7 @@ expect 0 "cd $repo && git push -u origin HEAD 2>&1 | tail -3"
 # Quoted text that mentions a push is not a push.
 expect 0 'gh pr create --title t --body "see git push"'
 expect 2 'echo "git push" && echo done'
+expect 0 'gh pr create --body "costs $5, see git push"'
 expect 2 'gh pr create --body "see git push" && git config push.followTags true'
 expect 2 'gh pr create --body "$(git config push.followTags true; git push origin HEAD)"'
 # A quoted push still runs under `sh -c` and `eval`.
