@@ -1,11 +1,17 @@
 #!/bin/sh
 # Deploys claude-ship's main branch into ~/.claude: the review gate and its prompts into hooks/, and the ship
-# skill into skills/ship/, with the action's codex-status.sh for local DRY_RUN checks. Only origin/main is deployed, so what runs has passed review; a branch's changes
-# never go live. The gate's hook entry lives in ~/.claude/settings.json (see README.md).
+# skill into skills/ship/, with the action's codex-status.sh for local DRY_RUN checks. Only origin/main is
+# deployed, so what runs has passed review; a branch's changes never go live. That holds for this script too:
+# after fetching, it runs main's copy of itself, so a checkout behind main still deploys what main's installer
+# knows to (claude-ship #20). The gate's hook entry lives in ~/.claude/settings.json (see README.md).
 set -eu
-repo=$(cd "$(dirname "$0")" && pwd)
+repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
-git -C "$repo" fetch -q origin main
+if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
+	git -C "$repo" fetch -q origin main
+	main=$(git -C "$repo" show origin/main:install.sh)
+	CLAUDE_SHIP_REEXEC=1 CLAUDE_SHIP_REPO=$repo exec sh -c "$main" install.sh
+fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git -C "$repo" archive origin/main hooks skills scripts/codex-status.sh | tar -x -C "$tmp"
