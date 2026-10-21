@@ -1,7 +1,7 @@
 #!/bin/sh
 # Sets the `codex-review` commit status on a PR's head commit:
 #   success  Codex completed a review of the head commit after it was pushed (when its summary names no
-#            commit, one asked for after the push), and every Codex review thread is resolved
+#            commit, the only trusted request since the previous review, made after the push), and every Codex review thread is resolved
 #   failure  a Codex thread is unresolved, or Codex's review failed
 #   pending  no completed review of the head commit yet
 # Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
@@ -44,15 +44,38 @@ pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
-# A clean review's row can name no commit (`—`, #30). It then counts only if the latest `@codex review`
-# came after this push, so the commit Codex reviewed can only be this one.
+# A clean review's row can name no commit (`—`, #30). Nothing ties that completion to a request (neither
+# the summary's edit history nor Codex's reactions say which request it answers), so fail closed: it counts
+# only when exactly one trusted request has been made since the previous completed review, that request came
+# after this push, and the review finished after it. Overlapping requests stay pending until a later
+# re-request leaves only one.
 requested_at=
 if [ -z "$row" ]; then
 	row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F '| — |' || true)
-	requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-		--jq '.[] | select(.user.type != "Bot") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
-	requested_at=$(printf '%s\n' "$requests" | sort | tail -1 | cut -c1-19)
-	[ -n "$requested_at" ] || row=
+	completed=$(echo "$row" | grep -o 'datetime="[^"]*"' | head -1 | cut -d'"' -f2 | cut -c1-19)
+	row_ok=
+	if [ -n "$completed" ]; then
+		# Anyone can comment `@codex review`, so only the owner, members and collaborators count.
+		requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
+		# Earlier completions leave a receipt comment (clean) or a pull request review (findings).
+		receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+			--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
+		reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+			--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
+		# The summary's time and its own receipt are seconds apart, so a completion counts as an earlier
+		# one only when it came more than a minute before. If the date can't be computed, stay pending.
+		cutoff=$(date -u -d "$completed UTC - 60 seconds" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || cutoff=
+		if [ -n "$cutoff" ]; then
+			previous=$(printf '%s\n%s\n' "$receipts" "$reviews" | cut -c1-19 | awk -v c="$cutoff" 'NF && $0 < c' | sort | tail -1)
+			since=$(printf '%s\n' "$requests" | cut -c1-19 | awk -v p="$previous" 'NF && $0 > p')
+			if [ "$(printf '%s\n' "$since" | grep -c .)" = 1 ]; then
+				requested_at=$since
+				row_ok=1
+			fi
+		fi
+	fi
+	[ -n "$row_ok" ] || row=
 fi
 
 # Unresolved review threads Codex started, on any commit. GraphQL drops the [bot] suffix.

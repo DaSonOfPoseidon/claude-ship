@@ -55,3 +55,8 @@ review finds a new class.
 - **Another tool's output can leave out a field you match on.** Codex's summary names the reviewed commit,
   except on some clean reviews, where it shows `—`, and `codex-status.sh` waited forever (claude-ship #30).
   Decide what each missing field means, fail closed, and test the blank case.
+- **Anyone can post a comment, and a completion doesn't say which request it answers.** `codex-status.sh`
+  counted `@codex review` from any non-bot, so an outsider could reset a success, and a slow review of the old
+  head finishing after the new head's request looked like the new review (claude-ship #33). Count only OWNER,
+  MEMBER and COLLABORATOR comments, and when a result can't be tied to its trigger (the summary's edit history
+  and Codex's reactions don't say), fail closed: accept it only when exactly one trusted request is outstanding.
