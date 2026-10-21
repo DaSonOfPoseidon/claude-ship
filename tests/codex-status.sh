@@ -1,8 +1,9 @@
 #!/bin/sh
 # Tests codex-status.sh against Codex summaries whose Code Review row names no commit (`—`), as on
-# OBDCracker #145 (claude-ship #30). Such a row counts for the head only when exactly one trusted
-# `@codex review` (owner, member or collaborator) was made since the previous completed review, that request
-# came after the head's push, and the review finished after it. The fake gh below serves fixtures and applies
+# OBDCracker #145 (claude-ship #30). Such a row counts for the head only when the trusted `@codex review`
+# requests (owner or collaborator) are as many as the completion markers (receipts and Codex reviews, the
+# current one included), the latest request came after the head's push, and the review finished after it.
+# The fake gh below serves fixtures and applies
 # the script's own --jq filters with real jq, so the filters are tested too.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -78,59 +79,71 @@ expect() {
 p=2026-10-21T15:25:00Z
 c=2026-10-21T15:41:21.05Z
 r1='2026-10-21T15:26:03Z OWNER'
+# The current review's own receipt, a few seconds before the summary's completion time.
+m='receipt 2026-10-21T15:41:19Z'
 
 # A named commit still works as before, with no request at all.
 expect success 'commit named' '`7ca1cc3`' $p $c '' ''
 # Another commit named.
-expect pending 'other commit named' '`0b996f7`' $p $c "$r1" ''
+expect pending 'other commit named' '`0b996f7`' $p $c "$r1" 'receipt 2026-10-21T15:41:19Z'
 # No commit named: asked for after the push, finished after the request.
-expect success 'normal blank case' '—' $p $c "$r1" 'receipt 2026-10-21T15:41:19Z'
-expect success 'member counts' '—' $p $c '2026-10-21T15:26:03Z MEMBER' ''
-expect success 'collaborator counts' '—' $p $c '2026-10-21T15:26:03Z COLLABORATOR' ''
+expect success 'normal blank case' '—' $p $c "$r1" "$m"
+# Members are not trusted (an org member needn't have access to the repo); collaborators are.
+expect pending 'member does not count' '—' $p $c '2026-10-21T15:26:03Z MEMBER' "$m"
+expect success 'collaborator counts' '—' $p $c '2026-10-21T15:26:03Z COLLABORATOR' "$m"
 # Asked for before the push: the review may be of an older commit.
-expect pending 'request before push' '—' 2026-10-21T15:30:00Z $c "$r1" ''
+expect pending 'request before push' '—' 2026-10-21T15:30:00Z $c "$r1" "$m"
 # Asked for again after the completion, which belongs to the earlier request.
 expect pending 'request after completion' '—' $p $c "$r1
-2026-10-21T15:45:00Z OWNER" ''
+2026-10-21T15:45:00Z OWNER" "$m"
 # No request at all.
-expect pending 'no request' '—' $p $c '' ''
+expect pending 'no request' '—' $p $c '' "$m"
 # Only requests from outsiders: anyone can comment, so they prove nothing...
-expect pending 'untrusted request only' '—' $p $c '2026-10-21T15:26:03Z NONE' ''
-expect pending 'contributor request only' '—' $p $c '2026-10-21T15:26:03Z CONTRIBUTOR' ''
-# ...and an outsider's request can't reset a success.
+expect pending 'untrusted request only' '—' $p $c '2026-10-21T15:26:03Z NONE' "$m"
+expect pending 'contributor request only' '—' $p $c '2026-10-21T15:26:03Z CONTRIBUTOR' "$m"
+# ...and an outsider's request can't reset a success or hide one.
 expect success 'untrusted request ignored after' '—' $p $c "$r1
-2026-10-21T15:50:00Z NONE" ''
+2026-10-21T15:50:00Z NONE" "$m"
 expect success 'untrusted request ignored before' '—' $p $c "2026-10-21T15:20:00Z NONE
-$r1" ''
-# Round 2 after a review with findings: only the new request is outstanding.
+$r1" "$m"
+# Round 2 after a review with findings, or after a clean one: every request has its completion.
 expect success 'round 2 after findings' '—' $p $c "2026-10-21T14:50:00Z OWNER
-$r1" 'review 2026-10-21T15:00:00Z'
-# ...or after a clean review.
+$r1" "review 2026-10-21T15:00:00Z
+$m"
 expect success 'round 2 after clean' '—' $p $c "2026-10-21T14:50:00Z OWNER
-$r1" 'receipt 2026-10-21T15:00:00Z'
+$r1" "receipt 2026-10-21T15:00:00Z
+$m"
 # The race: a review of the old head is still running when the new head is pushed and re-requested. Its
-# completion comes after both, but it can't be told apart from the new one's, so two requests stay pending.
+# completion comes after both, but one marker for two requests stays pending.
 expect pending 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
-$r1" 'receipt 2026-10-21T15:41:19Z'
-# Two requests after the push with one completion: also ambiguous, and the description says how to recover.
+$r1" "$m"
+# Codex's scenario: R1 and R2 on the old head, R1 completes, the new head is pushed, R3 is requested, then
+# R2's blank completion arrives. Three requests, two markers.
+WANT_MSG='if one failed' expect pending 'R1 R2 push R3 R2 completes' '—' 2026-10-21T15:20:00Z $c "2026-10-21T15:00:00Z OWNER
+2026-10-21T15:05:00Z OWNER
+2026-10-21T15:30:00Z OWNER" "review 2026-10-21T15:10:00Z
+$m"
+# Once R3's review completes too, every request is matched.
+expect success 'R3 completes as well' '—' 2026-10-21T15:20:00Z 2026-10-21T15:50:00Z "2026-10-21T15:00:00Z OWNER
+2026-10-21T15:05:00Z OWNER
+2026-10-21T15:30:00Z OWNER" "review 2026-10-21T15:10:00Z
+receipt 2026-10-21T15:41:19Z
+receipt 2026-10-21T15:49:50Z"
+# More markers than requests (an unrequested review): not matched either, stay pending.
+expect pending 'unrequested review' '—' $p $c "$r1" "receipt 2026-10-21T15:00:00Z
+$m"
+# Two requests after the push with one completion: ambiguous, and the description says how to recover.
 WANT_MSG='if one failed' expect pending 'two requests after push' '—' $p $c "$r1
-2026-10-21T15:27:00Z OWNER" ''
-# A failed review leaves no marker, so a clean retry sees both requests: stuck until the failed review's request
-# comment is deleted and the workflow rerun (never while a review is still running).
+2026-10-21T15:27:00Z OWNER" "$m"
+# A failed review leaves no marker, so a clean retry sees more requests than completions: stuck until the
+# failed review's request comment is deleted and the workflow rerun (never while a review is still running).
 WANT_MSG='if one failed' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
-$r1" ''
-# A new commit doesn't clear it: the failed request is still outstanding. Deleting that comment does.
+$r1" "$m"
+# A new commit doesn't clear it: the failed request is still counted. Deleting that comment does.
 WANT_MSG='if one failed' expect pending 'new commit after failure' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z "2026-10-21T15:00:00Z OWNER
-2026-10-21T15:55:00Z OWNER" ''
-expect success 'stale request deleted' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z '2026-10-21T15:55:00Z OWNER' ''
+2026-10-21T15:55:00Z OWNER" 'receipt 2026-10-21T16:04:50Z'
+expect success 'stale request deleted' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z '2026-10-21T15:55:00Z OWNER' 'receipt 2026-10-21T16:04:50Z'
 # A waiting review (no request yet) keeps the plain message.
 WANT_MSG='Waiting for Codex' expect pending 'plain waiting' '—' $p $c '' ''
-# Reviews less than a minute apart: the receipt nearest the completion is its own, the one before it is
-# the previous completion.
-expect success "close rounds" "—" $p $c "2026-10-21T15:20:00Z OWNER
-2026-10-21T15:40:45Z OWNER" 'receipt 2026-10-21T15:40:40Z
-receipt 2026-10-21T15:41:19Z'
-# No receipt of its own near the completion: the latest marker is a previous one.
-expect success 'no own receipt' '—' $p $c "$r1" 'receipt 2026-10-21T15:00:00Z'
 
 exit $fail

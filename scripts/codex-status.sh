@@ -45,10 +45,11 @@ summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
 # A clean review's row can name no commit (`—`, #30). Nothing ties that completion to a request (neither
-# the summary's edit history nor Codex's reactions say which request it answers), so fail closed: it counts
-# only when exactly one trusted request has been made since the previous completed review, that request came
-# after this push, and the review finished after it. Overlapping requests stay pending until a later
-# re-request leaves only one.
+# the summary's edit history nor Codex's reactions say which request it answers), so fail closed and count:
+# every trusted request must be matched by a completion marker, the current one included, so none is still
+# running. The latest request must also have come after this push, and the review finished after it. A
+# failed review leaves no marker, so the counts stay unequal and the status stays pending (the stuck state
+# docs/pitfalls.md describes).
 requested_at=
 ambiguous=
 if [ -z "$row" ]; then
@@ -56,9 +57,10 @@ if [ -z "$row" ]; then
 	completed=$(echo "$row" | grep -o 'datetime="[^"]*"' | head -1 | cut -d'"' -f2 | cut -c1-19)
 	row_ok=
 	if [ -n "$completed" ]; then
-		# Anyone can comment `@codex review`, so only the owner, members and collaborators count.
+		# Anyone can comment `@codex review`, so only the owner and collaborators count (an org member
+		# needn't have access to this repository).
 		requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
+			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
 		# Earlier completions leave a receipt comment (clean) or a pull request review (findings). Codex
 		# posts the receipt as a comment whose body starts `<!-- codex-review-receipt:v1 -->`, a few seconds
 		# before it edits the summary (seen on OBDCracker #145 and claude-ship #28).
@@ -66,21 +68,13 @@ if [ -z "$row" ]; then
 			--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
 		reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
 			--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
-		# The summary's time and its own receipt are seconds apart. The latest marker within a minute of
-		# the completion is its own receipt, and the one before it is the previous completion. With no
-		# marker that close, the latest earlier one is the previous. If the date can't be computed,
-		# stay pending.
-		lo=$(date -u -d "$completed UTC - 60 seconds" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || lo=
-		hi=$(date -u -d "$completed UTC + 60 seconds" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || hi=
-		if [ -n "$lo" ] && [ -n "$hi" ]; then
-			previous=$(printf '%s\n%s\n' "$receipts" "$reviews" | cut -c1-19 | awk -v h="$hi" 'NF && $0 <= h' | sort |
-				awk -v l="$lo" '{ a[NR] = $0 } END { if (NR && a[NR] >= l) print a[NR - 1]; else if (NR) print a[NR] }')
-			since=$(printf '%s\n' "$requests" | cut -c1-19 | awk -v p="$previous" 'NF && $0 > p')
-			outstanding=$(printf '%s\n' "$since" | grep -c . || true)
-			if [ "$outstanding" = 1 ]; then
-				requested_at=$since
+		n_requests=$(printf '%s\n' "$requests" | grep -c . || true)
+		n_markers=$(printf '%s\n%s\n' "$receipts" "$reviews" | grep -c . || true)
+		requested_at=$(printf '%s\n' "$requests" | cut -c1-19 | sort | tail -1)
+		if [ "$n_requests" -gt 0 ]; then
+			if [ "$n_requests" = "$n_markers" ]; then
 				row_ok=1
-			elif [ "$outstanding" -gt 1 ]; then
+			else
 				ambiguous=1
 			fi
 		fi
