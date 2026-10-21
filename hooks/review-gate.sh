@@ -574,9 +574,15 @@ push_scope() (
 	# Shell syntax the split above can't place (substitutions, a trailing `&`, a redirect, a second line, a `;`
 	# before the push) fails the whole-command shape check.
 	shape="^[[:space:]]*(cd[[:space:]]+[^[:space:];&|<>()\$\`]+[[:space:]]*&&[[:space:]]*)?([^[:space:];&|<>()\$\`]*/)?git([[:space:]][^;&|<>()\$\`]*)?([[:space:]]*\\|[[:space:]]*(tail|head|cat|grep)([[:space:]][^;&|<>()\$\`]*)?)*[[:space:]]*\$"
-	# Only the word-split form is judged: quotes are resolved there, so a push shown only by the raw command
-	# (`gh pr create --body "… git push …"`) is quoted text, not a command.
-	if [ "$push_cmd" = "$words" ] && { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then
+	# A push shown only by the raw command is usually quoted text, but `sh -c "…; git push"` and `eval` run it, so
+	# it is judged too. The one exception is the ship skill's own `gh pr/issue create/edit/comment`, whose quoted
+	# words are data: it has to be that single command, with no unquoted separator, redirect or expansion.
+	data_only=
+	if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment)[[:space:]]' &&
+		! printf '%s' "$words" | grep -Eq '[;&|<>()$`]' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
+		data_only=1
+	fi
+	if [ -z "$data_only" ] && { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then
 		[ -n "$extra" ] || extra=$(printf '%s' "$bare" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
 		echo "it also runs \`$extra\`, which may change what the push sends after the gate checked it; run that in its own command first"
 		return 1

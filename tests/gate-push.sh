@@ -49,7 +49,13 @@ expect 0 'git -C . push origin HEAD | cat'
 expect 0 "cd $repo && git push -u origin HEAD 2>&1 | tail -3"
 # Quoted text that mentions a push is not a push.
 expect 0 'gh pr create --title t --body "see git push"'
-expect 0 'echo "git push" && echo done'
+expect 2 'echo "git push" && echo done'
+expect 2 'gh pr create --body "see git push" && git config push.followTags true'
+expect 2 'gh pr create --body "$(git config push.followTags true; git push origin HEAD)"'
+# A quoted push still runs under `sh -c` and `eval`.
+expect 2 'sh -c "git config push.followTags true; git push origin HEAD"'
+expect 2 "bash -c 'git status && git push origin HEAD'"
+expect 2 'eval "git status; git push origin HEAD"'
 
 # Anything else in the command may change what the push sends after the gate read it.
 # Codex round 2: `--output` rewrites the branch ref; an included config file can have any name.
