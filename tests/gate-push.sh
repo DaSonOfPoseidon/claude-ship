@@ -45,6 +45,8 @@ expect 2 'git -C . config remote.origin.mirror true; git push origin HEAD'
 expect 2 'git remote set-url --push origin https://github.com/acme/other.git && git push origin HEAD'
 expect 2 'git branch -u origin/main && git push'
 expect 2 'git commit -qm x && git push origin HEAD'
+expect 2 'git symbolic-ref HEAD refs/heads/other && git push'
+expect 2 'git diff --output=.git/config && git push'
 expect 2 'sh -c "git config push.default matching" && git push'
 expect 2 'echo "[push] followTags = true" >> .git/config && git push origin HEAD'
 expect 2 'printf x >> ~/.gitconfig; git push origin HEAD'
@@ -59,11 +61,17 @@ fixture https://github.com/acme/app.git
 git -C "$repo" remote set-url --add origin https://github.com/acme/other.git
 expect 2 'git push origin HEAD'
 
-# A trailing dot on the host is still GitHub; a dirty tree shows the gate reached its checks.
+# A trailing dot on the host is still GitHub: the gate reads the repo and goes on to block the dirty tree,
+# rather than letting the push through or failing to read the URL.
 for url in https://github.com./acme/app.git git@github.com.:acme/app.git ssh://git@ssh.github.com.:443/acme/app.git; do
 	fixture "$url"
 	: >"$repo/dirty"
 	expect 2 'git push origin HEAD'
+	grep -q 'uncommitted changes' "$tmp/err" || {
+		echo "FAIL ($url): blocked for another reason"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	}
 done
 
 [ "$fail" = 0 ] && echo "gate-push: ok"

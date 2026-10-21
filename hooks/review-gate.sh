@@ -534,7 +534,7 @@ push_scope() (
 	# The checks below read git config before the command runs, so nothing earlier in it may change that config:
 	# next to a push, git may only read, and no config file may be named (`echo … >> .git/config`).
 	others=$(printf '%s\n' "$push_cmd" | grep -Eo "${git_global}[^[:space:];&|)]+" | sed -E 's/.*[[:space:]]//' |
-		grep -Evx 'push|status|log|diff|show|rev-parse|symbolic-ref|fetch|ls-remote' | sort -u | tr '\n' ' ')
+		grep -Evx 'push|status|log|diff|show|rev-parse|fetch|ls-remote' | sort -u | tr '\n' ' ')
 	if [ -n "$others" ]; then
 		echo "it also runs \`git ${others% }\`, which may change what the push sends after the gate checked it; run that in its own command first"
 		return 1
