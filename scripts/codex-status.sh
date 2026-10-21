@@ -128,7 +128,7 @@ elif echo "$row" | grep -qiE 'Failed|Error'; then
 	description="Codex's review of $short failed; ask for another with @codex review"
 elif [ -n "$ambiguous" ]; then
 	state=pending
-	description="Codex's review of $short can't be tied to one request (overlapping or failed reviews); wait for a running review, or push a new commit"
+	description="Codex's review of $short can't be tied to one request (overlapping or failed reviews); wait for a running review, or delete the failed review's @codex review comment and rerun the workflow"
 else
 	state=pending
 	description="Waiting for Codex to review $short"
