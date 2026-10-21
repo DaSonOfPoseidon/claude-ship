@@ -434,17 +434,18 @@ cd "$where" 2>/dev/null || {
 	exit 2
 }
 
-# GitHub repos from remote URLs on stdin, one per line: any scheme, user and port, any host case, and GitHub's
-# ssh-over-443 host. A URL whose host is github.com (or under it) but doesn't parse prints as `?<url>`, so
-# callers fail closed on it; other hosts and local paths aren't GitHub.
+# GitHub repos from remote URLs on stdin, one per line: any scheme, user and port, any host case, GitHub's
+# ssh-over-443 host, and a fully-qualified host's trailing dot (`github.com.`). A URL whose host is github.com
+# (or under it) but doesn't parse prints as `?<url>`, so callers fail closed on it; other hosts and local paths
+# aren't GitHub.
 github_slugs() {
 	while IFS= read -r url; do
 		s=$(printf '%s\n' "$url" | sed -E 's#/+$##; s#\.git$##' |
-			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm](:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
+			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm]\.?(:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
 		host=$(printf '%s\n' "$url" | sed -E 's#^[[:alpha:]+]+://##; s#^[^@/]*@##; s#[:/].*##')
 		if [ -n "$s" ]; then
 			echo "$s"
-		elif printf '%s' "$host" | grep -Eqi '(^|\.)github\.com$'; then
+		elif printf '%s' "$host" | grep -Eqi '(^|\.)github\.com\.?$'; then
 			echo "?$url"
 		fi
 	done | sort -u
@@ -519,10 +520,26 @@ if ! flag=$(autonomous "$slug"); then
 fi
 [ -n "$flag" ] || exit 0
 # The review diffs against origin/main and reads its rules, which come from origin's fetch URL, so that must
-# be the repo the push lands in.
-fetch_slug=$(git remote get-url --all origin 2>/dev/null | github_slugs)
-if [ "$fetch_slug" != "$slug" ]; then
-	echo "Blocked: origin fetches from $(echo ${fetch_slug:-a non-GitHub URL}) but pushes to $slug, so the review would diff against the wrong main. Point both at $slug." >&2
+# be the repo the push lands in. Every URL counts, fetch and push: git fetches from the first and pushes to all,
+# and github_slugs drops URLs that aren't GitHub's, so a local path among them would go unseen.
+# first_other <URLs>: prints the first URL that isn't $slug, or `no URL` if there are none.
+first_other() {
+	[ -n "$1" ] || {
+		echo "no URL"
+		return
+	}
+	printf '%s\n' "$1" | while IFS= read -r url; do
+		[ "$(printf '%s\n' "$url" | github_slugs)" = "$slug" ] || printf '%s\n' "$url"
+	done | head -1
+}
+bad_fetch=$(first_other "$(git remote get-url --all origin 2>/dev/null)")
+if [ -n "$bad_fetch" ]; then
+	echo "Blocked: origin fetches from $bad_fetch but pushes to $slug, so the review would diff against the wrong main. Point every origin URL at $slug." >&2
+	exit 2
+fi
+bad_push=$(first_other "$(git remote get-url --push --all origin 2>/dev/null)")
+if [ -n "$bad_push" ]; then
+	echo "Blocked: origin also pushes to $bad_push, which the review gate doesn't check. Point every origin URL at $slug." >&2
 	exit 2
 fi
 owner=${slug%/*}
@@ -535,6 +552,50 @@ push_scope() (
 	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ] ||
 		[ "$(printf '%s' "$words" | grep -Eo "$git_push" | wc -l)" -gt 1 ]; then
 		echo "it runs more than one \`git push\`"
+		return 1
+	fi
+	# The checks below read git config, refs and files before the command runs, so anything earlier in the command
+	# (or a later step that reruns it) can change what the push sends after they passed: `git show --output=…`,
+	# `printf … > /tmp/settings` behind an `include.path`. So a pushing command holds only the push, with at most a
+	# leading `cd <dir> &&`, harmless redirects (whole descriptor duplications, /dev/null, /dev/stdout,
+	# /dev/stderr) and trailing pipes into read-only filters. Redirects are taken out first, then every simple
+	# command (split at `;&|()` and newlines) must be one of those.
+	bare=$(printf '%s' "$push_cmd" | sed -E 's/&>>?[[:space:]]*\/dev\/(null|stdout|stderr)/ /g;
+		s/[0-9]*>>?[[:space:]]*\/dev\/(null|stdout|stderr)([^[:alnum:]_.\/-]|$)/ \2/g; s/[0-9]*>&([0-9]+|-)([^[:alnum:]_]|$)/ \2/g')
+	extra=$(
+		seen=
+		first=1
+		printf '%s\n' "$bare" | sed -E 's/&&|\|\||[;&|()`]/\
+/g' | while IFS= read -r part; do
+			part=$(printf '%s' "$part" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+			[ -n "$part" ] || continue
+			if printf '%s' "$part" | grep -Eq "$git_push"; then
+				seen=1
+			elif [ -z "$seen" ] && [ "$first" = 1 ] && printf '%s' "$part" | grep -Eq '^cd[[:space:]]+[^[:space:]]+$'; then
+				:
+			elif [ -n "$seen" ] && printf '%s' "$part" | grep -Eq '^(tail|head|cat|grep)([[:space:]]|$)'; then
+				:
+			else
+				printf '%s\n' "$part"
+				break
+			fi
+			first=
+		done
+	)
+	# Shell syntax the split above can't place (substitutions, a trailing `&`, a redirect, a second line, a `;`
+	# before the push) fails the whole-command shape check.
+	shape="^[[:space:]]*(cd[[:space:]]+[^[:space:];&|<>()\$\`]+[[:space:]]*&&[[:space:]]*)?([^[:space:];&|<>()\$\`]*/)?git([[:space:]][^;&|<>()\$\`]*)?([[:space:]]*\\|[[:space:]]*(tail|head|cat|grep)([[:space:]][^;&|<>()\$\`]*)?)*[[:space:]]*\$"
+	# A push shown only by the raw command is usually quoted text, but `sh -c "…; git push"` and `eval` run it, so
+	# it is judged too. The one exception is the ship skill's own `gh pr/issue create/edit/comment`, whose quoted
+	# words are data: it has to be that single command, with no unquoted separator, redirect or expansion.
+	data_only=
+	if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment)[[:space:]]' &&
+		! printf '%s' "$words" | grep -Eq '[;&|<>()`]|\$(\(|@LP@|\[)' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
+		data_only=1
+	fi
+	if [ -z "$data_only" ] && { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then
+		[ -n "$extra" ] || extra=$(printf '%s' "$bare" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
+		echo "it also runs \`$extra\`, which may change what the push sends after the gate checked it; run that in its own command first"
 		return 1
 	fi
 	args=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\6#p" | head -1 |
@@ -619,8 +680,8 @@ push_scope() (
 		echo "remote.origin.mirror makes every push a mirror push"
 		return 1
 	fi
-	# Global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) and environment overrides
-	# (GIT_*, HOME, `env`, `export`, `VAR=x git`) can change what's pushed or from which repo. All block.
+	# Global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) can change what's pushed or
+	# from which repo, and block. (Environment overrides never get this far: only the push may run.)
 	globals=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([^[:alnum:]_-].*|$)#\\2#p" | head -1 |
 		sed -E 's/(^|[[:space:]]+)-C[[:space:]]+[^[:space:]]+//g')
 	case $globals in
@@ -634,10 +695,6 @@ push_scope() (
 	if printf '%s' "$push_cmd" | grep -Eq '(^|[[:space:]])(-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--bare|--super-prefix)([[:space:]=]|$)' ||
 		[ "$(printf '%s' "$push_cmd" | grep -Eo '(^|[[:space:]])-C([[:space:]]|$)' | wc -l)" -gt 1 ]; then
 		echo "it passes git global options; only one \`-C <dir>\` is allowed"
-		return 1
-	fi
-	if printf '%s' "$push_cmd" | grep -Eq 'GIT_[A-Z_]*=|(^|[^[:alnum:]_])((export|env)[[:space:]]|HOME=|XDG_[A-Z_]*=)|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+git[[:space:]]'; then
-		echo "it sets environment variables, which can change what git pushes"
 		return 1
 	fi
 )
