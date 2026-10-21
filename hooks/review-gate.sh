@@ -423,17 +423,18 @@ cd "$where" 2>/dev/null || {
 	exit 2
 }
 
-# GitHub repos from remote URLs on stdin, one per line: any scheme, user and port, any host case, and GitHub's
-# ssh-over-443 host. A URL whose host is github.com (or under it) but doesn't parse prints as `?<url>`, so
-# callers fail closed on it; other hosts and local paths aren't GitHub.
+# GitHub repos from remote URLs on stdin, one per line: any scheme, user and port, any host case, GitHub's
+# ssh-over-443 host, and a fully-qualified host's trailing dot (`github.com.`). A URL whose host is github.com
+# (or under it) but doesn't parse prints as `?<url>`, so callers fail closed on it; other hosts and local paths
+# aren't GitHub.
 github_slugs() {
 	while IFS= read -r url; do
 		s=$(printf '%s\n' "$url" | sed -E 's#/+$##; s#\.git$##' |
-			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm](:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
+			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm]\.?(:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
 		host=$(printf '%s\n' "$url" | sed -E 's#^[[:alpha:]+]+://##; s#^[^@/]*@##; s#[:/].*##')
 		if [ -n "$s" ]; then
 			echo "$s"
-		elif printf '%s' "$host" | grep -Eqi '(^|\.)github\.com$'; then
+		elif printf '%s' "$host" | grep -Eqi '(^|\.)github\.com\.?$'; then
 			echo "?$url"
 		fi
 	done | sort -u
@@ -508,10 +509,14 @@ if ! flag=$(autonomous "$slug"); then
 fi
 [ -n "$flag" ] || exit 0
 # The review diffs against origin/main and reads its rules, which come from origin's fetch URL, so that must
-# be the repo the push lands in.
-fetch_slug=$(git remote get-url --all origin 2>/dev/null | github_slugs)
-if [ "$fetch_slug" != "$slug" ]; then
-	echo "Blocked: origin fetches from $(echo ${fetch_slug:-a non-GitHub URL}) but pushes to $slug, so the review would diff against the wrong main. Point both at $slug." >&2
+# be the repo the push lands in. Every one of them: git fetches from the first, and github_slugs drops URLs that
+# aren't GitHub's, so a local path ahead of the GitHub URL would supply the base and the rules unseen.
+fetch_urls=$(git remote get-url --all origin 2>/dev/null)
+bad_fetch=$(printf '%s\n' "$fetch_urls" | while IFS= read -r url; do
+	[ "$(printf '%s\n' "$url" | github_slugs)" = "$slug" ] || printf '%s\n' "$url"
+done | head -1)
+if [ -z "$fetch_urls" ] || [ -n "$bad_fetch" ]; then
+	echo "Blocked: origin fetches from ${bad_fetch:-no URL} but pushes to $slug, so the review would diff against the wrong main. Point every origin URL at $slug." >&2
 	exit 2
 fi
 owner=${slug%/*}
@@ -524,6 +529,18 @@ push_scope() (
 	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ] ||
 		[ "$(printf '%s' "$words" | grep -Eo "$git_push" | wc -l)" -gt 1 ]; then
 		echo "it runs more than one \`git push\`"
+		return 1
+	fi
+	# The checks below read git config before the command runs, so nothing earlier in it may change that config:
+	# next to a push, git may only read, and no config file may be named (`echo … >> .git/config`).
+	others=$(printf '%s\n' "$push_cmd" | grep -Eo "${git_global}[^[:space:];&|)]+" | sed -E 's/.*[[:space:]]//' |
+		grep -Evx 'push|status|log|diff|show|rev-parse|symbolic-ref|fetch|ls-remote' | sort -u | tr '\n' ' ')
+	if [ -n "$others" ]; then
+		echo "it also runs \`git ${others% }\`, which may change what the push sends after the gate checked it; run that in its own command first"
+		return 1
+	fi
+	if printf '%s' "$push_cmd" | grep -Eq '(^|[/[:space:]])(\.gitconfig|config(\.worktree)?)([[:space:];&|)]|$)'; then
+		echo "it names a git config file, which may change what the push sends after the gate checked it; change config in its own command first"
 		return 1
 	fi
 	args=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\6#p" | head -1 |

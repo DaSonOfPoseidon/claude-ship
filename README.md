@@ -72,8 +72,9 @@ The matcher sends every GitHub MCP tool to the gate, which blocks the ones that 
 (`push_files`, `create_or_update_file`, `delete_file`, `create_branch`, `create_pull_request`,
 `update_pull_request`, `update_pull_request_branch`, `merge_pull_request`) in opted-in repos.
 
-The gate reviews HEAD, so it lets a push send only HEAD's branch, to origin, and only when origin fetches from
-and pushes to the same GitHub repo. In opted-in repos, `gh api` may make only the writes the ship skill uses
+The gate reviews HEAD, so it lets a push send only HEAD's branch, to origin, and only when every origin URL is
+the same GitHub repo. It reads git config before the command runs, so a pushing command may run only git's
+reads (`status`, `log`, `diff`, `fetch`, ...) next to the push, and may not name a git config file. In opted-in repos, `gh api` may make only the writes the ship skill uses
 (comments, replies, reviews, reactions, issues, labels, workflow runs and its own GraphQL mutations); any other
 write, such as commits, refs, PRs, statuses, checks or settings, blocks. It catches Claude's own slips but isn't a security boundary: it matches command text,
 and its state is protected by those patterns alone. Branch protection requiring the `codex-review` status is
