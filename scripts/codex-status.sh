@@ -58,7 +58,9 @@ if [ -z "$row" ]; then
 		# Anyone can comment `@codex review`, so only the owner, members and collaborators count.
 		requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
-		# Earlier completions leave a receipt comment (clean) or a pull request review (findings).
+		# Earlier completions leave a receipt comment (clean) or a pull request review (findings). Codex
+		# posts the receipt as a comment whose body starts `<!-- codex-review-receipt:v1 -->`, a few seconds
+		# before it edits the summary (seen on OBDCracker #145 and claude-ship #28).
 		receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 			--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
 		reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
