@@ -14,7 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: shellcheck
-        run: shellcheck --shell=sh --severity=warning install.sh hooks/*.sh scripts/*.sh skills/ship/*.sh
+        run: shellcheck --shell=sh --severity=warning install.sh hooks/*.sh scripts/*.sh skills/ship/*.sh tests/*.sh
+      - name: tests
+        run: for t in tests/*.sh; do sh "$t" || exit 1; done
       - name: actionlint
         uses: docker://rhysd/actionlint:1.7.7
         with:

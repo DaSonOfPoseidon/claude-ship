@@ -59,7 +59,7 @@ Register the hook once in `~/.claude/settings.json`:
 
 ```json
 {"hooks": {"PreToolUse": [{
-  "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*github.*",
+  "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*__(push_files|create_or_update_file|delete_file|create_branch|create_pull_request|update_pull_request|update_pull_request_branch|merge_pull_request)",
   "hooks": [{"type": "command", "command": "~/.claude/hooks/review-gate.sh", "timeout": 1200}]
 }]}}
 ```
@@ -68,9 +68,10 @@ After a PR merges, run `./install.sh` again to deploy it. The installed files, t
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because
 changes to it go through the same review as any other repo.
 
-The matcher sends every GitHub MCP tool to the gate, which blocks the ones that write files, branches or PRs
-(`push_files`, `create_or_update_file`, `delete_file`, `create_branch`, `create_pull_request`,
-`update_pull_request`, `update_pull_request_branch`, `merge_pull_request`) in opted-in repos.
+The matcher sends the MCP tools that write files, branches or PRs (`push_files`, `create_or_update_file`,
+`delete_file`, `create_branch`, `create_pull_request`, `update_pull_request`, `update_pull_request_branch`,
+`merge_pull_request`) to the gate by tool name, whatever the server is called, and the gate blocks them in
+opted-in repos.
 
 The gate reviews HEAD, so it lets a push send only HEAD's branch, to origin, and only when origin fetches from
 and pushes to the same GitHub repo. In opted-in repos, `gh api` may make only the writes the ship skill uses
