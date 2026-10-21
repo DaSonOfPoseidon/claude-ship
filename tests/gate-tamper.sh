@@ -42,6 +42,9 @@ expect 2 'echo x >| ~/.claude/hooks/x'
 expect 2 'echo x 2>/dev/null >~/.claude/skills/ship/SKILL.md'
 expect 2 ': > /repo/.git/review-gate/abc.pass'
 expect 2 'cd ~/.claude/hooks && echo x >review-gate.sh'
+# `>&1/…` is a file named after the digits, not a descriptor.
+expect 2 ': >&1/../.git/review-gate/abc.waived'
+expect 2 ': 2>&-x/.git/review-gate/abc.pass'
 expect 2 "echo \$'x' > ~/.claude/hooks/x"
 # A quoted `>` may still redirect, inside a shell or interpreter the command runs.
 expect 2 'sh -c "echo x > ~/.claude/hooks/review-gate.sh"'

@@ -163,7 +163,7 @@ protected=$(printf '%s' "$cmd_all" |
 	grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
 if [ -n "$protected" ]; then
 	write=$(printf '%s' "$cmd_all" |
-		sed -E 's/[0-9]*>&([0-9]+|-)//g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)([^[:alnum:]_/.-]|$)#\3#g' |
+		sed -E 's/[0-9]*>&([0-9]+|-)([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)([^[:alnum:]_/.-]|$)#\3#g' |
 		grep -Eo '[^[:space:]]*>[^[:space:]]*([[:space:]]+[^[:space:];&|]+)?' | head -1)
 	[ -n "$write" ] || write=$(printf '%s' "$cmd_all" |
 		grep -Eo '(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)' |
