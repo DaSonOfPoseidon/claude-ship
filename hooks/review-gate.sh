@@ -67,11 +67,13 @@ input=$(cat)
 tool=$(printf '%s' "$input" | jq -r '.tool_name // ""')
 
 case $tool in
-# GitHub MCP tools that write code or PRs, from any GitHub MCP server (the matcher sends every one of its tools).
-mcp__*github*__push_files | mcp__*github*__create_or_update_file | mcp__*github*__delete_file | \
-	mcp__*github*__create_branch | mcp__*github*__create_pull_request | mcp__*github*__update_pull_request | \
-	mcp__*github*__update_pull_request_branch | mcp__*github*__merge_pull_request)
+# GitHub MCP tools that write code or PRs, matched by tool name, so the server may be called anything (`github`,
+# `GitHub`, `gh`). A call that names neither an owner nor a repo isn't GitHub's, since its tools need both.
+mcp__*__push_files | mcp__*__create_or_update_file | mcp__*__delete_file | mcp__*__create_branch | \
+	mcp__*__create_pull_request | mcp__*__update_pull_request | mcp__*__update_pull_request_branch | \
+	mcp__*__merge_pull_request)
 	slug=$(printf '%s' "$input" | jq -r '"\(.tool_input.owner // "")/\(.tool_input.repo // "")"')
+	[ "$slug" != / ] || exit 0
 	if ! flag=$(autonomous "$slug"); then
 		echo "Blocked: couldn't read CLAUDE_AUTONOMOUS for $slug, so the review gate can't tell whether it guards it. Use \`git push\` and \`gh pr create\` instead." >&2
 		exit 2
@@ -214,6 +216,16 @@ api_scan() (
 			skip=
 			continue
 		fi
+		# gh reads a short-flag cluster one letter at a time until a flag that takes a value, so `-iFa=b` is
+		# `-i -Fa=b` and `-iXPOST` is `-i -XPOST`. `-i` and `-h` (help) are the only short flags of gh api that
+		# take none, and `-i=false` gives -i one.
+		while :; do
+			case $w in
+			-i=*) break ;;
+			-i?* | -h?*) w=-${w#-?} ;;
+			*) break ;;
+			esac
+		done
 		case $w in
 		-X | --method) skip=method ;;
 		-X*) method=${w#-X} ;;
@@ -228,7 +240,13 @@ api_scan() (
 		--input) skip=input ;;
 		--input=*) fields=1 query=@ ;;
 		-H | --header | -q | --jq | -t | --template | --hostname | --cache | -p | --preview) skip=other ;;
-		-*) ;;
+		# Long options, and short ones with their value attached (`-Haccept:x`); a short cluster the gate can't
+		# read could hide a field or a method, so it blocks.
+		--* | -i | -i=* | -h | -H?* | -q?* | -t?* | -p?* | -) ;;
+		-*)
+			echo "block the review gate can't read the flags \`$w\`"
+			exit 0
+			;;
 		# A redirection (`2>/dev/null`, `> out`, `2>&1`) isn't an argument; a bare operator takes the next word.
 		'>'* | '<'* | [0-9]'>'* | [0-9]'<'* | @RD@*)
 			[ -n "$(printf '%s' "$w" | sed -E 's/^[0-9]*[<>|]*(@RD@)?[<>]*//')" ] || skip=other

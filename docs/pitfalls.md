@@ -45,7 +45,9 @@ review finds a new class.
 - **A parser that returns nothing for input it doesn't recognize fails open.** The gate read
   `https://user@github.com/…`, `ssh://…:2222/…` and `GitHub.com` remotes as "not GitHub" and let the push through
   (claude-ship #9). Parse every form you know, and treat anything that looks like yours but doesn't parse as
-  yours.
+  yours. The same went for `gh api -iFref=…` (a short-flag cluster read as one unknown flag; `-hi` too, since `-h` is
+  gh's no-argument help flag, so list every flag that takes no value) and for
+  `mcp__GitHub__push_files` (a case-sensitive server name) (claude-ship #12, #15).
 - **A status computed from events goes stale when its inputs change some other way.** `codex-review` reruns on
   pushes, reviews and comments, but not when a thread is unresolved, so allowing `unresolveReviewThread` left a
   green status over an open finding (claude-ship #9). Every write a check allows must either trigger it or be
