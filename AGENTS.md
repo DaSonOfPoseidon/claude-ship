@@ -30,7 +30,9 @@ or anything CI already checks (shellcheck, actionlint).
   allow. Text from outside (PR threads) goes into a prompt only from Codex, the owner or collaborators (not
   org members), and is marked as data, not instructions.
 - The branch can't steer its reviewer: `--safe-mode` keeps its CLAUDE.md, hooks and skills from loading and
-  `--restricted` ignores every settings file (`--bare` would need an API key; we run on a Pro plan).
+  `--restricted` ignores the user and project settings files (`--bare` would need an API key; we run on a Pro
+  plan). Managed settings and policy hooks still apply under both. They're the machine owner's, not the
+  branch's, so they're outside this guarantee.
 - What's reviewed is what's pushed: a push may send only HEAD, to origin (no `--all`, `--tags`, other
   branches, tags or other destinations), and GitHub MCP writes of code or PRs are blocked. `gh api` may make
   only the writes the ship skill uses (an allowlist, REST and GraphQL); any other write, including statuses,
