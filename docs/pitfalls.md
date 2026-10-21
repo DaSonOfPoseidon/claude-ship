@@ -24,7 +24,9 @@ review finds a new class.
 - **Options and environment before a subcommand change what it does.** `git -c push.default=matching push`,
   `git --git-dir x push`, `GIT_DIR=x git push` and `env … git push` all push something other than what a check
   of `git push`'s own arguments sees (claude-ship #3, five gate rounds). Check the whole command, and block
-  any option or variable you don't explicitly allow.
+  any option or variable you don't explicitly allow. To find a subcommand, skip only the options you know take a
+  value: a pattern that lets any option take one read `git --no-pager config` as option `config` (claude-ship
+  #14).
 - **Shell quoting and expansion hide the real argument from a text check.** `repos/o/r/con''tents`,
   `repos/${OWNER}/${REPO}/git/refs` and `-f query="$(cat q.graphql)"` don't contain the text gh finally sends.
   `git -c "a=b c" push` hid the push itself. Split words with a left-to-right scanner (the gate's is jq) that

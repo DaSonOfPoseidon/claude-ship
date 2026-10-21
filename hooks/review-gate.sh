@@ -533,8 +533,22 @@ push_scope() (
 	fi
 	# The checks below read git config before the command runs, so nothing earlier in it may change that config:
 	# next to a push, git may only read, and no config file may be named (`echo … >> .git/config`).
-	others=$(printf '%s\n' "$push_cmd" | grep -Eo "${git_global}[^[:space:];&|)]+" | sed -E 's/.*[[:space:]]//' |
-		grep -Evx 'push|status|log|diff|show|rev-parse|fetch|ls-remote' | sort -u | tr '\n' ' ')
+	# Each git call's subcommand is its first word that isn't an option: `-C` is the only global option a pushing
+	# command may give a value (the checks below block the others), so `git --no-pager config` reads as `config`.
+	others=$(printf '%s\n' "$push_cmd" | grep -Eo '(^|[^[:alnum:]_.-])git([[:space:]][^;&|)]*)?' |
+		while IFS= read -r call; do
+			set -f
+			# shellcheck disable=SC2086
+			set -- ${call#*git}
+			while [ $# -gt 0 ]; do
+				case $1 in
+				-C) [ $# -ge 2 ] && shift 2 || shift ;;
+				-*) shift ;;
+				*) break ;;
+				esac
+			done
+			[ $# -eq 0 ] || printf '%s\n' "$1"
+		done | grep -Evx 'push|status|log|diff|show|rev-parse|fetch|ls-remote' | sort -u | tr '\n' ' ')
 	if [ -n "$others" ]; then
 		echo "it also runs \`git ${others% }\`, which may change what the push sends after the gate checked it; run that in its own command first"
 		return 1
