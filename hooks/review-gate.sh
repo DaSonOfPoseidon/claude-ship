@@ -574,7 +574,9 @@ push_scope() (
 	# Shell syntax the split above can't place (substitutions, a trailing `&`, a redirect, a second line, a `;`
 	# before the push) fails the whole-command shape check.
 	shape="^[[:space:]]*(cd[[:space:]]+[^[:space:];&|<>()\$\`]+[[:space:]]*&&[[:space:]]*)?([^[:space:];&|<>()\$\`]*/)?git([[:space:]][^;&|<>()\$\`]*)?([[:space:]]*\\|[[:space:]]*(tail|head|cat|grep)([[:space:]][^;&|<>()\$\`]*)?)*[[:space:]]*\$"
-	if [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; then
+	# Only the word-split form is judged: quotes are resolved there, so a push shown only by the raw command
+	# (`gh pr create --body "… git push …"`) is quoted text, not a command.
+	if [ "$push_cmd" = "$words" ] && { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then
 		[ -n "$extra" ] || extra=$(printf '%s' "$bare" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
 		echo "it also runs \`$extra\`, which may change what the push sends after the gate checked it; run that in its own command first"
 		return 1

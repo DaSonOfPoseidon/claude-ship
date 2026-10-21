@@ -47,6 +47,9 @@ expect 0 'git push origin HEAD 2>&1 | tail -3'
 expect 0 'git push origin HEAD 2>&1 | grep -v hint | head -5'
 expect 0 'git -C . push origin HEAD | cat'
 expect 0 "cd $repo && git push -u origin HEAD 2>&1 | tail -3"
+# Quoted text that mentions a push is not a push.
+expect 0 'gh pr create --title t --body "see git push"'
+expect 0 'echo "git push" && echo done'
 
 # Anything else in the command may change what the push sends after the gate read it.
 # Codex round 2: `--output` rewrites the branch ref; an included config file can have any name.
