@@ -78,8 +78,9 @@ if [ -z "$row" ]; then
 			matched=$({
 				printf '%s\n' "$requests" | grep . | cut -c1-19 | sed 's/$/ R/'
 				printf '%s\n%s\n' "$receipts" "$reviews" | grep . | cut -c1-19 | sed 's/$/ M/'
-			} | sort | awk '$2 == "R" { open++ } $2 == "M" { if (open == 0) bad = 1; else open-- }
-				END { print (bad || open) ? "no" : "yes" }')
+			} | sort | jq -Rnr 'reduce (inputs | split(" ")[1]) as $e ({open: 0, bad: false};
+				if $e == "R" then .open += 1 elif .open == 0 then .bad = true else .open -= 1 end)
+				| if .bad or .open > 0 then "no" else "yes" end')
 			if [ "$matched" = yes ]; then
 				row_ok=1
 			else
