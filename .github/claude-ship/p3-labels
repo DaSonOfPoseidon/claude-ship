@@ -1,0 +1,14 @@
+# Labels for P3 issues by the finding's file (hooks/p3-issue.sh): <glob> <label>[,<label>...]
+hooks/*                  area:gate
+tests/gate-*             area:gate
+tests/p3-issue.sh        area:gate
+skills/*                 area:skill
+action.yml               area:action
+scripts/*                area:action
+tests/codex-status.sh    area:action
+.github/workflows/*      area:action
+install.sh               area:install
+tests/install.sh         area:install
+README.md                documentation
+AGENTS.md                documentation
+docs/*                   documentation
