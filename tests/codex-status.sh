@@ -1,8 +1,9 @@
 #!/bin/sh
 # Tests codex-status.sh against Codex summaries whose Code Review row names no commit (`—`), as on
 # OBDCracker #145 (claude-ship #30). Such a row counts for the head only when the trusted `@codex review`
-# requests (owner or collaborator) are as many as the completion markers (receipts and Codex reviews, the
-# current one included), the latest request came after the head's push, and the review finished after it.
+# requests (owner or collaborator) are matched in time order by the completion markers (receipts and Codex
+# reviews, the current one included), the latest request came after the head's push, and the review
+# finished after it.
 # The fake gh below serves fixtures and applies
 # the script's own --jq filters with real jq, so the filters are tested too.
 set -u
@@ -46,7 +47,7 @@ check() {
 		fail=1
 	fi
 	case $out in
-	"$1":*"${WANT_MSG:-}"*) ;;
+	"$1":*"$WANT_MSG"*) ;;
 	*)
 		echo "FAIL (want $1): $2"
 		echo "  $out"
@@ -74,6 +75,16 @@ expect() {
 			created_at:"2026-10-21T14:00:00Z",body:("<!-- codex-pull-request-review-summary -->\n" + $r)}]'
 	} | jq -s 'add' >"$tmp/comments.json"
 	check "$1" "$2"
+}
+
+# with_msg <text> expect …: also requires <text> in the output. A prefix assignment on a function call
+# (`WANT_MSG=… expect …`) may persist after it in some shells, so it's set and cleared here.
+WANT_MSG=
+with_msg() {
+	WANT_MSG=$1
+	shift
+	"$@"
+	WANT_MSG=
 }
 
 p=2026-10-21T15:25:00Z
@@ -119,7 +130,7 @@ expect pending 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" "$m"
 # Codex's scenario: R1 and R2 on the old head, R1 completes, the new head is pushed, R3 is requested, then
 # R2's blank completion arrives. Three requests, two markers.
-WANT_MSG='if one failed' expect pending 'R1 R2 push R3 R2 completes' '—' 2026-10-21T15:20:00Z $c "2026-10-21T15:00:00Z OWNER
+with_msg 'if one failed' expect pending 'R1 R2 push R3 R2 completes' '—' 2026-10-21T15:20:00Z $c "2026-10-21T15:00:00Z OWNER
 2026-10-21T15:05:00Z OWNER
 2026-10-21T15:30:00Z OWNER" "review 2026-10-21T15:10:00Z
 $m"
@@ -133,17 +144,30 @@ receipt 2026-10-21T15:49:50Z"
 expect pending 'unrequested review' '—' $p $c "$r1" "receipt 2026-10-21T15:00:00Z
 $m"
 # Two requests after the push with one completion: ambiguous, and the description says how to recover.
-WANT_MSG='if one failed' expect pending 'two requests after push' '—' $p $c "$r1
+with_msg 'if one failed' expect pending 'two requests after push' '—' $p $c "$r1
 2026-10-21T15:27:00Z OWNER" "$m"
 # A failed review leaves no marker, so a clean retry sees more requests than completions: stuck until the
 # failed review's request comment is deleted and the workflow rerun (never while a review is still running).
-WANT_MSG='if one failed' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
+with_msg 'if one failed' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
 $r1" "$m"
 # A new commit doesn't clear it: the failed request is still counted. Deleting that comment does.
-WANT_MSG='if one failed' expect pending 'new commit after failure' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z "2026-10-21T15:00:00Z OWNER
+with_msg 'if one failed' expect pending 'new commit after failure' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z "2026-10-21T15:00:00Z OWNER
 2026-10-21T15:55:00Z OWNER" 'receipt 2026-10-21T16:04:50Z'
 expect success 'stale request deleted' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z '2026-10-21T15:55:00Z OWNER' 'receipt 2026-10-21T16:04:50Z'
+# #49: an unrequested completion (an automatic review) balances the count. M0, R1 on the old head, the new
+# head is pushed, R2, then R1's review finishes: two requests, two markers, but R2 is still running.
+with_msg 'if one failed' expect pending 'unrequested before overlap' '—' $p $c "2026-10-21T15:10:00Z OWNER
+$r1" "receipt 2026-10-21T15:00:00Z
+$m"
+# Each request answered before the next: matched in order.
+expect success 'interleaved rounds' '—' $p $c "2026-10-21T14:50:00Z OWNER
+$r1" "receipt 2026-10-21T15:00:00Z
+$m"
+# A marker at the same second as a request can't be told apart from one before it: fail closed.
+expect pending 'marker ties request' '—' $p $c "2026-10-21T15:00:00Z OWNER
+$r1" "receipt 2026-10-21T15:00:00Z
+$m"
 # A waiting review (no request yet) keeps the plain message.
-WANT_MSG='Waiting for Codex' expect pending 'plain waiting' '—' $p $c '' ''
+with_msg 'Waiting for Codex' expect pending 'plain waiting' '—' $p $c '' ''
 
 exit $fail

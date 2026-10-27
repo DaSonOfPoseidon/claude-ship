@@ -1,7 +1,8 @@
 #!/bin/sh
 # Sets the `codex-review` commit status on a PR's head commit:
-#   success  Codex completed a review of the head commit after it was pushed (when its summary names no
-#            commit, the only trusted request since the previous review, made after the push), and every Codex review thread is resolved
+#   success  Codex completed a review of the head commit after it was pushed, and every Codex review thread is
+#            resolved. When its summary names no commit, every trusted request must be matched, in time order,
+#            by a completion marker, and the latest request must have come after the push.
 #   failure  a Codex thread is unresolved, or Codex's review failed
 #   pending  no completed review of the head commit yet
 # Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
@@ -45,10 +46,12 @@ summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
 # A clean review's row can name no commit (`—`, #30). Nothing ties that completion to a request (neither
-# the summary's edit history nor Codex's reactions say which request it answers), so fail closed and count:
-# every trusted request must be matched by a completion marker, the current one included, so none is still
-# running. The latest request must also have come after this push, and the review finished after it. A
-# failed review leaves no marker, so the counts stay unequal and the status stays pending (the stuck state
+# the summary's edit history nor Codex's reactions say which request it answers), so fail closed and match
+# them in time order: each completion marker closes the oldest open trusted request, the current one
+# included, so none is still running. Equal counts aren't enough: a marker nobody requested (an automatic
+# review) would balance a request still running (#49), so a marker with no open request fails too. The
+# latest request must also have come after this push, and the review finished after it. A failed review
+# leaves no marker, so its request stays open and the status stays pending (the stuck state
 # docs/pitfalls.md describes).
 requested_at=
 ambiguous=
@@ -68,11 +71,16 @@ if [ -z "$row" ]; then
 			--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
 		reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
 			--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
-		n_requests=$(printf '%s\n' "$requests" | grep -c . || true)
-		n_markers=$(printf '%s\n%s\n' "$receipts" "$reviews" | grep -c . || true)
 		requested_at=$(printf '%s\n' "$requests" | cut -c1-19 | sort | tail -1)
-		if [ "$n_requests" -gt 0 ]; then
-			if [ "$n_requests" = "$n_markers" ]; then
+		if [ -n "$requested_at" ]; then
+			# One line per event, `<time> R` or `<time> M`, sorted as text. At the same second `M` sorts
+			# before `R`, so a tie fails closed.
+			matched=$({
+				printf '%s\n' "$requests" | grep . | cut -c1-19 | sed 's/$/ R/'
+				printf '%s\n%s\n' "$receipts" "$reviews" | grep . | cut -c1-19 | sed 's/$/ M/'
+			} | sort | awk '$2 == "R" { open++ } $2 == "M" { if (open == 0) bad = 1; else open-- }
+				END { print (bad || open) ? "no" : "yes" }')
+			if [ "$matched" = yes ]; then
 				row_ok=1
 			else
 				ambiguous=1
