@@ -39,6 +39,8 @@ bash 2 'gh api -if body=x repos/acme/app/pulls/1/merge'
 bash 2 'gh api -zFx=y repos/acme/app/git/refs'
 bash 0 'gh api -i repos/acme/app/pulls/1'
 bash 0 'gh api -i=false repos/acme/app/pulls/1'
+bash 0 'gh api -h=false repos/acme/app/pulls/1'
+bash 0 'gh api -ih=false repos/acme/app/pulls/1'
 # `-h` is gh's no-argument help flag, so `-hi` is `-h -i` and makes no request. The rest of a cluster is still
 # read, so a field after it stays a write (conservative: gh would only print help).
 bash 0 'gh api -h repos/acme/app/pulls/1'
@@ -54,6 +56,17 @@ bash 0 'gh api -i repos/acme/app/issues/1/comments -f body=hi'
 # A branch name with slashes is still a branch the allowlist doesn't cover.
 bash 2 'gh api -X DELETE repos/acme/app/branches/release/1.0/protection'
 bash 2 'gh api -X POST repos/acme/app/branches/release/1.0/rename -f new_name=x'
+# Issue dependency links are issue metadata, so adding and removing a "blocked by" link passes (#52); nothing
+# else on that path does.
+bash 0 'gh api -X POST repos/acme/app/issues/169/dependencies/blocked_by -F issue_id=5949612923'
+bash 0 'gh api repos/acme/app/issues/169/dependencies/blocked_by -F issue_id=5949612923'
+bash 0 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by/5949612923'
+bash 2 'gh api -X PUT repos/acme/app/issues/169/dependencies/blocked_by -F issue_id=1'
+bash 2 'gh api -X PATCH repos/acme/app/issues/169/dependencies/blocked_by/1'
+bash 2 'gh api -X POST repos/acme/app/issues/169/dependencies/blocking -F issue_id=1'
+bash 2 'gh api -X POST repos/acme/app/issues/169/dependencies/blocked_by/../../../pulls/1/merge'
+bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by/5/extra'
+bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by'
 
 # MCP write tools block by name, whatever the server is called.
 for t in mcp__github__push_files mcp__GitHub__push_files mcp__gh__create_pull_request \

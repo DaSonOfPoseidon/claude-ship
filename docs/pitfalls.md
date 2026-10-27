@@ -84,3 +84,7 @@ review finds a new class.
   that is still running evens the counts, so the old head's completion is published as a false success for
   the new head. Don't widen the markers to every Codex comment; an unrelated comment would even the counts
   too.
+- **Local refs are state the agent controls.** The gate diffed against a hardcoded `origin/main`, which
+  repos whose default is `master` don't have (claude-ship #51). Reading `origin/HEAD` instead would let
+  `git remote set-head` point the base at the branch itself and leave nothing to review. Ask GitHub for
+  the default branch, and fetch it with an explicit refspec.

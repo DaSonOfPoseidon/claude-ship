@@ -24,7 +24,7 @@ or anything CI already checks (shellcheck, actionlint).
 ### Project invariants
 
 - The gate fails closed: when it can't tell (GitHub unreachable, reviewer error, unreadable output), it blocks.
-- A branch can't weaken its own review: the rules come from main's `AGENTS.md` when it has them.
+- A branch can't weaken its own review: the rules come from the default branch's `AGENTS.md` when it has them.
 - Reviewers only read: Read, Grep and Glob are their only tools (`--tools`), with no shell (even
   `git diff --output` writes) and no MCP or plugin tools (`--strict-mcp-config`), whatever the user's settings
   allow. Text from outside (PR threads) goes into a prompt only from Codex, the owner or collaborators (not
@@ -35,7 +35,8 @@ or anything CI already checks (shellcheck, actionlint).
   branch's, so they're outside this guarantee.
 - What's reviewed is what's pushed: a push may send only HEAD, to origin (no `--all`, `--tags`, other
   branches, tags or other destinations), and GitHub MCP writes of code or PRs are blocked. `gh api` may make
-  only the writes the ship skill uses (an allowlist, REST and GraphQL); any other write, including statuses,
+  only the writes the ship skill uses, plus issue metadata such as dependency links (an allowlist, REST and
+  GraphQL); any other write, including statuses,
   checks and settings, blocks. A GitHub URL the gate can't read blocks too.
 - The gate catches Claude's own slips; it isn't a security boundary. It matches command text, and its state is
   writable by any shell. Branch protection requiring `codex-review` is the server-side backstop.

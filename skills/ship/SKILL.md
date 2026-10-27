@@ -40,8 +40,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 6. Show the user the invariants you wrote, then ship the branch with the steps below.
 7. After the bootstrap PR merges, ask the user before turning on branch protection that requires
    `codex-review` and the CI checks. It's outward-facing, so get an explicit yes first. Not before the
-   merge: Codex reports a clean review by editing a comment, which runs main's workflow, so the bootstrap
-   PR itself never gets the status and couldn't merge.
+   merge: Codex reports a clean review by editing a comment, which runs the default branch's workflow, so
+   the bootstrap PR itself never gets the status and couldn't merge.
 8. Remind the user to turn off **Automatic review** for the repo in the Codex settings.
 
 ## 2. Before every push (local, no review tokens)
