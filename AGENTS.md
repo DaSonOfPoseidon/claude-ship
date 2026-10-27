@@ -24,7 +24,7 @@ or anything CI already checks (shellcheck, actionlint).
 ### Project invariants
 
 - The gate fails closed: when it can't tell (GitHub unreachable, reviewer error, unreadable output), it blocks.
-- A branch can't weaken its own review: the rules come from main's `AGENTS.md` when it has them.
+- A branch can't weaken its own review: the rules come from the default branch's `AGENTS.md` when it has them.
 - Reviewers only read: Read, Grep and Glob are their only tools (`--tools`), with no shell (even
   `git diff --output` writes) and no MCP or plugin tools (`--strict-mcp-config`), whatever the user's settings
   allow. Text from outside (PR threads) goes into a prompt only from Codex, the owner or collaborators (not

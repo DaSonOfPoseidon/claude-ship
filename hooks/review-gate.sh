@@ -2,7 +2,8 @@
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
 # PreToolUse hook: blocks `git push` and `gh pr create` until an independent reviewer (a fresh headless
-# Claude session with no context from the current one) has reviewed the branch diff against origin/main.
+# Claude session with no context from the current one) has reviewed the branch diff against the repo's default
+# branch.
 # A push may send only HEAD's branch, to origin, and GitHub MCP or `gh api` writes of code, PRs or what guards
 # them are blocked.
 #
@@ -50,6 +51,12 @@ if [ "${1:-}" = --waive ]; then
 	echo "Waived the review of $head."
 	exit 0
 fi
+
+# The repo's default branch, from GitHub: a local origin/HEAD is state an agent can point at its own branch,
+# which would leave nothing to review. Fails if GitHub can't say.
+default_branch() {
+	gh repo view "$1" --json defaultBranchRef --jq .defaultBranchRef.name
+}
 
 # Prints `true` if the repo opted in, nothing if it didn't; fails if GitHub can't say.
 autonomous() {
@@ -537,8 +544,8 @@ if ! flag=$(autonomous "$slug"); then
 	exit 2
 fi
 [ -n "$flag" ] || exit 0
-# The review diffs against origin/main and reads its rules, which come from origin's fetch URL, so that must
-# be the repo the push lands in. Every URL counts, fetch and push: git fetches from the first and pushes to all,
+# The review diffs against the default branch and reads its rules, which come from origin's fetch URL, so that
+# must be the repo the push lands in. Every URL counts, fetch and push: git fetches from the first and pushes to all,
 # and github_slugs drops URLs that aren't GitHub's, so a local path among them would go unseen.
 # first_other <URLs>: prints the first URL that isn't $slug, or `no URL` if there are none.
 first_other() {
@@ -552,7 +559,7 @@ first_other() {
 }
 bad_fetch=$(first_other "$(git remote get-url --all origin 2>/dev/null)")
 if [ -n "$bad_fetch" ]; then
-	echo "Blocked: origin fetches from $bad_fetch but pushes to $slug, so the review would diff against the wrong main. Point every origin URL at $slug." >&2
+	echo "Blocked: origin fetches from $bad_fetch but pushes to $slug, so the review would diff against the wrong base. Point every origin URL at $slug." >&2
 	exit 2
 fi
 bad_push=$(first_other "$(git remote get-url --push --all origin 2>/dev/null)")
@@ -733,20 +740,26 @@ if [ -e "$state/$head.pass" ] || [ -e "$state/$head.waived" ]; then
 	exit 0
 fi
 
-git fetch -q origin main || {
-	echo "Blocked: couldn't fetch origin/main to diff against." >&2
+if ! main=$(default_branch "$slug") || ! git check-ref-format "refs/heads/$main"; then
+	echo "Blocked: couldn't read the default branch of $slug from GitHub. Check \`gh auth status\` and retry." >&2
+	exit 2
+fi
+# An explicit refspec updates the tracking ref whatever origin's fetch config says.
+upstream=refs/remotes/origin/$main
+git fetch -q origin "+refs/heads/$main:$upstream" || {
+	echo "Blocked: couldn't fetch origin/$main to diff against." >&2
 	exit 2
 }
-if [ -z "$(git diff --name-only origin/main...HEAD)" ]; then
+if [ -z "$(git diff --name-only "$upstream"...HEAD)" ]; then
 	exit 0
 fi
 
-# The project's review rules: main's copy (a branch can't weaken its own review), else the branch's, which
-# is how the bootstrap PR that adds them gets reviewed.
+# The project's review rules: the default branch's copy (a branch can't weaken its own review), else the
+# branch's, which is how the bootstrap PR that adds them gets reviewed.
 rules_of() {
 	git show "$1:AGENTS.md" 2>/dev/null | sed -n '/^## Code Review Rules/,/^## /p' | sed '1d;$ { /^## /d; }'
 }
-rules=$(rules_of origin/main)
+rules=$(rules_of "$upstream")
 [ -n "$rules" ] || rules=$(rules_of HEAD)
 if [ -z "$rules" ]; then
 	echo "Blocked: $slug has CLAUDE_AUTONOMOUS on but no \`## Code Review Rules\` in AGENTS.md. Bootstrap first: run the ship skill's bootstrap step, then push." >&2
@@ -762,7 +775,7 @@ pass() {
 }
 
 # The same branch diff as a commit that already passed (after a rebase, say) needs no new review.
-patch_id=$(git diff origin/main...HEAD | git patch-id --stable | cut -d' ' -f1)
+patch_id=$(git diff "$upstream"...HEAD | git patch-id --stable | cut -d' ' -f1)
 if [ -n "$patch_id" ] && [ -e "$state/patch-$patch_id.pass" ]; then
 	echo "review-gate: this branch diff already passed review." >&2
 	pass
@@ -770,10 +783,10 @@ if [ -n "$patch_id" ] && [ -e "$state/patch-$patch_id.pass" ]; then
 fi
 
 # Review only the commits after the newest one that passed, if any did; else the whole branch.
-base=origin/main
-range=origin/main...HEAD
+base=$upstream
+range=$upstream...HEAD
 scoped=
-for commit in $(git rev-list origin/main..HEAD); do
+for commit in $(git rev-list "$upstream"..HEAD); do
 	if [ -e "$state/$commit.pass" ] || [ -e "$state/$commit.waived" ]; then
 		base=$commit
 		range=$commit..HEAD
@@ -848,7 +861,7 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 				echo "## Review checklist (CONTRIBUTING.md)"
 				printf '%s\n' "$checklist"
 			fi
-			for ref in HEAD origin/main; do
+			for ref in HEAD "$upstream"; do
 				if pitfalls=$(git show "$ref:docs/pitfalls.md" 2>/dev/null); then
 					echo
 					echo "## Known pitfalls from past reviews (docs/pitfalls.md on $ref)"
@@ -890,11 +903,11 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 		fi
 		echo
 		echo "## Commits on the branch"
-		git log --format='%h %s' origin/main..HEAD
+		git log --format='%h %s' "$upstream"..HEAD
 		if [ -n "$scoped" ]; then
 			echo
-			echo "## Branch files (git diff --stat origin/main...HEAD)"
-			git diff --stat origin/main...HEAD
+			echo "## Branch files (git diff --stat origin/$main...HEAD)"
+			git diff --stat "$upstream"...HEAD
 		fi
 		echo
 		echo "## Diff (git diff $range)"
