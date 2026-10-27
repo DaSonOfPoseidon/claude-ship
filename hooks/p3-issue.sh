@@ -51,15 +51,23 @@ $map
 EOF
 	set +f
 fi
+listed=
+known=$(gh label list -R "$slug" --limit 1000 --json name --jq '.[].name' 2>/dev/null) && listed=1
+# Trims and dedupes $labels, and drops the ones the repo doesn't have (when its labels could be listed).
+tidy() {
+	labels=$(printf '%s\n' "$labels" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d' | awk '!seen[$0]++')
+	if [ -n "$listed" ]; then
+		printf '%s\n' "$labels" | grep -vxF -e "$known" | while IFS= read -r l; do
+			echo "p3-issue: $slug has no label \"$l\"; skipping it" >&2
+		done
+		labels=$(printf '%s\n' "$labels" | grep -xF -e "$known")
+	fi
+}
+# The type fallback goes by the labels that will actually be applied.
+tidy
 if ! printf '%s\n' "$labels" | grep -Eq '^(bug|documentation|enhancement|type:.*)$' && type=$(var CLAUDE_P3_TYPE_LABEL); then
 	labels=$(printf '%s\n%s\n' "$labels" "$type")
-fi
-labels=$(printf '%s\n' "$labels" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d' | awk '!seen[$0]++')
-if known=$(gh label list -R "$slug" --limit 1000 --json name --jq '.[].name' 2>/dev/null); then
-	printf '%s\n' "$labels" | grep -vxF -e "$known" | while IFS= read -r l; do
-		echo "p3-issue: $slug has no label \"$l\"; skipping it" >&2
-	done
-	labels=$(printf '%s\n' "$labels" | grep -xF -e "$known")
+	tidy
 fi
 
 milestone=

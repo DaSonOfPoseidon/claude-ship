@@ -93,6 +93,10 @@ grep -q 'no label "area:typo"' "$tmp/err" || {
 	echo "FAIL: the missing label area:typo wasn't reported"
 	fail=1
 }
+# A type label from the map that the repo lacks doesn't stand in for the fallback.
+grep -vx documentation "$tmp/labels" >"$tmp/labels.new" && mv "$tmp/labels.new" "$tmp/labels"
+expect docs/a.md review:p3,milestone:later,area:docs,status:ready,bug ''
+echo documentation >>"$tmp/labels"
 # When the repo's labels can't be listed, a label it lacks fails the filing, which is retried without labels.
 mv "$tmp/labels" "$tmp/labels.off"
 expect scripts/pr-gate.sh '' ''
