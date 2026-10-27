@@ -39,6 +39,8 @@ bash 2 'gh api -if body=x repos/acme/app/pulls/1/merge'
 bash 2 'gh api -zFx=y repos/acme/app/git/refs'
 bash 0 'gh api -i repos/acme/app/pulls/1'
 bash 0 'gh api -i=false repos/acme/app/pulls/1'
+bash 0 'gh api -h=false repos/acme/app/pulls/1'
+bash 0 'gh api -ih=false repos/acme/app/pulls/1'
 # `-h` is gh's no-argument help flag, so `-hi` is `-h -i` and makes no request. The rest of a cluster is still
 # read, so a field after it stays a write (conservative: gh would only print help).
 bash 0 'gh api -h repos/acme/app/pulls/1'
