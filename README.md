@@ -80,7 +80,8 @@ The gate reviews HEAD, so it lets a push send only HEAD's branch, to origin, and
 the same GitHub repo, fetch and push. It reads git config and refs before the command runs, so a pushing
 command may run only git's reads (`status`, `log`, `diff`, `show`, `rev-parse`, `ls-remote`) next to the push,
 and may not name a git config file. In opted-in repos, `gh api` may make only the writes the ship skill uses
-(comments, replies, reviews, reactions, issues, labels, workflow runs and its own GraphQL mutations); any other
+(comments, replies, reviews, reactions, issues, labels, workflow runs and its own GraphQL mutations), plus
+issue dependency links ("blocked by"), which are issue metadata like labels; any other
 write, such as commits, refs, PRs, statuses, checks or settings, blocks. It catches Claude's own slips but isn't a security boundary: it matches command text,
 and its state is protected by those patterns alone. Branch protection requiring the `codex-review` status is
 the server-side backstop.

@@ -196,9 +196,9 @@ if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_.-])(g
 fi
 pr_create='(^|[^[:alnum:]_.-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
 # `gh api` writes in an opted-in repo pass only if the ship skill makes them: comments, replies, reviews,
-# reactions, issues, labels, workflow runs and its GraphQL mutations. Anything else (commits, refs, PRs,
-# statuses, checks, settings, Actions variables like CLAUDE_AUTONOMOUS) could land code or change what guards
-# it without a review. Each call is read word by word from $words: it writes when its method isn't GET, which is
+# reactions, issues, labels, issue dependency links, workflow runs and its GraphQL mutations. Anything else
+# (commits, refs, PRs, statuses, checks, settings, Actions variables like CLAUDE_AUTONOMOUS) could land code or
+# change what guards it without a review. Each call is read word by word from $words: it writes when its method isn't GET, which is
 # gh's default once it has fields or an --input.
 # api_scan <words after `gh api`> prints nothing (no such write), `block <why>`, or `repo <owner/repo>`
 # (`{owner}/{repo}` for gh's placeholders), one line per repo it writes to.
@@ -359,8 +359,9 @@ api_scan() (
 	slug=$(printf '%s' "$ep" | cut -d/ -f2-3)
 	rest=$(printf '%s' "$ep" | cut -d/ -f4- | sed 's#/*$##')
 	# Only the writes the ship skill makes pass, as in GraphQL: comments, replies, reviews, reactions, issues,
-	# labels and workflow runs. Everything else (code, refs, PRs, statuses, checks, settings) is checked below.
-	printf '%s %s' "${method:-POST}" "$rest" | grep -Eq '^(POST (issues|issues/[0-9]+/(comments|labels|reactions)|issues/comments/[0-9]+/reactions|pulls/[0-9]+/(comments|reviews)|pulls/[0-9]+/comments/[0-9]+/replies|pulls/comments/[0-9]+/reactions|labels|actions/workflows/[^/]+/dispatches)|PATCH (issues/[0-9]+|issues/comments/[0-9]+|labels/[^/]+))$' && exit 0
+	# labels, issue dependency links (blocked by) and workflow runs. Everything else (code, refs, PRs, statuses,
+	# checks, settings) is checked below.
+	printf '%s %s' "${method:-POST}" "$rest" | grep -Eq '^(POST (issues|issues/[0-9]+/(comments|labels|reactions|dependencies/blocked_by)|issues/comments/[0-9]+/reactions|pulls/[0-9]+/(comments|reviews)|pulls/[0-9]+/comments/[0-9]+/replies|pulls/comments/[0-9]+/reactions|labels|actions/workflows/[^/]+/dispatches)|PATCH (issues/[0-9]+|issues/comments/[0-9]+|labels/[^/]+)|DELETE issues/[0-9]+/dependencies/blocked_by/[0-9]+)$' && exit 0
 	if ! printf '%s' "$slug" | grep -Eq '^([[:alnum:]_.-]+/[[:alnum:]_.-]+|\{owner\}/\{repo\})$'; then
 		echo "block the review gate can't read its repo ($slug)"
 		exit 0
@@ -522,7 +523,7 @@ if [ -n "$api_write" ]; then
 			exit 2
 		fi
 		if [ -n "$api_flag" ]; then
-			echo "Blocked: in $api_slug, \`gh api\` may make only the ship skill's writes (comments, replies, reviews, reactions, issues, labels, workflow runs); others could bypass the pre-push review gate. Use \`git push\` and \`gh pr create\` for code." >&2
+			echo "Blocked: in $api_slug, \`gh api\` may make only the ship skill's writes (comments, replies, reviews, reactions, issues, labels, dependency links, workflow runs); others could bypass the pre-push review gate. Use \`git push\` and \`gh pr create\` for code." >&2
 			exit 2
 		fi
 	done

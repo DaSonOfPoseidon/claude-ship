@@ -56,6 +56,17 @@ bash 0 'gh api -i repos/acme/app/issues/1/comments -f body=hi'
 # A branch name with slashes is still a branch the allowlist doesn't cover.
 bash 2 'gh api -X DELETE repos/acme/app/branches/release/1.0/protection'
 bash 2 'gh api -X POST repos/acme/app/branches/release/1.0/rename -f new_name=x'
+# Issue dependency links are issue metadata, so adding and removing a "blocked by" link passes (#52); nothing
+# else on that path does.
+bash 0 'gh api -X POST repos/acme/app/issues/169/dependencies/blocked_by -F issue_id=5949612923'
+bash 0 'gh api repos/acme/app/issues/169/dependencies/blocked_by -F issue_id=5949612923'
+bash 0 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by/5949612923'
+bash 2 'gh api -X PUT repos/acme/app/issues/169/dependencies/blocked_by -F issue_id=1'
+bash 2 'gh api -X PATCH repos/acme/app/issues/169/dependencies/blocked_by/1'
+bash 2 'gh api -X POST repos/acme/app/issues/169/dependencies/blocking -F issue_id=1'
+bash 2 'gh api -X POST repos/acme/app/issues/169/dependencies/blocked_by/../../../pulls/1/merge'
+bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by/5/extra'
+bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by'
 
 # MCP write tools block by name, whatever the server is called.
 for t in mcp__github__push_files mcp__GitHub__push_files mcp__gh__create_pull_request \
