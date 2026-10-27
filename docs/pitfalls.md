@@ -73,16 +73,18 @@ review finds a new class.
   counted `@codex review` from any non-bot, so an outsider could reset a success, and a slow review of the old
   head finishing after the new head's request looked like the new review (claude-ship #33). Count only OWNER
   and COLLABORATOR comments (an org MEMBER needn't have access to the repo). The summary's edit history and
-  Codex's reactions don't say which request a completion answers, so count instead of windowing: a blank-commit
-  row succeeds only when the trusted requests are as many as the completion markers (receipt comments and
-  Codex reviews, the current one included), the latest request came after the push and the review finished
-  after it. Patching a time window per overlap sequence missed the next sequence (R1, R2, push, R3, R2
-  completes); the count closes the class. Compare timestamps as text, never with GNU-only `date -d`.
-  A failed review leaves no marker, so the counts stay unequal and the status stays pending; re-requesting or
+  Codex's reactions don't say which request a completion answers, so match instead of windowing: a
+  blank-commit row succeeds only when the trusted requests and the completion markers (receipt comments and
+  Codex reviews, the current one included) pair up in time order, each marker closing the oldest open
+  request, the latest request came after the push and the review finished after it. Patching a time window
+  per overlap sequence missed the next sequence (R1, R2, push, R3, R2 completes). Equal counts weren't
+  enough either: an unrequested review's marker balanced a request still running (claude-ship #49), so a
+  marker with no open request fails closed. Compare timestamps as text, never with GNU-only `date -d`.
+  A failed review leaves no marker, so its request stays unmatched and the status stays pending; re-requesting or
   pushing doesn't clear it. Let every running review finish first; only once a review has visibly failed may
   a trusted writer delete that request's comment and rerun the workflow. Deleting the request of a review
-  that is still running evens the counts, so the old head's completion is published as a false success for
-  the new head. Don't widen the markers to every Codex comment; an unrelated comment would even the counts
+  that is still running lets its completion match the new one, so the old head's completion is published as a false success for
+  the new head. Don't widen the markers to every Codex comment; an unrelated comment would match a request
   too.
 - **Local refs are state the agent controls.** The gate diffed against a hardcoded `origin/main`, which
   repos whose default is `master` don't have (claude-ship #51). Reading `origin/HEAD` instead would let

@@ -69,7 +69,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    the comment by hand: find out why the PR's head isn't HEAD.
 4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background (Bash
    `run_in_background`); you're notified when it exits. It prints the status once it's no longer
-   `pending` for HEAD, exits 1 after 30 min (tell the user Codex never answered), and exits 2 on any error
+   `pending` for HEAD, exits 1 after 15 min (Codex timed out: tell the user, and don't request again, since an
+   extra request stays unmatched and keeps the status pending), and exits 2 on any error
    from `codex-status.sh` (fix that, don't retry blindly). If the status stays `pending` with "not tied
    to one request", an earlier review failed or overlapped: re-requesting or pushing won't clear it. Let every running review
    finish first. Only once a review has visibly failed, ask the user to delete that review's `@codex review`
