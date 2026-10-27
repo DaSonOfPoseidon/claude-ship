@@ -18,9 +18,9 @@
 # Per review (the user's choices, 2026-10-19; usage is a Claude Pro plan, so no Opus):
 # - A Sonnet finder reports P0–P3 findings. A Haiku verifier then checks each one against the code; it may
 #   reject a finding only by citing the file:line that makes it impossible, else the finding stands.
-# - Confirmed P0–P2 findings block. Confirmed P3s don't: the gate files them as issues (labels from the
-#   repo variable CLAUDE_P3_LABELS, default `review:p3`) and lists them in later prompts so they aren't
-#   found twice.
+# - Confirmed P0–P2 findings block. Confirmed P3s don't: the gate files them as issues with p3-issue.sh
+#   (labels from the repo variable CLAUDE_P3_LABELS, default `review:p3`, plus the repo's per-file label map,
+#   and an optional milestone) and lists them in later prompts so they aren't found twice.
 # - Docs-only changes (`*.md`, `docs/`) get a Haiku claims check instead of a full review.
 # - Results are cached per HEAD commit and per branch diff (`git patch-id`) in .git/review-gate/, so a
 #   re-push or a clean rebase costs nothing. After a commit passes, later pushes review only the newer
@@ -161,8 +161,8 @@ if printf '%s' "$cmd_all" | grep -q 'review-gate\.sh.*--waive'; then
 	echo "Blocked: only the user can waive a review. Ask them to run \`! ~/.claude/hooks/review-gate.sh --waive \"<why>\"\`." >&2
 	exit 2
 fi
-if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|delete|remove)[[:space:]].*CLAUDE_(AUTONOMOUS|P3_LABELS)'; then
-	echo "Blocked: CLAUDE_AUTONOMOUS and CLAUDE_P3_LABELS are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
+if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|delete|remove)[[:space:]].*CLAUDE_(AUTONOMOUS|P3_[A-Z_]+)'; then
+	echo "Blocked: CLAUDE_AUTONOMOUS and the CLAUDE_P3_* variables are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
 	exit 2
 fi
 # Writing gate state or the installed gate would bypass the review; reading its reports is fine. A command that
@@ -967,16 +967,13 @@ printf '%s' "$findings" | jq -r '.[] |
 	(if .rejected then "Verifier: \(.verdict.reason) (\(.verdict.evidence))\n" else "" end)' >"$report"
 
 # Confirmed P3s become issues, once each.
-labels=$(gh variable get CLAUDE_P3_LABELS -R "$slug" 2>/dev/null) || labels=review:p3
 printf '%s' "$findings" | jq -c '.[] | select(.severity == "P3" and (.rejected | not))' | while IFS= read -r f; do
 	title=$(printf '%s' "$f" | jq -r '"\(.file): \(.summary)"' | cut -c1-120)
 	key=$(printf '%s' "$title" | cksum | cut -d' ' -f1)
 	grep -q "^$key	" "$filed" && continue
 	body=$(printf '%s' "$f" | jq -r --arg c "$head" '"Found by the pre-push review gate (P3, verified) at `\(.file):\(.line)` in \($c).\n\n\(.summary)\n\nFailure scenario: \(.failure_scenario)"')
-	label_args=$(printf '%s' "$labels" | tr ',' '\n' | sed '/^$/d; s/^/--label\n/')
-	# shellcheck disable=SC2086
-	if url=$(IFS='
-'; gh issue create -R "$slug" --title "$title" --body "$body" $label_args 2>&1); then
+	printf '%s' "$f" | jq --arg t "$title" --arg b "$body" '{file, title: $t, body: $b}' >"$state/p3-$key.json"
+	if url=$(sh "$dir/p3-issue.sh" "$slug" "$state/p3-$key.json"); then
 		printf '%s\t%s (%s)\n' "$key" "$title" "$url" >>"$filed"
 		echo "review-gate: filed P3 $url" >&2
 	else

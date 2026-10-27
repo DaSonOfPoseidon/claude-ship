@@ -47,7 +47,25 @@ The gate and autonomous commits apply only where the repo variable `CLAUDE_AUTON
 ```sh
 gh variable set CLAUDE_AUTONOMOUS --body true -R <owner/repo>
 gh variable set CLAUDE_P3_LABELS --body "review:p3,<more labels>" -R <owner/repo>   # optional
+gh variable set CLAUDE_P3_TYPE_LABEL --body bug -R <owner/repo>                      # optional
+gh variable set CLAUDE_P3_MILESTONE --body auto -R <owner/repo>                      # optional
 ```
+
+P3 issues (the gate's, and Codex findings the skill defers) are filed by `hooks/p3-issue.sh` with
+`CLAUDE_P3_LABELS` (default `review:p3`) plus labels by the finding's file, from
+`.github/claude-ship/p3-labels` on the default branch. One rule per line, `<glob> <label>[,<label>...]`; every
+matching rule adds its labels, and `*` spans `/`:
+
+```
+crates/core/*   area:core
+*.md            area:docs,documentation
+scripts/*       area:ci
+*               status:ready
+```
+
+If no label is a type (`bug`, `documentation`, `enhancement`, `type:*`), `CLAUDE_P3_TYPE_LABEL` is added.
+Labels the repo doesn't have are skipped. With `CLAUDE_P3_MILESTONE=auto`, the issue goes in the milestone of
+the branch's open PR, else of the one milestone its commits' `fixes #N` issues share, else none.
 
 The repo then needs `AGENTS.md` › `## Code Review Rules` (the skill's bootstrap writes it). Codex reads the
 same section.

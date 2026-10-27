@@ -29,6 +29,12 @@ mcp() {
 	gate "$1" "$(jq -nc --arg t "$2" --argjson i "$3" '{tool_name: $t, tool_input: $i}')"
 }
 
+# The opt-in variables, CLAUDE_P3_* included, are the user's to change (claude-ship #54).
+bash 2 'gh variable set CLAUDE_P3_LABELS --body review:p3'
+bash 2 'gh variable set CLAUDE_P3_TYPE_LABEL --body bug'
+bash 2 'gh variable delete CLAUDE_P3_MILESTONE'
+bash 0 'gh variable get CLAUDE_P3_MILESTONE'
+
 # Clustered short flags: gh reads `-iF…` as `-i -F…`, so the field or method still makes it a write.
 bash 2 'gh api -iFref=refs/heads/x repos/acme/app/git/refs'
 bash 2 'gh api -iiFsha=x repos/acme/app/git/refs'

@@ -35,8 +35,10 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    bug that reviews have caught here. Check every change against them, and add an entry when a review
    finds a new class." AGENTS.md's Known pitfalls section links to it, and the gate shows it to reviewers.
 5. Create the label `review:p3` (`gh label create review:p3 --color c5def5 --description "Minor finding from an AI review"`).
-   If the repo's issue conventions need more labels on auto-filed P3s (e.g. a milestone label a PR gate
-   checks), ask the user to set them: `! gh variable set CLAUDE_P3_LABELS --body "review:p3,<more>"`.
+   If the repo's issue conventions need more labels on auto-filed P3s, write the per-file label map
+   `.github/claude-ship/p3-labels` (format in claude-ship's README) and ask the user to set the variables:
+   `! gh variable set CLAUDE_P3_LABELS --body "review:p3,<more>"`, and optionally `CLAUDE_P3_TYPE_LABEL`
+   (e.g. `bug`) and `CLAUDE_P3_MILESTONE` (`auto`).
 6. Show the user the invariants you wrote, then ship the branch with the steps below.
 7. After the bootstrap PR merges, ask the user before turning on branch protection that requires
    `codex-review` and the CI checks. It's outward-facing, so get an explicit yes first. Not before the
@@ -95,9 +97,10 @@ right-hand column.
 - **Not valid:** reply on the thread explaining why (with file:line evidence), then resolve it.
 - **Fix:** test-first, with a sweep for the same class. Reply on the thread with the fixing commit, then
   resolve the thread.
-- **File an issue:** `gh issue create` with the repo's label and milestone conventions (CLAUDE.md;
-  OBDCracker needs an area label plus `milestone:later` so `pr-gate.sh` doesn't block on it). Reply on
-  the thread with the issue link, then resolve the thread.
+- **File an issue:** write `{"file": "<path>", "title": "<path>: <summary>", "body": "<finding>"}` to a JSON
+  file in your scratchpad with the Write tool, then run `~/.claude/hooks/p3-issue.sh <owner/repo> <that file>`
+  from the PR's checkout. It applies the repo's labels and milestone the same way the gate does for its P3s.
+  Reply on the thread with the issue link it prints, then resolve the thread.
 - Resolve threads with GraphQL `resolveReviewThread(input: {threadId: "<id>"})`, using the ids
   `codex-findings.sh` prints.
 - When a finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in the same push.

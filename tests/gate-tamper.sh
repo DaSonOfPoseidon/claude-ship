@@ -31,6 +31,7 @@ expect 0 '~/.claude/skills/ship/codex-wait.sh 29 >/dev/null 2>&1'
 expect 0 '~/.claude/skills/ship/codex-wait.sh 29 &>/dev/null'
 expect 0 'ls ~/x/.git/review-gate/ >&2'
 expect 0 'cat ~/.claude/hooks/review-prompt.md'
+expect 0 '~/.claude/hooks/p3-issue.sh acme/app /tmp/s/finding.json 2>&1'
 expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-request.sh 29 2>&1 | tail"'
 
 # Writes block, by redirect or by tool.
