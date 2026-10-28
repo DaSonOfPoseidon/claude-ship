@@ -6,6 +6,9 @@ skills/*                 area:skill
 action.yml               area:action
 scripts/*                area:action
 tests/codex-status.sh    area:action
+tests/codex-round.sh     area:skill
+tests/codex-wait.sh      area:skill
+tests/orchestrate-hint.sh area:gate
 .github/workflows/*      area:action
 install.sh               area:install
 tests/install.sh         area:install
