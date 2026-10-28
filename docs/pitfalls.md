@@ -70,23 +70,22 @@ review finds a new class.
   except on some clean reviews, where it shows `—`, and `codex-status.sh` waited forever (claude-ship #30).
   Decide what each missing field means, fail closed, and test the blank case.
 - **Anyone can post a comment, and a completion doesn't say which request it answers.** `codex-status.sh`
-  counted `@codex review` from any non-bot, so an outsider could reset a success, and a slow review of the old
-  head finishing after the new head's request looked like the new review (claude-ship #33). Count only OWNER
-  and COLLABORATOR comments (an org MEMBER needn't have access to the repo). The summary's edit history and
-  Codex's reactions don't say which request a completion answers, so match instead of windowing: a
-  blank-commit row succeeds only when the trusted requests and the completion markers (receipt comments and
-  Codex reviews, the current one included) pair up in time order, each marker closing the oldest open
-  request, the latest request came after the push and the review finished after it. Patching a time window
-  per overlap sequence missed the next sequence (R1, R2, push, R3, R2 completes). Equal counts weren't
-  enough either: an unrequested review's marker balanced a request still running (claude-ship #49), so a
-  marker with no open request fails closed. Compare timestamps as text, never with GNU-only `date -d`.
-  A failed review leaves no marker, so its request stays unmatched and the status stays pending; re-requesting or
-  pushing doesn't clear it. Let every running review finish first; only once a review has visibly failed may
-  a trusted writer delete that request's comment and rerun the workflow. Deleting the request of a review
-  that is still running lets its completion match the new one, so the old head's completion is published as a false success for
-  the new head. Don't widen the markers to every Codex comment; an unrelated comment would match a request
-  too.
+  counted `@codex review` from any non-bot, so an outsider could reset a success (claude-ship #33). Count
+  only OWNER and COLLABORATOR comments (an org MEMBER needn't have access to the repo). The summary's edit
+  history and Codex's reactions don't say which request a completion answers. A new request ends any
+  review still running on the PR: in all 14 overlaps across three repos, one completion followed
+  (claude-ship #61). So a blank-commit row succeeds only when the latest trusted request came after the
+  push and exactly one completion marker (receipt comments and Codex reviews, the current one included)
+  follows it, and the review finished after it. Pairing every request with its own marker instead left a
+  stalled or failed review's request open forever, until someone deleted its comment (claude-ship #33, #61).
+  More than one marker after the request means one nobody asked for (an automatic review, claude-ship #49):
+  fail closed. Compare timestamps as text, never with GNU-only `date -d`. Don't widen the markers to every
+  Codex comment, or an unrelated comment would count as a completion.
 - **Local refs are state the agent controls.** The gate diffed against a hardcoded `origin/main`, which
   repos whose default is `master` don't have (claude-ship #51). Reading `origin/HEAD` instead would let
   `git remote set-head` point the base at the branch itself and leave nothing to review. Ask GitHub for
   the default branch, and fetch it with an explicit refspec.
+- **Another service's job can die without saying so.** About one Codex review in ten here keeps its 👀 and a
+  `running` summary forever, with no review, receipt or error (openai/codex#55890). The ship skill waited 15
+  minutes, then forbade a retry, so every stall needed the user (claude-ship #61). Bound the wait by the
+  job's own last update, not by a total time, retry once, and don't charge a round for a job that never ran.

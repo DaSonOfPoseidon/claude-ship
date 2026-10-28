@@ -71,13 +71,18 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    the comment by hand: find out why the PR's head isn't HEAD.
 4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background (Bash
    `run_in_background`); you're notified when it exits. It prints the status once it's no longer
-   `pending` for HEAD, exits 1 after 15 min (Codex timed out: tell the user, and don't request again, since an
-   extra request stays unmatched and keeps the status pending), and exits 2 on any error
-   from `codex-status.sh` (fix that, don't retry blindly). If the status stays `pending` with "not tied
-   to one request", an earlier review failed or overlapped: re-requesting or pushing won't clear it. Let every running review
-   finish first. Only once a review has visibly failed, ask the user to delete that review's `@codex review`
-   comment and rerun the workflow; deleting the request of a review still running gives a false success. Before triage, check the status it printed
-   names HEAD's SHA.
+   `pending` for HEAD, and exits 2 on any error from `codex-status.sh` (fix that, don't retry blindly).
+   - **Exit 3**: only a new request clears the status. Run step 3 again, once per HEAD. If that one ends in
+     exit 3 too, stop and tell the user. A new request ends any earlier review, so old requests never need
+     deleting. Exit 3 prints one of two statuses:
+     - **"stalled"**: Codex's summary says running but hasn't changed in 15 min. Codex sometimes drops a
+       review this way and never finishes it (openai/codex#55890, claude-ship #61). `codex-round.sh`
+       doesn't count the stalled request, so the retry doesn't use a round.
+     - **"finished more than once"**: a completion came that nobody asked for (an automatic review), so the
+       status can't tell which one is the request's. The retry uses a round.
+   - **Exit 1, timed out** after 20 min without a result or a stall: tell the user and don't request again.
+
+   Before triage, check that the printed status names HEAD's SHA.
 
 ## 4. Triage
 
