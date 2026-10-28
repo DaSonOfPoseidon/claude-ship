@@ -47,6 +47,7 @@ crates/obdcracker-core/*        area:core
 crates/obdcracker-transport/*   area:transport
 *.md                            area:docs,documentation
 docs/*                          area:docs,documentation
+notes/*                         area:docs, documentation
 scripts/*                       area:ci,area:typo
 .github/*                       area:ci
 
@@ -97,6 +98,30 @@ grep -q 'no label "area:typo"' "$tmp/err" || {
 grep -vx documentation "$tmp/labels" >"$tmp/labels.new" && mv "$tmp/labels.new" "$tmp/labels"
 expect docs/a.md review:p3,milestone:later,area:docs,status:ready,bug ''
 echo documentation >>"$tmp/labels"
+# A rule with a space after its comma still gives a type label, so the fallback adds none (claude-ship #57).
+expect notes/a.md review:p3,milestone:later,area:docs,documentation,status:ready ''
+# Labels match the repo's case-insensitively and are applied with the repo's spelling (claude-ship #58).
+sed 's/^bug$/Bug/; s/^documentation$/Documentation/' "$tmp/labels" >"$tmp/labels.new" && mv "$tmp/labels.new" "$tmp/labels"
+expect docs/a.md review:p3,milestone:later,area:docs,Documentation,status:ready ''
+expect scripts/pr-gate.sh review:p3,milestone:later,area:ci,status:ready,Bug ''
+# A type label in another case still counts as one: Bug isn't added to a finding that has documentation.
+V_CLAUDE_P3_TYPE_LABEL=Bug expect docs/a.md review:p3,milestone:later,area:docs,Documentation,status:ready ''
+(
+	# BUG and bug are one label, and a label missing in every case is still reported and skipped.
+	unset V_CLAUDE_P3_TYPE_LABEL
+	export V_CLAUDE_P3_LABELS=BUG,bug,Nope,review:p3
+	expect src/x.c Bug,review:p3,status:ready ''
+	grep -q 'no label "Nope"' "$tmp/err" || {
+		echo "FAIL: the missing label Nope wasn't reported"
+		fail=1
+	}
+	# Labels match literally: no regex from `type:.*`, and `C++` is `c++`.
+	printf '%s\n' review:p3 status:ready type:bug c++ >"$tmp/labels"
+	export V_CLAUDE_P3_LABELS='type:.*,C++'
+	expect src/x.c c++,status:ready ''
+	exit "$fail"
+) || fail=1
+printf '%s\n' review:p3 milestone:later area:core area:transport area:docs area:ci status:ready bug documentation >"$tmp/labels"
 # When the repo's labels can't be listed, a label it lacks fails the filing, which is retried without labels.
 mv "$tmp/labels" "$tmp/labels.off"
 expect scripts/pr-gate.sh '' ''
