@@ -10,7 +10,7 @@
 # .github/claude-ship/p3-labels on the default branch (a branch can't change how its own findings are filed),
 # one rule per line, `<glob> <label>[,<label>...]`, where `*` spans `/`. If none of them is a type label (`bug`,
 # `documentation`, `enhancement`, `type:*`), CLAUDE_P3_TYPE_LABEL is added when set. Labels the repo doesn't have
-# are dropped.
+# are dropped, and one that differs from a repo label only in case is filed under the repo's spelling.
 # Milestone, only with CLAUDE_P3_MILESTONE=auto: the branch's open PR's, else the one milestone of the issues its
 # commit subjects fix (`fixes #N`), else none.
 # A finding is never lost to its labels: if filing fails, it retries without the milestone, then without labels.
@@ -53,19 +53,37 @@ EOF
 fi
 listed=
 known=$(gh label list -R "$slug" --limit 1000 --json name --jq '.[].name' 2>/dev/null) && listed=1
-# Trims and dedupes $labels, and drops the ones the repo doesn't have (when its labels could be listed).
+# Trims and dedupes $labels, and (when the repo's labels could be listed) swaps each for the repo's spelling of
+# it, ignoring case, and drops the ones the repo doesn't have. Matches are by string compare, never a pattern.
 tidy() {
 	labels=$(printf '%s\n' "$labels" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d' | awk '!seen[$0]++')
 	if [ -n "$listed" ]; then
-		printf '%s\n' "$labels" | grep -vxF -e "$known" | while IFS= read -r l; do
-			echo "p3-issue: $slug has no label \"$l\"; skipping it" >&2
-		done
-		labels=$(printf '%s\n' "$labels" | grep -xF -e "$known")
+		# ENVIRON, not -v, which would read backslashes in a label as escapes.
+		labels=$(printf '%s\n' "$labels" | KNOWN=$known SLUG=$slug awk '
+			BEGIN {
+				n = split(ENVIRON["KNOWN"], k, "\n")
+				for (i = 1; i <= n; i++) {
+					exact[k[i]] = 1
+					if (!(tolower(k[i]) in folded)) folded[tolower(k[i])] = k[i]
+				}
+			}
+			{
+				if ($0 in exact) l = $0
+				else if (tolower($0) in folded) l = folded[tolower($0)]
+				else {
+					print "p3-issue: " ENVIRON["SLUG"] " has no label \"" $0 "\"; skipping it" | "cat >&2"
+					next
+				}
+				if (!(tolower(l) in seen)) {
+					seen[tolower(l)] = 1
+					print l
+				}
+			}')
 	fi
 }
 # The type fallback goes by the labels that will actually be applied.
 tidy
-if ! printf '%s\n' "$labels" | grep -Eq '^(bug|documentation|enhancement|type:.*)$' && type=$(var CLAUDE_P3_TYPE_LABEL); then
+if ! printf '%s\n' "$labels" | grep -Eiq '^(bug|documentation|enhancement|type:.*)$' && type=$(var CLAUDE_P3_TYPE_LABEL); then
 	labels=$(printf '%s\n%s\n' "$labels" "$type")
 	tidy
 fi
