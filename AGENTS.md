@@ -51,3 +51,7 @@ or anything CI already checks (shellcheck, actionlint).
 ### Known pitfalls
 
 Classes of bug past reviews caught here are in [`docs/pitfalls.md`](docs/pitfalls.md).
+
+## PR loop
+
+- merge: yes
