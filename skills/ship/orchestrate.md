@@ -32,9 +32,8 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Implement a **trivial** unit (docs or config, no logic, ~20 lines) | `ship-implementer` with `model: haiku` | Haiku, high |
 | Wait for Codex, list findings, file issues | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `p3-issue.sh`) | none |
 
-- A trivial unit whose Haiku implementer the gate blocked twice goes to a new Sonnet `ship-implementer`.
-  First remove the Haiku implementer's worktree (`git worktree remove <path>`, only when it's clean; else stop
-  and ask). Its commits stay on the local branch, where the new implementer picks them up.
+- A trivial unit whose Haiku implementer the gate blocked twice goes to a new Sonnet `ship-implementer`
+  (see **Replacing an implementer**).
 - For a high-risk unit, spend your effort on the plan (more edge cases, exact TDD order, risk notes); don't
   implement it yourself.
 - Never use Fable: it draws on a separate limit or on usage credits.
@@ -98,8 +97,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
 5. **Triage** with `codex-findings.sh` and the ship skill's step 4 outcome table:
    - **Not valid / file an issue:** do it yourself: the reply, `p3-issue.sh`, the resolve.
    - **Fix:** send the findings, with thread ids and what each fix should be, to the same implementer
-     (`SendMessage` to its id) with "request the next round". If its id is gone (after `/clear`), start a new
-     `ship-implementer` on the same branch with the plan file and the findings.
+     (`SendMessage` to its id) with "request the next round". If its id is gone (after `/clear`), replace it
+     (see **Replacing an implementer**), and give the new one the plan file and the findings.
    - **Nothing to fix:** `gh workflow run codex-review.yml -f pr=<pr>`.
 
    Then back to 4. Rounds are capped at 3 as in the ship skill.
@@ -114,6 +113,16 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      this one.
 7. **Tell the user in one line** what merged or is waiting, and that it's a good moment to `/clear` (resume
    with "continue the PR loop"). Then go to 1.
+
+## Replacing an implementer
+
+A new `ship-implementer` on an existing branch can't check it out while an earlier implementer's worktree still
+has it. Worktrees share branches, so that worktree's commits are already on the local branch, pushed or not.
+So before starting the new one, every time (an escalation, or a lost agent id after `/clear`):
+1. Find the worktree that has the branch: `git worktree list`.
+2. Remove it with `git worktree remove <path>`. Only do this when `git -C <path> status --porcelain` is empty.
+   Otherwise stop and ask: those are uncommitted changes.
+3. Start the new implementer with the plan file's path. It picks up the local branch.
 
 ## Stop and ask the user
 
@@ -132,7 +141,7 @@ Otherwise, keep going without asking.
 1. Read `loop.md`, if there is one, and list the in-flight PRs.
 2. Finish in-flight PRs first, picking each up at its state:
    - no review requested yet: request one, from the worktree that has the branch (`git worktree list`), or
-     through a new implementer if none does
+     through a new implementer if none does (see **Replacing an implementer**)
    - a review pending: wait for it
    - findings open: triage them
    - green: done
