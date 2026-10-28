@@ -79,8 +79,10 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    - **Exit 1, timed out** after 20 min without a result or a stall: tell the user and don't request again.
    - **`pending` with "not tied to one request"**: an earlier review failed, stalled or overlapped, and
      re-requesting or pushing won't clear it. Let every running review finish first. Once a review has
-     visibly failed or stalled, ask the user to delete that review's `@codex review` comment and rerun the
-     workflow. Deleting the request of a review that is still running gives a false success.
+     visibly failed (an error, not a stall), ask the user to delete that review's `@codex review` comment
+     and rerun the workflow. A stalled review isn't over: it can still finish and pair with a later request.
+     So never suggest deleting a stalled request; tell the user the status is stuck behind it. Deleting the
+     request of a review that is still running gives a false success.
 
    Before triage, check that the printed status names HEAD's SHA.
 
