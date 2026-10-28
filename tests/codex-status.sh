@@ -1,9 +1,9 @@
 #!/bin/sh
 # Tests codex-status.sh against Codex summaries whose Code Review row names no commit (`—`), as on
-# OBDCracker #145 (claude-ship #30). Such a row counts for the head only when the trusted `@codex review`
-# requests (owner or collaborator) are matched in time order by the completion markers (receipts and Codex
-# reviews, the current one included), the latest request came after the head's push, and the review
-# finished after it.
+# OBDCracker #145 (claude-ship #30). Such a row counts for the head only when the latest trusted
+# `@codex review` request (owner or collaborator) came after the head's push and is followed by exactly one
+# completion marker (a receipt or Codex review, the current one included), and the review finished after it.
+# A new request ends any review still running (claude-ship #61).
 # The fake gh below serves fixtures and applies
 # the script's own --jq filters with real jq, so the filters are tested too.
 set -u
@@ -133,49 +133,42 @@ $m"
 expect success 'round 2 after clean' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" "receipt 2026-10-21T15:00:00Z
 $m"
-# The race: a review of the old head is still running when the new head is pushed and re-requested. Its
-# completion comes after both, but one marker for two requests stays pending.
-expect pending 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
+# A new request ends any review still running (claude-ship #61), so only the latest trusted request counts.
+# A review of the old head running when the new head is pushed and re-requested ends there: the one marker
+# after the new request is its own.
+expect success 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" "$m"
-# Codex's scenario: R1 and R2 on the old head, R1 completes, the new head is pushed, R3 is requested, then
-# R2's blank completion arrives. Three requests, two markers.
-with_msg 'if one failed' expect pending 'R1 R2 push R3 R2 completes' '—' 2026-10-21T15:20:00Z $c "2026-10-21T15:00:00Z OWNER
+# R1 and R2 on the old head, R1 completes, the new head is pushed, R3 ends R2: the marker after R3 is R3's.
+expect success 'R1 R2 push R3' '—' 2026-10-21T15:20:00Z $c "2026-10-21T15:00:00Z OWNER
 2026-10-21T15:05:00Z OWNER
 2026-10-21T15:30:00Z OWNER" "review 2026-10-21T15:10:00Z
 $m"
-# Once R3's review completes too, every request is matched.
-expect success 'R3 completes as well' '—' 2026-10-21T15:20:00Z 2026-10-21T15:50:00Z "2026-10-21T15:00:00Z OWNER
-2026-10-21T15:05:00Z OWNER
+# Two markers after the latest request: one wasn't asked for (an automatic review, #49), and it can't be
+# told which is the request's. Fail closed, and say how to recover.
+with_msg 'more than once' expect pending 'two markers after the request' '—' 2026-10-21T15:20:00Z 2026-10-21T15:50:00Z "2026-10-21T15:00:00Z OWNER
 2026-10-21T15:30:00Z OWNER" "review 2026-10-21T15:10:00Z
 receipt 2026-10-21T15:41:19Z
 receipt 2026-10-21T15:49:50Z"
-# More markers than requests (an unrequested review): not matched either, stay pending.
-expect pending 'unrequested review' '—' $p $c "$r1" "receipt 2026-10-21T15:00:00Z
+# Markers before the latest request belong to earlier requests or none; they don't matter.
+expect success 'old unrequested review' '—' $p $c "$r1" "receipt 2026-10-21T15:00:00Z
 $m"
-# Two requests after the push with one completion: ambiguous, and the description says how to recover.
-with_msg 'if one failed' expect pending 'two requests after push' '—' $p $c "$r1
+# Two requests after the push with one completion: the second ended the first.
+expect success 'two requests after push' '—' $p $c "$r1
 2026-10-21T15:27:00Z OWNER" "$m"
-# A failed review leaves no marker, so a clean retry sees more requests than completions: stuck until the
-# failed review's request comment is deleted and the workflow rerun (never while a review is still running).
-with_msg 'if one failed' expect pending 'failed then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
+# A stalled or failed review leaves no marker; its retry ends it, so nothing needs deleting.
+expect success 'stalled then retried' '—' $p $c "2026-10-21T15:00:00Z OWNER
 $r1" "$m"
-# A new commit doesn't clear it: the failed request is still counted. Deleting that comment does.
-with_msg 'if one failed' expect pending 'new commit after failure' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z "2026-10-21T15:00:00Z OWNER
+expect success 'new commit after a stall' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z "2026-10-21T15:00:00Z OWNER
 2026-10-21T15:55:00Z OWNER" 'receipt 2026-10-21T16:04:50Z'
-expect success 'stale request deleted' '—' 2026-10-21T15:50:00Z 2026-10-21T16:05:00Z '2026-10-21T15:55:00Z OWNER' 'receipt 2026-10-21T16:04:50Z'
-# #49: an unrequested completion (an automatic review) balances the count. M0, R1 on the old head, the new
-# head is pushed, R2, then R1's review finishes: two requests, two markers, but R2 is still running.
-with_msg 'if one failed' expect pending 'unrequested before overlap' '—' $p $c "2026-10-21T15:10:00Z OWNER
-$r1" "receipt 2026-10-21T15:00:00Z
-$m"
-# Each request answered before the next: matched in order.
+# The retry hasn't finished yet: no marker after it, so still waiting.
+with_msg 'Waiting for Codex' expect pending 'retry still running' '—' $p $c "$r1
+2026-10-21T15:42:00Z OWNER" "$m"
+# Each request answered before the next.
 expect success 'interleaved rounds' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" "receipt 2026-10-21T15:00:00Z
 $m"
-# A marker at the same second as a request can't be told apart from one before it: fail closed.
-expect pending 'marker ties request' '—' $p $c "2026-10-21T15:00:00Z OWNER
-$r1" "receipt 2026-10-21T15:00:00Z
-$m"
+# A marker at the same second as the latest request can't be told apart from one before it: fail closed.
+expect pending 'marker ties request' '—' $p $c "$r1" 'receipt 2026-10-21T15:26:03Z'
 # A waiting review (no request yet) keeps the plain message.
 with_msg 'Waiting for Codex' expect pending 'plain waiting' '—' $p $c '' ''
 

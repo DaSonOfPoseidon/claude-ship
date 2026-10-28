@@ -77,12 +77,9 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
      per HEAD. `codex-round.sh` doesn't count the stalled request, so the retry doesn't use a round. If the
      retry stalls too, stop and tell the user that Codex isn't finishing reviews.
    - **Exit 1, timed out** after 20 min without a result or a stall: tell the user and don't request again.
-   - **`pending` with "not tied to one request"**: an earlier review failed, stalled or overlapped, and
-     re-requesting or pushing won't clear it. Let every running review finish first. Once a review has
-     visibly failed (an error, not a stall), ask the user to delete that review's `@codex review` comment
-     and rerun the workflow. A stalled review isn't over: it can still finish and pair with a later request.
-     So never suggest deleting a stalled request; tell the user the status is stuck behind it. Deleting the
-     request of a review that is still running gives a false success.
+   - **`pending` with "finished more than once"**: a completion came that nobody asked for (an automatic
+     review), so the status can't tell which one is the request's. Run step 3 again. A new request ends any
+     earlier review, so old requests never need deleting.
 
    Before triage, check that the printed status names HEAD's SHA.
 

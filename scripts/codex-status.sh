@@ -1,8 +1,8 @@
 #!/bin/sh
 # Sets the `codex-review` commit status on a PR's head commit:
 #   success  Codex completed a review of the head commit after it was pushed, and every Codex review thread is
-#            resolved. When its summary names no commit, every trusted request must be matched, in time order,
-#            by a completion marker, and the latest request must have come after the push.
+#            resolved. When its summary names no commit, the latest trusted request must have come after the
+#            push and be followed by exactly one completion marker (a new request ends any earlier review).
 #   failure  a Codex thread is unresolved, or Codex's review failed
 #   pending  no completed review of the head commit yet, or Codex's review stalled (it says running but its
 #            summary hasn't changed in CODEX_STALL_SECS, default 900)
@@ -66,13 +66,12 @@ if [ "$review_state" = running ] && [ -n "$summary_at" ]; then
 	fi
 fi
 # A clean review's row can name no commit (`—`, #30). Nothing ties that completion to a request (neither
-# the summary's edit history nor Codex's reactions say which request it answers), so fail closed and match
-# them in time order: each completion marker closes the oldest open trusted request, the current one
-# included, so none is still running. Equal counts aren't enough: a marker nobody requested (an automatic
-# review) would balance a request still running (#49), so a marker with no open request fails too. The
-# latest request must also have come after this push, and the review finished after it. A failed review
-# leaves no marker, so its request stays open and the status stays pending (the stuck state
-# docs/pitfalls.md describes).
+# the summary's edit history nor Codex's reactions say which request it answers). A new request ends any
+# review still running on the PR (claude-ship #61: in all 14 overlaps across three repos, only one
+# completion followed), so only the latest trusted request counts. It must have come after this push, and
+# exactly one completion marker (the current one included) must follow it: none means it's still running,
+# and more than one means a completion nobody asked for (an automatic review, #49), so fail closed. A
+# marker at the same second as the request counts as before it.
 requested_at=
 ambiguous=
 if [ -z "$row" ]; then
@@ -93,17 +92,12 @@ if [ -z "$row" ]; then
 			--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
 		requested_at=$(printf '%s\n' "$requests" | cut -c1-19 | sort | tail -1)
 		if [ -n "$requested_at" ]; then
-			# One line per event, `<time> R` or `<time> M`, sorted as text. At the same second `M` sorts
-			# before `R`, so a tie fails closed.
-			matched=$({
-				printf '%s\n' "$requests" | grep . | cut -c1-19 | sed 's/$/ R/'
-				printf '%s\n%s\n' "$receipts" "$reviews" | grep . | cut -c1-19 | sed 's/$/ M/'
-			} | sort | jq -Rnr 'reduce (inputs | split(" ")[1]) as $e ({open: 0, bad: false};
-				if $e == "R" then .open += 1 elif .open == 0 then .bad = true else .open -= 1 end)
-				| if .bad or .open > 0 then "no" else "yes" end')
-			if [ "$matched" = yes ]; then
+			# ISO 8601 times to the second compare as text.
+			answers=$(printf '%s\n%s\n' "$receipts" "$reviews" | grep . | cut -c1-19 |
+				awk -v r="$requested_at" '$0 > r' | grep -c . || true)
+			if [ "$answers" -eq 1 ]; then
 				row_ok=1
-			else
+			elif [ "$answers" -gt 1 ]; then
 				ambiguous=1
 			fi
 		fi
@@ -154,7 +148,7 @@ elif [ -n "$stalled" ]; then
 	description="Codex's review of $short stalled (no update in $((stall_secs / 60)) min, openai/codex#55890); ask again with @codex review"
 elif [ -n "$ambiguous" ]; then
 	state=pending
-	description="Review of $short not tied to one request: let running reviews finish; if one failed, delete its request and rerun"
+	description="Codex finished more than once since the last request for $short, so neither is tied to it; ask again with @codex review"
 else
 	state=pending
 	description="Waiting for Codex to review $short"
