@@ -90,3 +90,8 @@ review finds a new class.
   repos whose default is `master` don't have (claude-ship #51). Reading `origin/HEAD` instead would let
   `git remote set-head` point the base at the branch itself and leave nothing to review. Ask GitHub for
   the default branch, and fetch it with an explicit refspec.
+- **Another service's job can die without saying so.** About one Codex review in ten here keeps its 👀 and a
+  `running` summary forever, with no review, receipt or error (openai/codex#55890). The ship skill waited 15
+  minutes, then forbade a retry, so every stall needed the user (claude-ship #61). Bound the wait by the
+  job's own last update, not by a total time, retry once, and don't charge a round for a job that never ran.
+  Don't treat the stalled request as answered, though: its review could still finish and pair with the retry.

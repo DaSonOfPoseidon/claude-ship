@@ -71,13 +71,18 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    the comment by hand: find out why the PR's head isn't HEAD.
 4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background (Bash
    `run_in_background`); you're notified when it exits. It prints the status once it's no longer
-   `pending` for HEAD, exits 1 after 15 min (Codex timed out: tell the user, and don't request again, since an
-   extra request stays unmatched and keeps the status pending), and exits 2 on any error
-   from `codex-status.sh` (fix that, don't retry blindly). If the status stays `pending` with "not tied
-   to one request", an earlier review failed or overlapped: re-requesting or pushing won't clear it. Let every running review
-   finish first. Only once a review has visibly failed, ask the user to delete that review's `@codex review`
-   comment and rerun the workflow; deleting the request of a review still running gives a false success. Before triage, check the status it printed
-   names HEAD's SHA.
+   `pending` for HEAD, and exits 2 on any error from `codex-status.sh` (fix that, don't retry blindly).
+   - **Exit 3, stalled**: Codex's summary says running but hasn't changed in 15 min. Codex sometimes drops
+     a review this way and never finishes it (openai/codex#55890, claude-ship #61). Run step 3 again, once
+     per HEAD. `codex-round.sh` doesn't count the stalled request, so the retry doesn't use a round. If the
+     retry stalls too, stop and tell the user that Codex isn't finishing reviews.
+   - **Exit 1, timed out** after 20 min without a result or a stall: tell the user and don't request again.
+   - **`pending` with "not tied to one request"**: an earlier review failed, stalled or overlapped, and
+     re-requesting or pushing won't clear it. Let every running review finish first. Once a review has
+     visibly failed or stalled, ask the user to delete that review's `@codex review` comment and rerun the
+     workflow. Deleting the request of a review that is still running gives a false success.
+
+   Before triage, check that the printed status names HEAD's SHA.
 
 ## 4. Triage
 

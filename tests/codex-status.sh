@@ -65,14 +65,20 @@ expect() {
 	printf '%s\n' "$7" | jq -Rn '[inputs | split(" ") | select(.[0] == "review")
 		| {user:{login:"chatgpt-codex-connector[bot]"},submitted_at:.[1]}]' >"$tmp/reviews.json"
 	row=$(printf '| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="%s">x</relative-time> | %s | Manual request |' "$5" "$3")
+	# ROW replaces the row, for a review still running.
+	row=${ROW:-$row}
 	{
 		printf '%s\n' "$6" | jq -Rn '[inputs | split(" ") | select(length == 2)
 			| {user:{login:"u",type:"User"},author_association:.[1],created_at:.[0],body:"@codex review"}]'
 		printf '%s\n' "$7" | jq -Rn '[inputs | split(" ") | select(.[0] == "receipt")
 			| {user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},author_association:"NONE",created_at:.[1],
 			body:"<!-- codex-review-receipt:v1 -->"}]'
-		jq -n --arg r "$row" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},author_association:"NONE",
-			created_at:"2026-10-21T14:00:00Z",body:("<!-- codex-pull-request-review-summary -->\n" + $r)}]'
+		# STATE is the summary's Code Review state (none by default) and AGE how many seconds ago it was edited.
+		jq -n --arg r "$row" --arg st "$STATE" --argjson age "$AGE" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
+			author_association:"NONE",created_at:"2026-10-21T14:00:00Z",updated_at:(now - $age | todate),
+			body:("<!-- codex-pull-request-review-summary -->\n"
+				+ (if $st == "" then "" else "<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":null,\"status\":\"" + $st + "\"}} -->\n" end)
+				+ $r)}]'
 	} | jq -s 'add' >"$tmp/comments.json"
 	check "$1" "$2"
 }
@@ -80,6 +86,8 @@ expect() {
 # with_msg <text> expect …: also requires <text> in the output. A prefix assignment on a function call
 # (`WANT_MSG=… expect …`) may persist after it in some shells, so it's set and cleared here.
 WANT_MSG=
+STATE=
+AGE=0
 with_msg() {
 	WANT_MSG=$1
 	shift
@@ -169,5 +177,32 @@ $r1" "receipt 2026-10-21T15:00:00Z
 $m"
 # A waiting review (no request yet) keeps the plain message.
 with_msg 'Waiting for Codex' expect pending 'plain waiting' '—' $p $c '' ''
+
+# openai/codex#55890 (claude-ship #61): a review that says running and hasn't changed for 15 min stalled.
+# stall <state> <age> <row> expect …: the summary's state marker, its age in seconds, and its row ('' keeps
+# expect's completed row).
+ROW=
+stall() {
+	STATE=$1
+	AGE=$2
+	ROW=$3
+	shift 3
+	"$@"
+	STATE=
+	AGE=0
+	ROW=
+}
+# The row of a running review names the commit but no completion yet.
+running='| 📝 **Code Review** | ⏳ **Running** | `7ca1cc3` | Manual request |'
+stall running 960 "$running" with_msg 'stalled' expect pending 'running for 16 min' '`7ca1cc3`' $p $c "$r1" ''
+stall running 300 "$running" with_msg 'Waiting for Codex' expect pending 'running for 5 min' '`7ca1cc3`' $p $c "$r1" ''
+# A stalled request next to a retry: the summary was edited when the retry started.
+stall running 60 "$running" with_msg 'Waiting for Codex' expect pending 'retry running' '`7ca1cc3`' $p $c "$r1
+2026-10-21T16:30:00Z OWNER" ''
+# A completed review isn't stalled however old its summary is, and a stall never hides a finished one.
+stall completed 960 '' expect success 'old completed summary' '—' $p $c "$r1" "$m"
+stall running 960 '' expect success 'stale state, completed row' '`7ca1cc3`' $p $c '' ''
+# A state marker that isn't JSON reads as not stalled.
+stall 'x"}' 960 "$running" with_msg 'Waiting for Codex' expect pending 'unreadable state' '`7ca1cc3`' $p $c "$r1" ''
 
 exit $fail

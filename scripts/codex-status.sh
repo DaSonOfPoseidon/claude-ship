@@ -4,7 +4,8 @@
 #            resolved. When its summary names no commit, every trusted request must be matched, in time order,
 #            by a completion marker, and the latest request must have come after the push.
 #   failure  a Codex thread is unresolved, or Codex's review failed
-#   pending  no completed review of the head commit yet
+#   pending  no completed review of the head commit yet, or Codex's review stalled (it says running but its
+#            summary hasn't changed in CODEX_STALL_SECS, default 900)
 # Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
 # This is the only copy: repos run it through this repo's action (action.yml, called @v1), and install.sh
 # deploys it into the ship skill for local checks.
@@ -45,6 +46,22 @@ pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
+# Codex sometimes leaves a review running forever: 👀 stays on the request, the summary says running and is
+# never edited again (openai/codex#55890, claude-ship #61). After CODEX_STALL_SECS without an edit, say so,
+# so the review can be asked for again. It stays pending. An unreadable state marker reads as not stalled.
+summary_at=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .updated_at")
+summary_at=$(printf '%s\n' "$summary_at" | sort | tail -1 | cut -c1-19)
+review_status=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v1 \(.*\) -->$/\1/p' | tail -1 |
+	jq -r '.code_review.status // empty' 2>/dev/null || true)
+stall_secs=${CODEX_STALL_SECS:-900}
+stalled=
+if [ "$review_status" = running ] && [ -n "$summary_at" ]; then
+	edited=$(jq -rn --arg t "${summary_at}Z" '$t | fromdateiso8601')
+	if [ $(($(date +%s) - edited)) -ge "$stall_secs" ]; then
+		stalled=1
+	fi
+fi
 # A clean review's row can name no commit (`—`, #30). Nothing ties that completion to a request (neither
 # the summary's edit history nor Codex's reactions say which request it answers), so fail closed and match
 # them in time order: each completion marker closes the oldest open trusted request, the current one
@@ -129,6 +146,9 @@ elif echo "$row" | grep -q 'Completed' && after_push; then
 elif echo "$row" | grep -qiE 'Failed|Error'; then
 	state=failure
 	description="Codex's review of $short failed; ask for another with @codex review"
+elif [ -n "$stalled" ]; then
+	state=pending
+	description="Codex's review of $short stalled (no update in $((stall_secs / 60)) min, openai/codex#55890); ask again with @codex review"
 elif [ -n "$ambiguous" ]; then
 	state=pending
 	description="Review of $short not tied to one request: let running reviews finish; if one failed, delete its request and rerun"
