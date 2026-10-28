@@ -60,9 +60,10 @@ Only when the orchestrator's message says to:
 
 1. `gh pr create` with the plan's title (one-line Conventional Commit) and a body with `Fixes #N` for each
    issue the plan closes. Use the repo's PR template if it has one.
-2. `~/.claude/skills/ship/codex-request.sh <pr>`, with a Bash timeout of 300000. If it fails, report the
+2. `~/.claude/skills/ship/codex-round.sh <pr>`. If it prints 3 or more, don't request; report it.
+3. `~/.claude/skills/ship/codex-request.sh <pr>`, with a Bash timeout of 300000. If it fails, report the
    error. Never post `@codex review` by hand.
-3. Don't wait for the review. The orchestrator does.
+4. Don't wait for the review. The orchestrator does.
 
 ## Fix rounds (when resumed)
 
@@ -71,7 +72,7 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 - Fix them as above: test-first, sweep, checks, commit, push through the gate.
 - For each fixed finding, reply on its thread naming the fixing commit (GraphQL
   `addPullRequestReviewThreadReply` with the thread id), then resolve it with `resolveReviewThread`.
-- Request the next Codex round only if the message says to.
+- Request the next Codex round only if the message says to, with the same steps 2 and 3 as above.
 - Leave findings it didn't send you alone. The orchestrator handles those.
 
 ## Never

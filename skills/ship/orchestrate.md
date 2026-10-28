@@ -91,21 +91,23 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      checkout isn't on the PR's branch:
      - Check that the printed status names the PR's head
        (`gh pr view <pr> --json headRefOid -q .headRefOid`), not your HEAD.
-     - To request again after exit 3, run `codex-request.sh <pr>` from the implementer's worktree
-       (`cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr>`). It compares the PR's head with the
-       checkout's HEAD.
+     - To request again after exit 3, run the ship skill's steps 3.2 and 3.3 from the implementer's worktree:
+       `cd <worktree> && ~/.claude/skills/ship/codex-round.sh <pr>`, and only below 3,
+       `cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr>`. The request compares the PR's head with
+       the checkout's HEAD.
 5. **Triage** with `codex-findings.sh` and the ship skill's step 4 outcome table:
    - **Not valid / file an issue:** do it yourself: the reply, `p3-issue.sh`, the resolve.
    - **Fix:** send the findings, with thread ids and what each fix should be, to the same implementer
-     (`SendMessage` to its id) with "request the next round". If its id is gone (after `/clear`), replace it
+     (`SendMessage` to its id), adding "request the next round" only when `codex-round.sh <pr>` is below 3.
+     If its id is gone (after `/clear`), replace it
      (see **Replacing an implementer**), and give the new one the plan file and the findings.
    - **Nothing to fix:** `gh workflow run codex-review.yml -f pr=<pr>`.
 
    Then back to 4. Rounds are capped at 3 as in the ship skill.
 6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries).
    - With `merge: yes`:
-     1. Remove the implementer's worktree (`git worktree remove <path>`, only when it's clean). Git won't
-        delete a branch that a worktree still has checked out.
+     1. Remove the implementer's worktree (as in **Replacing an implementer**, step 2). Git won't delete a
+        branch that a worktree still has checked out.
      2. From your own checkout, run `gh pr merge <pr> --squash --delete-branch`. Always name the PR: without a
         number, gh merges the PR of the branch you're on, not the unit's.
      3. Move the issues it unblocked to the ready label, delete its plan file, and pull the default branch.
@@ -120,8 +122,9 @@ A new `ship-implementer` on an existing branch can't check it out while an earli
 has it. Worktrees share branches, so that worktree's commits are already on the local branch, pushed or not.
 So before starting the new one, every time (an escalation, or a lost agent id after `/clear`):
 1. Find the worktree that has the branch: `git worktree list`.
-2. Remove it with `git worktree remove <path>`. Only do this when `git -C <path> status --porcelain` is empty.
-   Otherwise stop and ask: those are uncommitted changes.
+2. Remove it with `git worktree remove <path>`, never `--force`. Git refuses while the worktree has modified
+   or untracked files; then stop and ask, since that's unfinished work. Ignored files (build output) are
+   deleted with it.
 3. Start the new implementer with the plan file's path. It picks up the local branch.
 
 ## Stop and ask the user
