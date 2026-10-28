@@ -29,14 +29,16 @@ EOF
 chmod +x "$tmp/bin/gh"
 fail=0
 
-# expect <rounds> <label> <requests>: requests are lines "<id> <age secs> <author_association> <👀 by>",
-# where <👀 by> is bot, user or none.
+# expect <rounds> <label> <requests>: requests are lines
+# "<id> <age secs> <author_association> <👀 by> [<user type> [<body, \n for a newline>]]",
+# where <👀 by> is bot, user or none. The user type defaults to User, the body to "@codex review".
 expect() {
 	rm -f "$tmp"/reactions-*.json
-	printf '%s\n' "$3" | jq -Rn '[inputs | split(" ") | select(length == 4)
+	printf '%s\n' "$3" | jq -Rn '[inputs | split(" ") | select(length >= 4)
 		| {id:(.[0] | tonumber),author_association:.[2],created_at:(now - (.[1] | tonumber) | todate),
-		body:"@codex review",reactions:{eyes:(if .[3] == "none" then 0 else 1 end)}}]' >"$tmp/comments.json"
-	printf '%s\n' "$3" | while read -r id _ _ by; do
+		user:{type:(.[4] // "User")},
+		body:(if length > 5 then .[5:] | join(" ") | gsub("\\\\n"; "\n") else "@codex review" end),reactions:{eyes:(if .[3] == "none" then 0 else 1 end)}}]' >"$tmp/comments.json"
+	printf '%s\n' "$3" | while read -r id _ _ by _; do
 		case $by in
 		bot) login='chatgpt-codex-connector[bot]' ;;
 		user) login=u ;;
@@ -64,5 +66,10 @@ expect 1 'stalled then retried' '1 3600 OWNER bot
 expect 1 'running request' '1 300 OWNER bot'
 # Anyone can react: someone else's 👀 doesn't make a stall.
 expect 1 'eyes from a user' '1 3600 OWNER user'
+# A request is what codex-status.sh counts: a non-bot comment opening with `@codex review` as a word.
+expect 0 'not a request: @codex reviewer' '1 3600 OWNER none User @codex reviewer notes'
+expect 0 'not a request: bot author' '1 3600 OWNER none Bot @codex review'
+expect 2 'request with text after a space and after a newline' '1 3600 OWNER none User @codex review please
+2 600 OWNER none User @codex review\nthanks'
 
 exit $fail

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Prints how many Codex review rounds a PR has used: the `@codex review` comments on it from the owner
-# and collaborators (anyone can comment, and an outsider must not use up the rounds). A request whose
+# and collaborators, counted as scripts/codex-status.sh does: not from a bot, and `@codex review` as a word
+# (anyone can comment, and an outsider must not use up the rounds). A request whose
 # review stalled doesn't count: Codex's own 👀 is still on it after CODEX_STALL_SECS (default 900). Codex
 # removes its 👀 when a review finishes: on claude-ship #61's survey of three repos, all 125 finished
 # requests had lost it and all 14 stalled ones kept it (openai/codex#55890). A review still running past
@@ -20,7 +21,7 @@ stall_secs=${CODEX_STALL_SECS:-900}
 now=$(date +%s)
 # Each call is its own assignment, so `set -e` stops on a failure instead of counting it as 0 rounds.
 # One line per request: `<id> <created_at> <👀 count>`.
-requests=$(gh api --paginate "repos/$slug/issues/$pr/comments" --jq '.[] | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review")) | "\(.id) \(.created_at) \(.reactions.eyes // 0)"')
+requests=$(gh api --paginate "repos/$slug/issues/$pr/comments" --jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | "\(.id) \(.created_at) \(.reactions.eyes // 0)"')
 rounds=0
 while read -r id created eyes; do
 	[ -n "$id" ] || continue
