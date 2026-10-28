@@ -89,3 +89,10 @@ review finds a new class.
   `running` summary forever, with no review, receipt or error (openai/codex#55890). The ship skill waited 15
   minutes, then forbade a retry, so every stall needed the user (claude-ship #61). Bound the wait by the
   job's own last update, not by a total time, retry once, and don't charge a round for a job that never ran.
+- **A new script is committed without its execute bit.** Written with an editor, it lands as `100644`, and
+  `install.sh` copies modes as they are, so a hook registered as a command fails with `Permission denied`
+  while tests that run it with `sh` pass (claude-ship #69). Commit scripts as `100755`
+  (`git update-index --chmod=+x`), and test the deployed mode, not just the behaviour.
+- **`gh pr` commands without a number act on the current branch's PR.** An orchestrator whose implementer
+  pushed from another worktree would merge or read the wrong PR, or none (claude-ship #69). Name the PR in
+  every `gh pr` command run outside the PR's own checkout.
