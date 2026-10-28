@@ -79,9 +79,11 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    waits until GitHub shows HEAD as the PR's head, then posts `@codex review`; posted earlier, Codex
    reviews the previous commit and the round is wasted. This is round `round+1`. If it fails, don't post
    the comment by hand: find out why the PR's head isn't HEAD.
-4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background (Bash
-   `run_in_background`); you're notified when it exits. It prints the status once it's no longer
-   `pending` for HEAD, and exits 2 on any error from `codex-status.sh` (fix that, don't retry blindly).
+4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command
+   (Bash `run_in_background`), with nothing chained after it: no `;`, `&&` or `|`. Anything chained after it
+   delays the notification (a stall sat unnoticed on OBDCracker #208). Check CI separately once it exits.
+   You're notified when it exits. It prints the status once it's no longer `pending` for HEAD, and exits 2
+   on any error from `codex-status.sh` (fix that, don't retry blindly).
    - **Exit 3**: only a new request clears the status. Run step 3 again, once per HEAD. If that one ends in
      exit 3 too, stop and tell the user. A new request ends any earlier review, so old requests never need
      deleting. Exit 3 prints one of two statuses:
