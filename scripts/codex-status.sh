@@ -47,18 +47,21 @@ summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
 # Codex sometimes leaves a review running forever: 👀 stays on the request, the summary says running and is
-# never edited again (openai/codex#55890, claude-ship #61). After CODEX_STALL_SECS without an edit, say so,
-# so the review can be asked for again. It stays pending. An unreadable state marker reads as not stalled.
+# never edited again (openai/codex#55890, claude-ship #61). After CODEX_STALL_SECS with no summary edit, no
+# trusted request and no push, say so, so the review can be asked for again (a retry Codex hasn't picked up
+# yet isn't a stall). It stays pending. A state that names another commit, or that isn't JSON, isn't a stall.
 summary_at=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .updated_at")
-summary_at=$(printf '%s\n' "$summary_at" | sort | tail -1 | cut -c1-19)
-review_status=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v1 \(.*\) -->$/\1/p' | tail -1 |
-	jq -r '.code_review.status // empty' 2>/dev/null || true)
+latest_request=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+	--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
+since=$(printf '%s\n%s\n%s\n' "$summary_at" "$latest_request" "$pushed_at" | grep . | cut -c1-19 | sort | tail -1)
+review_state=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v1 \(.*\) -->$/\1/p' | tail -1 |
+	jq -r --arg h "$head" '.code_review | select(.commit_sha == null or .commit_sha == $h) | .status // empty' 2>/dev/null || true)
 stall_secs=${CODEX_STALL_SECS:-900}
 stalled=
-if [ "$review_status" = running ] && [ -n "$summary_at" ]; then
-	edited=$(jq -rn --arg t "${summary_at}Z" '$t | fromdateiso8601')
-	if [ $(($(date +%s) - edited)) -ge "$stall_secs" ]; then
+if [ "$review_state" = running ] && [ -n "$summary_at" ]; then
+	quiet_since=$(jq -rn --arg t "${since}Z" '$t | fromdateiso8601')
+	if [ $(($(date +%s) - quiet_since)) -ge "$stall_secs" ]; then
 		stalled=1
 	fi
 fi

@@ -1,8 +1,11 @@
 #!/bin/sh
 # Prints how many Codex review rounds a PR has used: the `@codex review` comments on it from the owner
 # and collaborators (anyone can comment, and an outsider must not use up the rounds). A request whose
-# review stalled doesn't count: Codex's own 👀 is still on it after CODEX_STALL_SECS (default 900), since
-# Codex removes it when a review finishes (openai/codex#55890, claude-ship #61).
+# review stalled doesn't count: Codex's own 👀 is still on it after CODEX_STALL_SECS (default 900). Codex
+# removes its 👀 when a review finishes: on claude-ship #61's survey of three repos, all 125 finished
+# requests had lost it and all 14 stalled ones kept it (openai/codex#55890). A review still running past
+# 15 min is left out only until it finishes; the skill counts rounds when it requests the next, after the
+# last has finished or stalled.
 # Usage: codex-round.sh <pr> [owner/repo]
 set -eu
 # A missing PR number exits 2 (usage), so a caller never reads it as a result or a timeout.

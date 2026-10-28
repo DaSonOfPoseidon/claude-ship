@@ -73,11 +73,12 @@ expect() {
 		printf '%s\n' "$7" | jq -Rn '[inputs | split(" ") | select(.[0] == "receipt")
 			| {user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},author_association:"NONE",created_at:.[1],
 			body:"<!-- codex-review-receipt:v1 -->"}]'
-		# STATE is the summary's Code Review state (none by default) and AGE how many seconds ago it was edited.
-		jq -n --arg r "$row" --arg st "$STATE" --argjson age "$AGE" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
+		# STATE is the summary's Code Review state (none by default), STATE_SHA the commit it names (null by
+		# default) and AGE how many seconds ago it was edited.
+		jq -n --arg r "$row" --arg st "$STATE" --arg ss "${STATE_SHA:-}" --argjson age "$AGE" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
 			author_association:"NONE",created_at:"2026-10-21T14:00:00Z",updated_at:(now - $age | todate),
 			body:("<!-- codex-pull-request-review-summary -->\n"
-				+ (if $st == "" then "" else "<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":null,\"status\":\"" + $st + "\"}} -->\n" end)
+				+ (if $st == "" then "" else "<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":" + (if $ss == "" then "null" else "\"" + $ss + "\"" end) + ",\"status\":\"" + $st + "\"}} -->\n" end)
 				+ $r)}]'
 	} | jq -s 'add' >"$tmp/comments.json"
 	check "$1" "$2"
@@ -204,5 +205,19 @@ stall completed 960 '' expect success 'old completed summary' '—' $p $c "$r1" 
 stall running 960 '' expect success 'stale state, completed row' '`7ca1cc3`' $p $c '' ''
 # A state marker that isn't JSON reads as not stalled.
 stall 'x"}' 960 "$running" with_msg 'Waiting for Codex' expect pending 'unreadable state' '`7ca1cc3`' $p $c "$r1" ''
+
+# Gate on #61: a retry Codex hasn't picked up yet isn't a stall. The summary is still 16 min old, but the
+# latest trusted request came a minute ago.
+recent=$(jq -rn 'now - 60 | todate')
+stall running 960 "$running" with_msg 'Waiting for Codex' expect pending 'retry not picked up yet' '`7ca1cc3`' $p $c "$r1
+$recent OWNER" ''
+# ...nor is a head pushed a minute ago.
+stall running 960 "$running" with_msg 'Waiting for Codex' expect pending 'head just pushed' '`7ca1cc3`' "$recent" $c "$r1" ''
+# A stale running state for another commit doesn't make the head stalled; one naming the head does.
+STATE_SHA=0b996f7000000000000000000000000000000000
+stall running 960 "$running" with_msg 'Waiting for Codex' expect pending 'running state of another commit' '`7ca1cc3`' $p $c "$r1" ''
+STATE_SHA=$sha
+stall running 960 "$running" with_msg 'stalled' expect pending 'running state of the head' '`7ca1cc3`' $p $c "$r1" ''
+STATE_SHA=
 
 exit $fail
