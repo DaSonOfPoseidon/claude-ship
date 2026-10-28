@@ -72,14 +72,15 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background (Bash
    `run_in_background`); you're notified when it exits. It prints the status once it's no longer
    `pending` for HEAD, and exits 2 on any error from `codex-status.sh` (fix that, don't retry blindly).
-   - **Exit 3, stalled**: Codex's summary says running but hasn't changed in 15 min. Codex sometimes drops
-     a review this way and never finishes it (openai/codex#55890, claude-ship #61). Run step 3 again, once
-     per HEAD. `codex-round.sh` doesn't count the stalled request, so the retry doesn't use a round. If the
-     retry stalls too, stop and tell the user that Codex isn't finishing reviews.
+   - **Exit 3**: only a new request clears the status. Run step 3 again, once per HEAD. If that one ends in
+     exit 3 too, stop and tell the user. A new request ends any earlier review, so old requests never need
+     deleting. Exit 3 prints one of two statuses:
+     - **"stalled"**: Codex's summary says running but hasn't changed in 15 min. Codex sometimes drops a
+       review this way and never finishes it (openai/codex#55890, claude-ship #61). `codex-round.sh`
+       doesn't count the stalled request, so the retry doesn't use a round.
+     - **"finished more than once"**: a completion came that nobody asked for (an automatic review), so the
+       status can't tell which one is the request's. The retry uses a round.
    - **Exit 1, timed out** after 20 min without a result or a stall: tell the user and don't request again.
-   - **`pending` with "finished more than once"**: a completion came that nobody asked for (an automatic
-     review), so the status can't tell which one is the request's. Run step 3 again. A new request ends any
-     earlier review, so old requests never need deleting.
 
    Before triage, check that the printed status names HEAD's SHA.
 

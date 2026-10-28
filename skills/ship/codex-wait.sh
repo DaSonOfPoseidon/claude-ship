@@ -3,7 +3,8 @@
 # script; in claude-ship's source it's scripts/codex-status.sh) with DRY_RUN=1 every 60s until it stops printing `pending`, and prints its last line. A review of an older commit
 # counts as pending, since the status only counts a review of the head.
 # Any failure of the status script ends the wait with its error rather than reading as "not done yet".
-# A stalled review (its summary unchanged for CODEX_STALL_SECS, default 900) ends it with exit 3.
+# A pending status that only a new request clears ends it with exit 3: a stalled review (its summary
+# unchanged for CODEX_STALL_SECS, default 900), or a completion nobody asked for ("finished more than once").
 # Usage: codex-wait.sh <pr>   (from anywhere in the checkout; CODEX_WAIT_SECS caps the wait, default 1200,
 # so a stall shows before the cap)
 set -eu
@@ -27,7 +28,7 @@ while :; do
 		exit 2
 	fi
 	case $out in
-	pending:*stalled*)
+	pending:*stalled* | pending:*'finished more than once'*)
 		echo "$out"
 		exit 3
 		;;
