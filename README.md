@@ -8,10 +8,33 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   `hooks/review-*.md` files.
 - `skills/ship/`: the `ship` skill (bootstrap a repo, request Codex reviews, triage by the outcome table,
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
+- `skills/ship/orchestrate.md`, `agents/` and `hooks/orchestrate-hint.sh`: the optional orchestrated mode
+  (below).
 - `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. It sets the `codex-review` commit
   status that branch protection requires (success once Codex reviewed the PR's head and every Codex thread is
   resolved). Every opted-in repo, this one included, calls it from `.github/workflows/codex-review.yml`, a
   copy of `skills/ship/templates/codex-review.yml`.
+
+## Orchestrated mode
+
+For a bigger objective or a queue of ready issues, the main session (Opus) plans and triages, and agents do
+the rest, one PR at a time (claude-ship #66):
+
+| Work | Who | Model, effort |
+|---|---|---|
+| Planning, Codex triage, merge decisions | the main session | Opus, the session's effort |
+| Questions about the code, for the plan | `agents/ship-explorer.md` | Haiku, medium |
+| Implementing a unit, fixing its gate and Codex findings, opening the PR | `agents/ship-implementer.md` | Sonnet, high; Haiku for trivial units |
+| Waiting, listing findings, filing issues | the ship scripts | none |
+
+Progress lives on GitHub (PRs and labels), with the plans kept in `.git/claude-ship/` outside the repo's
+files, so the loop resumes after `/clear` with "continue the PR loop". The full process is in
+`skills/ship/orchestrate.md`.
+
+It starts by itself in plan mode, in repos where both `CLAUDE_AUTONOMOUS` and `CLAUDE_ORCHESTRATE` are `true`:
+the `orchestrate-hint.sh` hook (a `UserPromptSubmit` hook) points Claude to it once per session in each
+repo. In other opted-in repos, ask for "the PR loop". The hook adds nothing on any error; it's a convenience,
+and the gate still reviews every push.
 
 ## The codex-review action
 
@@ -49,6 +72,7 @@ gh variable set CLAUDE_AUTONOMOUS --body true -R <owner/repo>
 gh variable set CLAUDE_P3_LABELS --body "review:p3,<more labels>" -R <owner/repo>   # optional
 gh variable set CLAUDE_P3_TYPE_LABEL --body bug -R <owner/repo>                      # optional
 gh variable set CLAUDE_P3_MILESTONE --body auto -R <owner/repo>                      # optional
+gh variable set CLAUDE_ORCHESTRATE --body true -R <owner/repo>                     # optional, orchestrated mode
 ```
 
 P3 issues (the gate's, and Codex findings the skill defers) are filed by `hooks/p3-issue.sh` with
@@ -73,7 +97,7 @@ same section.
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks and ~/.claude/skills/ship (with codex-status.sh)
+./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh)
 ```
 
 Register the hook once in `~/.claude/settings.json`:
@@ -85,7 +109,13 @@ Register the hook once in `~/.claude/settings.json`:
 }]}}
 ```
 
-After a PR merges, run `./install.sh` again to deploy it. The installed files, the gate's state in
+For orchestrated mode, also register the hint hook:
+
+```json
+{"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "~/.claude/hooks/orchestrate-hint.sh"}]}]}}
+```
+
+After a PR merges, run `./install.sh` again to deploy it. The installed files (the ship agents included), the gate's state in
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because
 changes to it go through the same review as any other repo.
 

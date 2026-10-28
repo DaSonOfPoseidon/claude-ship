@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Use when committing, pushing, opening a PR, or handling Codex review findings in a GitHub repo whose CLAUDE_AUTONOMOUS repo variable is true, or when bootstrapping a repo for autonomous commits. Runs the review → push → Codex round loop, capped at 3 rounds.
+description: Use when committing, pushing, opening a PR, or handling Codex review findings in a GitHub repo whose CLAUDE_AUTONOMOUS repo variable is true, or when bootstrapping a repo for autonomous commits. Runs the review → push → Codex round loop, capped at 3 rounds. Also covers orchestrated mode (Opus plans, Sonnet implements, one PR at a time): when the orchestrate-hint hook points to it in plan mode, or when the user asks for the PR loop.
 ---
 
 # Ship: review → push → Codex, at most 3 rounds
@@ -11,6 +11,16 @@ The user's process (2026-10-19). It is built to keep each round cheap and to fin
 (automatic review is off), so never push "just to see": batch every fix into one push.
 
 Scripts live next to this file: `~/.claude/skills/ship/`.
+
+## Orchestrated mode (opt-in)
+
+Read `orchestrate.md` next to this file, and follow it, only when:
+- the `orchestrate-hint.sh` hook says orchestrated mode is on (plan mode, in a repo whose `CLAUDE_ORCHESTRATE`
+  variable is `true`), or
+- the user asks for the PR loop.
+
+It runs the steps below one PR at a time, with agents doing the exploring and implementing. Otherwise
+ignore it: the steps below are the whole process.
 
 ## 0. Is the repo opted in?
 
