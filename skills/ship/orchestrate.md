@@ -96,9 +96,12 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
 
    Then back to 4. Rounds are capped at 3 as in the ship skill.
 6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries).
-   - With `merge: yes`: `gh pr merge --squash --delete-branch`.
-   - Then move the issues it unblocked to the ready label, remove its worktree (`git worktree remove`, only
-     when it's clean), delete its plan file, and pull the default branch.
+   - With `merge: yes`:
+     1. Remove the implementer's worktree (`git worktree remove <path>`, only when it's clean). Git won't
+        delete a branch that a worktree still has checked out.
+     2. From your own checkout, run `gh pr merge <pr> --squash --delete-branch`. Always name the PR: without a
+        number, gh merges the PR of the branch you're on, not the unit's.
+     3. Move the issues it unblocked to the ready label, delete its plan file, and pull the default branch.
    - With `merge: no`: tell the user it's ready, then go on to the next unit only if it doesn't depend on
      this one.
 7. **Tell the user in one line** what merged or is waiting, and that it's a good moment to `/clear` (resume
