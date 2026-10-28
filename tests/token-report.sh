@@ -39,10 +39,13 @@ fresh() {
 	mkdir -p "$GH_DIR" "$D"
 }
 
-# pr <n> <title> <created> <merged or empty> [<first commit authored>]
+# pr <n> <title> <created> <merged or empty> [<first commit authored> [<closed at>]]
+# With <closed at> and no <merged>, the PR is closed without merging; with neither it is open.
 pr() {
-	jq -n --arg t "$2" --arg c "$3" --arg m "$4" --arg a "${5:-}" \
+	jq -n --arg t "$2" --arg c "$3" --arg m "$4" --arg a "${5:-}" --arg x "${6:-}" \
 		'{title:$t,createdAt:$c,mergedAt:(if $m == "" then null else $m end),
+		state:(if $m != "" then "MERGED" elif $x != "" then "CLOSED" else "OPEN" end),
+		closedAt:(if $m != "" then $m elif $x != "" then $x else null end),
 		commits:(if $a == "" then [] else [{authoredDate:$a}] end)}' >"$GH_DIR/pr-$1.json"
 }
 
@@ -222,8 +225,40 @@ PR #41 quiet (2020-01-01T00:00:00 → 2020-01-02T00:00:00)
 no usage found'
 [ "$(grep -c 'claude-mystery-9' "$tmp/err")" = 1 ] || { echo 'FAIL: want exactly one warning for the unknown model'; cat "$tmp/err"; fail=1; }
 
+# --- a PR closed without merging ends at closedAt, not now: an Oct 20 request is not its, and its window
+# doesn't capture requests from another requested PR's window.
+fresh
+pr 50 'abandoned' 2026-10-01T10:00:00Z '' '' 2026-10-01T12:00:00Z
+pr 51 'later' 2026-10-20T09:00:00Z 2026-10-20T11:00:00Z
+S=$D/s
+line "$S.jsonl" c1 2026-10-01T11:00:00.000Z claude-opus-5-5 250000 0 0 0
+line "$S.jsonl" c2 2026-10-20T10:00:00.000Z claude-opus-5-5 500000 0 0 0
+line "$S.jsonl" c3 2026-10-25T10:00:00.000Z claude-opus-5-5 9000000 0 0 0
+run 50 51
+check 'closed without merge' 0 'PR #50 abandoned (2026-10-01T10:00:00 → 2026-10-01T12:00:00 closed)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens
+
+PR #51 later (2026-10-20T09:00:00 → 2026-10-20T11:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+total 1 500000 0 0 0 $2.00
+peak main context: 500000 tokens'
+
+# A closed PR with no closedAt is an error, not an open one that runs to now.
+printf '%s\n' '{"title":"odd","state":"CLOSED","createdAt":"2026-10-01T10:00:00Z","mergedAt":null,"closedAt":null,"commits":[]}' >"$GH_DIR/pr-52.json"
+run 52
+if [ "$rc" = 0 ] || [ -s "$tmp/out" ]; then
+	echo "FAIL: closed PR without closedAt (exit $rc)"
+	cat "$tmp/out"
+	fail=1
+fi
+grep -q 'PR #52' "$tmp/err" || { echo 'FAIL: no message for the closed PR without closedAt'; cat "$tmp/err"; fail=1; }
+
 # --- gh failing on one PR exits 1 with its message and prints no table at all.
-run 40 999
+run 50 999
 check 'gh pr view fails' 1 ''
 grep -q 'no pull request found for 999' "$tmp/err" || { echo 'FAIL: gh error not shown'; cat "$tmp/err"; fail=1; }
 

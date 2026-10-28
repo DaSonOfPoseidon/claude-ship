@@ -6,7 +6,7 @@
 # it nor its subagents are counted.
 #
 # A request is attributed by time, with no state file. A main-session request belongs to the PR whose window
-# (the earlier of its creation and its first commit, up to merge, or now while open) holds its timestamp; the
+# (the earlier of its creation and its first commit, up to merge or close, or now while open) holds its timestamp; the
 # latest-started window wins an overlap. A whole subagent transcript belongs to the PR whose window holds its
 # last request: implementers start before their first commit but end after a push or a fix round. Anything
 # else is not printed.
@@ -58,16 +58,23 @@ repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 : >"$tmp/windows"
 for pr in "$@"; do
-	info=$(gh pr view "$pr" -R "$repo" --json title,createdAt,mergedAt,commits) || {
+	info=$(gh pr view "$pr" -R "$repo" --json title,state,createdAt,mergedAt,closedAt,commits) || {
 		echo "token-report.sh: gh pr view $pr failed" >&2
 		exit 1
 	}
+	# The window ends at the merge, else at the close of a PR closed unmerged, else now (open). A closed PR
+	# must not run to now: it would swallow every later request. Any other state is an error, not a guess.
 	# Times are compared as text, cut to YYYY-MM-DDTHH:MM:SS (transcripts carry milliseconds).
 	printf '%s\n' "$info" | jq -c --argjson pr "$pr" --arg now "$now" '
 		(.mergedAt // "") as $m
+		| (.closedAt // "") as $x
+		| (if $m != "" then {end: $m, status: "merged"}
+			elif .state == "CLOSED" and $x != "" then {end: $x, status: "closed"}
+			elif .state == "OPEN" then {end: $now, status: "open"}
+			else error("PR #\($pr) is \(.state) with no merge or close time") end) as $e
 		| {pr: $pr, title: ((.title // "") | gsub("[\t\n\r]"; " ")),
 			start: ([.createdAt, (.commits[0].authoredDate // empty)] | map(.[0:19]) | min),
-			end: ((if $m == "" then $now else $m end)[0:19]), open: ($m == "")}' >>"$tmp/windows"
+			end: $e.end[0:19], status: $e.status}' >>"$tmp/windows"
 done
 
 # One record per request: a request spans several transcript lines, so keep the one with the most output.
@@ -126,7 +133,7 @@ jq -r -s --slurpfile w "$tmp/windows" --argjson prices "$prices" '
 	| map(select(.pr != null)) as $all
 	| $w[] | . as $win
 	| ($all | map(select(.pr == $win.pr))) as $mine
-	| "H\t\($win.pr)\t\($win.title)\t\($win.start)\t\(if $win.open then "open" else $win.end end)",
+	| "H\t\($win.pr)\t\($win.title)\t\($win.start)\t\(if $win.status == "open" then "open" elif $win.status == "closed" then "\($win.end) closed" else $win.end end)",
 	  if ($mine | length) == 0 then "N" else
 		($mine | map(. + {role: (if .k == "main" then "main" else .role end)})
 			| group_by([.role != "main", .role, .model])[]
