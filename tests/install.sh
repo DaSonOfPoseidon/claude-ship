@@ -38,6 +38,13 @@ for f in main-installer-ran hooks/review-gate.sh hooks/orchestrate-hint.sh skill
 		fail=1
 	}
 done
+# Hooks and skill scripts are registered or run as commands, so every deployed script is executable.
+for f in "$tmp"/dest/hooks/*.sh "$tmp"/dest/skills/ship/*.sh; do
+	[ -x "$f" ] || {
+		echo "FAIL: ${f#"$tmp"/dest/} isn't executable"
+		fail=1
+	}
+done
 # What's deployed is main's, not the checkout's.
 grep -q "Deployed claude-ship $(git -C "$tmp/src" rev-parse --short HEAD)" "$tmp/out" || {
 	echo "FAIL: didn't deploy main's commit"
