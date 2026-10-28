@@ -1,6 +1,6 @@
 #!/bin/sh
-# Deploys claude-ship's main branch into ~/.claude: the review gate and its prompts into hooks/, and the ship
-# skill into skills/ship/, with the action's codex-status.sh for local DRY_RUN checks. Only origin/main is
+# Deploys claude-ship's main branch into ~/.claude: the review gate, its prompts and the orchestrate hint into
+# hooks/, the ship agents into agents/, and the ship skill into skills/ship/, with the action's codex-status.sh for local DRY_RUN checks. Only origin/main is
 # deployed, so what runs has passed review; a branch's changes never go live. That holds for this script too:
 # after fetching, it runs main's copy of itself, so a checkout behind main still deploys what main's installer
 # knows to (claude-ship #20). The gate's hook entry lives in ~/.claude/settings.json (see README.md).
@@ -14,8 +14,10 @@ if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-git -C "$repo" archive origin/main hooks skills scripts/codex-status.sh | tar -x -C "$tmp"
-mkdir -p "$dest/hooks" "$dest/skills"
+git -C "$repo" archive origin/main agents hooks skills scripts/codex-status.sh | tar -x -C "$tmp"
+mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills"
+# File by file: agents/ also holds the user's own agents.
+cp "$tmp"/agents/ship-*.md "$dest/agents/"
 cp "$tmp"/hooks/* "$dest/hooks/"
 rm -rf "$dest/skills/ship"
 cp -R "$tmp/skills/ship" "$dest/skills/ship"

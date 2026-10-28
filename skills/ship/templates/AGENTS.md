@@ -27,3 +27,13 @@ or anything CI already checks (formatting, lints, tests).
 
 Classes of bug past reviews caught here are in [`docs/pitfalls.md`](docs/pitfalls.md); check every change
 against them.
+
+<!-- Optional: settings for the ship skill's orchestrated PR loop (skills/ship/orchestrate.md). Uncomment and
+     fill in to change the defaults.
+## PR loop
+
+- checks: `<the full check command>`
+- ready label: `status:ready`
+- skip labels: `<labels for work that needs hardware, research or a decision>`
+- merge: no
+-->

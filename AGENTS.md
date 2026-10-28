@@ -43,8 +43,9 @@ or anything CI already checks (shellcheck, actionlint).
 - Only the user changes the opt-in variables, waives a review, or edits the installed gate, its state or
   the settings that register it. `install.sh` deploys only `origin/main`.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`), and use only `git`, `gh`, `jq` and coreutils.
-- Every reviewer run logs its cost. Keep usage low: Sonnet finds, Haiku verifies and checks docs, and nothing
-  uses Opus.
+- Every reviewer run logs its cost. Keep usage low: Sonnet finds, Haiku verifies and checks docs, and no
+  reviewer uses Opus. In orchestrated mode, only the user's own main session runs on Opus; the agents run on
+  Sonnet or Haiku.
 - Commit subjects and PR titles: one-line Conventional Commits, lower-case imperative, no body or trailers.
 
 ### Known pitfalls

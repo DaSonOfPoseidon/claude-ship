@@ -93,10 +93,10 @@ mcp__*__push_files | mcp__*__create_or_update_file | mcp__*__delete_file | mcp__
 	;;
 Write | Edit | MultiEdit | NotebookEdit)
 	path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""')
-	# The installed gate, prompts and skill, the gate's state and the settings that register it are the user's
+	# The installed gate, prompts, skill and ship agents, the gate's state and the settings that register it are the user's
 	# to change (claude-ship's source changes through reviewed PRs). A project's own settings may change, but
 	# not to turn hooks off.
-	if printf '%s' "$path" | grep -Eq "^$HOME/\.claude/(hooks/|settings|skills/ship/)|\.git/review-gate(/|$)" ||
+	if printf '%s' "$path" | grep -Eq "^$HOME/\.claude/(hooks/|settings|skills/ship/|agents/ship-)|\.git/review-gate(/|$)" ||
 		{ printf '%s' "$path" | grep -Eq '\.claude/settings' &&
 			printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")' |
 			grep -q disableAllHooks; }; then
@@ -161,15 +161,15 @@ if printf '%s' "$cmd_all" | grep -q 'review-gate\.sh.*--waive'; then
 	echo "Blocked: only the user can waive a review. Ask them to run \`! ~/.claude/hooks/review-gate.sh --waive \"<why>\"\`." >&2
 	exit 2
 fi
-if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|delete|remove)[[:space:]].*CLAUDE_(AUTONOMOUS|P3_[A-Z_]+)'; then
-	echo "Blocked: CLAUDE_AUTONOMOUS and the CLAUDE_P3_* variables are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
+if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|delete|remove)[[:space:]].*CLAUDE_(AUTONOMOUS|ORCHESTRATE|P3_[A-Z_]+)'; then
+	echo "Blocked: CLAUDE_AUTONOMOUS, CLAUDE_ORCHESTRATE and the CLAUDE_P3_* variables are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
 	exit 2
 fi
 # Writing gate state or the installed gate would bypass the review; reading its reports is fine. A command that
 # names a protected path writes when it runs a writing tool, or redirects output anywhere but another descriptor
 # (`2>&1`, `>&2`) or /dev/null, stdout or stderr. A quoted `>` counts too, since `sh -c "… > f"` redirects.
 protected=$(printf '%s' "$cmd_all" |
-	grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
+	grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship|agents/ship-)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
 if [ -n "$protected" ]; then
 	write=$(printf '%s' "$cmd_all" |
 		sed -E 's/[0-9]*>&([0-9]+|-)([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)([^[:alnum:]_/.-]|$)#\3#g' |

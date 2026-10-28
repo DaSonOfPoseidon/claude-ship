@@ -58,6 +58,25 @@ expect 2 'echo x | tee ~/.claude/skills/ship/SKILL.md'
 expect 2 'sed -i s/a/b/ ~/.claude/hooks/review-prompt.md'
 expect 2 'rm -rf /repo/.git/review-gate'
 expect 2 'jq ".disableAllHooks = true" s.json > .claude/settings.local.json'
+expect 2 'echo x > ~/.claude/agents/ship-implementer.md'
+expect 2 'cp /tmp/x $HOME/.claude/agents/ship-explorer.md'
+expect 0 'cat ~/.claude/agents/ship-implementer.md'
+# Other agents are the user's own, outside the gate's files.
+expect 0 'echo x > ~/.claude/agents/mine.md'
+
+# write <exit code> <path>: the Write tool on the path.
+write() {
+	jq -nc --arg p "$2" '{tool_name: "Write", tool_input: {file_path: $p, content: "x"}}' |
+		HOME=$tmp/home PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != "$1" ]; then
+		echo "FAIL (exit $rc, want $1): Write $2"
+		fail=1
+	fi
+}
+write 2 "$tmp/home/.claude/agents/ship-implementer.md"
+write 2 "$tmp/home/.claude/skills/ship/orchestrate.md"
+write 0 "$tmp/home/.claude/agents/mine.md"
 
 [ "$fail" = 0 ] && echo "gate-tamper: ok"
 exit "$fail"

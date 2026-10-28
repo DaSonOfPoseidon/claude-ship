@@ -33,7 +33,9 @@ mcp() {
 bash 2 'gh variable set CLAUDE_P3_LABELS --body review:p3'
 bash 2 'gh variable set CLAUDE_P3_TYPE_LABEL --body bug'
 bash 2 'gh variable delete CLAUDE_P3_MILESTONE'
+bash 2 'gh variable set CLAUDE_ORCHESTRATE --body true'
 bash 0 'gh variable get CLAUDE_P3_MILESTONE'
+bash 0 'gh variable get CLAUDE_ORCHESTRATE'
 
 # Clustered short flags: gh reads `-iF…` as `-i -F…`, so the field or method still makes it a write.
 bash 2 'gh api -iFref=refs/heads/x repos/acme/app/git/refs'
