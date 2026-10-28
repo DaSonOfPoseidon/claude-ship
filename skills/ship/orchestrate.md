@@ -33,6 +33,8 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Wait for Codex, list findings, file issues | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `p3-issue.sh`) | none |
 
 - A trivial unit whose Haiku implementer the gate blocked twice goes to a new Sonnet `ship-implementer`.
+  First remove the Haiku implementer's worktree (`git worktree remove <path>`, only when it's clean; else stop
+  and ask). Its commits stay on the local branch, where the new implementer picks them up.
 - For a high-risk unit, spend your effort on the plan (more edge cases, exact TDD order, risk notes); don't
   implement it yourself.
 - Never use Fable: it draws on a separate limit or on usage credits.
@@ -85,8 +87,14 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    and request Codex round 1", plus `model: haiku` for a trivial unit. Keep its agent id for this PR.
 4. **Read its report.**
    - If it stopped, handle the reason (table below).
-   - Otherwise run `~/.claude/skills/ship/codex-wait.sh <pr>` in the background, with exit codes and the
-     status check as in the ship skill's step 3.4.
+   - Otherwise run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command (nothing
+     chained after it), with the exit codes as in the ship skill's step 3.4. Two differences, since your own
+     checkout isn't on the PR's branch:
+     - Check that the printed status names the PR's head
+       (`gh pr view <pr> --json headRefOid -q .headRefOid`), not your HEAD.
+     - To request again after exit 3, run `codex-request.sh <pr>` from the implementer's worktree
+       (`cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr>`). It compares the PR's head with the
+       checkout's HEAD.
 5. **Triage** with `codex-findings.sh` and the ship skill's step 4 outcome table:
    - **Not valid / file an issue:** do it yourself: the reply, `p3-issue.sh`, the resolve.
    - **Fix:** send the findings, with thread ids and what each fix should be, to the same implementer
@@ -123,7 +131,8 @@ Otherwise, keep going without asking.
 
 1. Read `loop.md`, if there is one, and list the in-flight PRs.
 2. Finish in-flight PRs first, picking each up at its state:
-   - no review requested yet: request one
+   - no review requested yet: request one, from the worktree that has the branch (`git worktree list`), or
+     through a new implementer if none does
    - a review pending: wait for it
    - findings open: triage them
    - green: done

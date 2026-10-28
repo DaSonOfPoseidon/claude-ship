@@ -14,11 +14,16 @@ finding costs a full extra round, so care here is cheaper than speed.
 
 1. Read the plan file whose path you were given, the repo's `CLAUDE.md`, `AGENTS.md` › Code Review Rules,
    `docs/pitfalls.md` if it exists, and any contribution guide the plan names.
-2. Get onto the plan's branch:
-   - **New branch:** `git switch -c <branch> origin/<default branch>`.
-   - **The branch exists on origin** (a resumed PR): `git fetch origin <branch>`, then
-     `git switch -C <branch> origin/<branch>`.
-   - If git says the branch is checked out in another worktree, stop and report that.
+2. Get onto the plan's branch. Worktrees share branches, so an earlier implementer's commits may be on a
+   local branch that never reached origin. Never reset such a branch.
+
+   | Where the branch exists | What to do |
+   |---|---|
+   | locally (`git rev-parse --verify -q refs/heads/<branch>`) | `git switch <branch>`. If origin has it too, `git fetch origin <branch>` and `git merge --ff-only origin/<branch>`. If they diverged, stop and report |
+   | only on origin (a resumed PR) | `git fetch origin <branch>`, then `git switch -c <branch> --track origin/<branch>` |
+   | nowhere (a new unit) | `git switch -c <branch> origin/<default branch>` |
+
+   If git says the branch is checked out in another worktree, stop and report that worktree's path.
 
 ## Implement
 
@@ -79,7 +84,7 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 ## Report (15 lines or fewer)
 
 ```
-branch: <name>   pr: <number or none>   codex requested: yes/no
+branch: <name>   worktree: <path>   pr: <number or none>   codex requested: yes/no
 commits: <sha> <subject>  (one per line)
 checks: <command> → pass/fail
 gate: passed after <n> blocks | blocked: <finding summary>

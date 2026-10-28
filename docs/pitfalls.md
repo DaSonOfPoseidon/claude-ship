@@ -93,6 +93,9 @@ review finds a new class.
   `install.sh` copies modes as they are, so a hook registered as a command fails with `Permission denied`
   while tests that run it with `sh` pass (claude-ship #69). Commit scripts as `100755`
   (`git update-index --chmod=+x`), and test the deployed mode, not just the behaviour.
-- **`gh pr` commands without a number act on the current branch's PR.** An orchestrator whose implementer
-  pushed from another worktree would merge or read the wrong PR, or none (claude-ship #69). Name the PR in
-  every `gh pr` command run outside the PR's own checkout.
+- **A step that reads the current checkout assumes it's the PR's.** `gh pr` without a number acts on the
+  current branch's PR, and `codex-request.sh` and the ship skill's status check compare against local HEAD.
+  An orchestrator whose implementer pushed from another worktree would merge the wrong PR, reject a valid
+  review, or never get a request posted. And a new agent that reset its branch to origin's would drop an
+  earlier agent's unpushed commits (claude-ship #69). Name the PR, compare against the PR's head, run
+  HEAD-based scripts from the worktree that pushed, and start from the local branch when it has commits.
