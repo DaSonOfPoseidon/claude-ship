@@ -228,6 +228,11 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   the branch only when the default branch has none of that file (the bootstrap PR). A branch that edits them could
   otherwise tell its own reviewer what to skip; its edits are in the diff, reviewed as changes. A file that exists
   on the default branch but can't be read blocks instead of falling back to the branch's copy.
+- The finder prompt also quotes the branch's open PR's unresolved threads from Codex, the owner and collaborators
+  (as data, not instructions), so it can check that earlier findings are fixed. The gate reads the PR, the threads,
+  the commit list and the diff before it writes the prompt, and blocks when any of them can't be read: an ignored
+  failure would read as "no PR", "no threads" or an empty diff, and the review would skip what it was meant to
+  check (#106). A branch with no PR, or a PR with no unresolved threads, is reviewed as before.
 - Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`.
 - The reviewers share one time budget, `REVIEW_GATE_BUDGET` (default 2200 s) counted from the gate's start: each run
   gets `min(1100 s, what is left)`, and none starts with fewer than `REVIEW_GATE_MIN_SECS` (default 120 s) left; the
