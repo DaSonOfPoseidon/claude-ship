@@ -12,7 +12,7 @@ export HOME="$tmp/home"
 fail=0
 n=0
 
-# fixture <origin URL>: a new repo on branch feat with one commit, whose review already passed.
+# fixture <origin URL> [nopass]: a new repo on branch feat with one commit, whose review already passed unless nopass.
 fixture() {
 	n=$((n + 1))
 	repo=$tmp/repo$n
@@ -20,7 +20,7 @@ fixture() {
 	git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
 	git -C "$repo" remote add origin "$1"
 	mkdir -p "$repo/.git/review-gate"
-	: >"$repo/.git/review-gate/$(git -C "$repo" rev-parse HEAD).pass"
+	[ "${2:-}" = nopass ] || : >"$repo/.git/review-gate/$(git -C "$repo" rev-parse HEAD).pass"
 }
 
 # expect <exit code> <command>: runs the gate on a Bash call of the command in the current fixture.
@@ -170,6 +170,69 @@ for url in https://github.com./acme/app.git git@github.com.:acme/app.git ssh://g
 		fail=1
 	}
 done
+
+# A data-only gh command pushes nothing, so it never starts a review, even when HEAD has no pass (#91). A fake
+# `claude` records that a review started and fails, so a started review exits 2. origin's URL must stay GitHub's
+# for the gate's repo checks, so the fake git fetches from a local bare repo, and the fake gh names the default branch.
+mkdir -p "$tmp/rbin"
+cat >"$tmp/rbin/gh" <<'EOF'
+#!/bin/sh
+if [ "$1 $2" = "repo view" ]; then
+	echo master
+	exit 0
+fi
+echo true
+EOF
+cat >"$tmp/rbin/git" <<EOF
+#!/bin/sh
+if [ "\$1 \$2 \$3" = "fetch -q origin" ]; then
+	shift 3
+	exec $(command -v git) fetch -q "$tmp/origin.git" "\$@"
+fi
+exec $(command -v git) "\$@"
+EOF
+printf '#!/bin/sh\ntouch "%s/reviewed"\nexit 1\n' "$tmp" >"$tmp/rbin/claude"
+chmod +x "$tmp/rbin/gh" "$tmp/rbin/git" "$tmp/rbin/claude"
+git init -q --bare -b master "$tmp/origin.git"
+
+# fixture_unreviewed: a branch one commit ahead of origin's master, with review rules and no pass for HEAD.
+fixture_unreviewed() {
+	fixture https://github.com/acme/app.git nopass
+	git -C "$repo" push -q "$tmp/origin.git" HEAD:refs/heads/master
+	printf '## Code Review Rules\n\n- P0: x\n' >"$repo/AGENTS.md"
+	git -C "$repo" add AGENTS.md
+	git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m rules
+}
+
+# expect_review <exit code> <command> <started|none>: runs the gate with the fake claude, then checks whether
+# a review started.
+expect_review() {
+	rm -f "$tmp/reviewed"
+	jq -nc --arg c "$2" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH=$tmp/rbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ -e "$tmp/reviewed" ]; then got=started; else got=none; fi
+	if [ "$rc" != "$1" ] || [ "$got" != "$3" ]; then
+		echo "FAIL (exit $rc, want $1; review $got, want $3): $2"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+
+fixture_unreviewed
+expect_review 0 'gh pr comment 7 --body "git push --force other main"' none
+expect_review 0 'gh issue create --title t --body "then git push"' none
+expect_review 0 'gh issue close 36 --comment "fixed; git push origin HEAD"' none
+# `gh pr create` is gated like a push (the PR would cover an unreviewed HEAD), so it still gets its review.
+expect_review 2 'gh pr create --title t --body "x"' started
+expect_review 2 'gh pr create --title t --body "see git push"' started
+# A real push still gets its review, and a command that is not data-only is still blocked (before any review).
+expect_review 2 'git push origin HEAD' started
+expect_review 2 'gh pr comment 7 --body "x" && git push origin HEAD' none
+# Nothing is pushed, so a dirty tree is no reason to block a data-only command, but it still blocks a push.
+: >"$repo/dirty"
+expect_review 0 'gh pr comment 7 --body "git push origin HEAD"' none
+expect_review 2 'git push origin HEAD' none
 
 [ "$fail" = 0 ] && echo "gate-push: ok"
 exit "$fail"

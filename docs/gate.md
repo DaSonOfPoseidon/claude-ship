@@ -99,7 +99,10 @@ A push shown only by the raw command is usually quoted text, but `sh -c "…; gi
 is judged too. The one exception is the ship skill's own `gh pr/issue create/edit/comment/close`, whose quoted
 words are data: it has to be that single command, with no unquoted separator, redirect or expansion. Such a
 command (`data_only`) skips `push_scope` entirely, so a body that mentions `git push` any number of times, with
-any text after it (`` `git push origin HEAD` exits 2 ``), is not read as a push (#56). Anything outside that shape
+any text after it (`` `git push origin HEAD` exits 2 ``), is not read as a push (#56). It also skips the HEAD
+review (the dirty-tree and `.pass` checks and the reviewers): nothing is pushed, so the gate exits 0 right after
+`push_scope`, whether or not HEAD has a pass (#91). `gh pr create` is the exception: it is gated like a push, so
+it still needs a passing review of HEAD. Anything outside that shape
 (`FOO=1 gh …`, `gh -R o/r issue …`, a second line, `&& git push`) isn't `data_only` and is judged as before.
 `gh pr merge` isn't in the list. A backtick inside single quotes is data (the word scanner marks it `@BQ@`);
 inside double quotes it is a command substitution, so that body isn't `data_only` and is judged as a push.
