@@ -78,7 +78,7 @@ jq -r ".author" "$tmp/windows" >"$tmp/authors.all"
 sort -u "$tmp/authors.all" >"$tmp/authors"
 : >"$tmp/lists"
 while IFS= read -r author; do
-	list=$(gh pr list -R "$repo" --author "$author" --state all --limit 200 --json number,mergedAt,closedAt) || {
+	list=$(gh pr list -R "$repo" --author "$author" --state all --limit 200 --json number,createdAt,mergedAt,closedAt) || {
 		echo "token-report.sh: gh pr list for $author failed" >&2
 		exit 1
 	}
@@ -133,8 +133,10 @@ done
 # the end of the author's previous PR (prevEnd) and the first request of the main session(s) that worked in the
 # PR's own window, but never to after start0. Work after the last merge belongs to no window. A request inside
 # some PR's own window goes to the latest-started of those; only a request in none goes to the latest-started
-# widened window, so widening never takes work from an overlapping PR.
-jq -r -s --slurpfile w "$tmp/windows2" --argjson prices "$prices" '
+# widened window, so widening never takes work from an overlapping PR. The own windows are every PR the author
+# has (the `gh pr list` result, as createdAt..end), not just the PRs asked for, so a report does not depend on
+# which PRs are asked for; a request owned by a PR that is not asked for is dropped.
+jq -r -s --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/lists" --arg nowts "$now" --argjson prices "$prices" '
 	def milli: . * 1000 | round;
 	def rate($m; $p):
 		$prices[$m] as $e
@@ -148,20 +150,25 @@ jq -r -s --slurpfile w "$tmp/windows2" --argjson prices "$prices" '
 	def sum(f): map(f) | add;
 	def nano: if (map(.c == null) | any) then null else (map(.c) | add) end;
 	def money: if . == null then "?" else (cents | tostring) end;
-	def pick($W; $t):
-		[$W[] | select(.start <= $t and $t <= .end)] as $c
-		| [$c[] | select(.start0 <= $t)] as $own
-		| if ($own | length) > 0 then $own | max_by([.start0, .pr])
+	def pick($W; $O; $t):
+		([$W[], $O[]] | map(select(.start0 <= $t and $t <= .end))) as $own
+		| [$W[] | select(.start <= $t and $t <= .end)] as $c
+		| if ($own | length) > 0 then $own | max_by([.start0, .pr]) | if .other then null else . end
 		  elif ($c | length) > 0 then $c | max_by([.start, .pr])
 		  else null end;
 	. as $recs
+	| ($w | map(.pr)) as $asked
+	| ([$l[].prs[] | select(.number as $n | $asked | index($n) == null)
+		| select(.createdAt | type == "string")
+		| {pr: .number, other: true, start0: .createdAt[0:19],
+			end: ((.mergedAt // .closedAt // $nowts)[0:19])}] | unique_by(.pr)) as $O
 	| ($w | map(. as $win
 		| ($recs | map(select(.k == "main" and .ts >= $win.start and .ts <= $win.end) | .f) | unique) as $fs
 		| ($recs | map(select(.k == "main" and (.f as $f | $fs | index($f) != null)) | .ts) | min // $win.start) as $ss
 		| . + {start0: .start, start: ([.start, ([$win.prevEnd, $ss] | max)] | min)})) as $W
 	| $recs
 	| (map(select(.k == "sub")) | reduce .[] as $r ({}; .[$r.f] = ([.[$r.f], $r.ts] | map(select(. != null)) | max))) as $last
-	| map(. + {pr: ((if .k == "main" then pick($W; .ts) else pick($W; $last[.f]) end) | if . == null then null else .pr end),
+	| map(. + {pr: ((if .k == "main" then pick($W; $O; .ts) else pick($W; $O; $last[.f]) end) | if . == null then null else .pr end),
 		c: cost})
 	| map(select(.pr != null)) as $all
 	| $W[] | . as $win

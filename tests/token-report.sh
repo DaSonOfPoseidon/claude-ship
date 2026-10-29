@@ -45,11 +45,11 @@ fresh() {
 	echo '[]' >"$GH_DIR/list.json"
 }
 
-# plist <n|merged|closed>...: what `gh pr list` returns for the author (an empty field is null).
+# plist <n|created|merged|closed>...: what `gh pr list` returns for the author (an empty field is null).
 plist() {
 	printf '%s\n' "$@" | jq -R -s -c 'split("\n") | map(select(. != "") | split("|") as $f
-		| {number: ($f[0] | tonumber), mergedAt: (if $f[1] == "" then null else $f[1] end),
-		closedAt: (if $f[2] == "" then null else $f[2] end)})' >"$GH_DIR/list.json"
+		| {number: ($f[0] | tonumber), createdAt: $f[1], mergedAt: (if $f[2] == "" then null else $f[2] end),
+		closedAt: (if $f[3] == "" then null else $f[3] end)})' >"$GH_DIR/list.json"
 }
 
 # pr <n> <title> <created> <merged or empty> [<first commit authored> [<closed at>]]
@@ -244,7 +244,7 @@ no usage found'
 fresh
 pr 50 'abandoned' 2026-10-01T10:00:00Z '' '' 2026-10-01T12:00:00Z
 pr 51 'later' 2026-10-20T09:00:00Z 2026-10-20T11:00:00Z
-plist '50||2026-10-01T12:00:00Z'
+plist '50|2026-10-01T10:00:00Z||2026-10-01T12:00:00Z'
 S=$D/s
 line "$S.jsonl" c1 2026-10-01T11:00:00.000Z claude-opus-5-5 250000 0 0 0
 line "$S.jsonl" c2 2026-10-20T10:00:00.000Z claude-opus-5-5 500000 0 0 0
@@ -293,7 +293,7 @@ peak main context: 250000 tokens'
 fresh
 pr 61 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
 pr 62 'b' 2026-10-01T13:00:00Z 2026-10-01T14:00:00Z
-plist '61|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '62|2026-10-01T14:00:00Z|2026-10-01T14:00:00Z' '63||'
+plist '61|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '62|2026-10-01T13:00:00Z|2026-10-01T14:00:00Z|2026-10-01T14:00:00Z' '63|2026-10-02T00:00:00Z||'
 S=$D/s
 line "$S.jsonl" q1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
 line "$S.jsonl" q2 2026-10-01T11:00:00.000Z claude-opus-5-5 250000 0 0 0
@@ -317,7 +317,7 @@ peak main context: 500000 tokens'
 # unrelated older session's request (10-04) after that merge isn't counted.
 fresh
 pr 64 'later' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
-plist '63|2026-10-03T12:00:00Z|2026-10-03T12:00:00Z'
+plist '63|2026-10-03T10:00:00Z|2026-10-03T12:00:00Z|2026-10-03T12:00:00Z'
 line "$D/old.jsonl" o2 2026-10-04T09:00:00.000Z claude-opus-5-5 9000000 0 0 0
 line "$D/s.jsonl" b1 2026-10-05T09:00:00.000Z claude-opus-5-5 250000 0 0 0
 line "$D/s.jsonl" b2 2026-10-05T10:30:00.000Z claude-opus-5-5 250000 0 0 0
@@ -331,7 +331,7 @@ peak main context: 250000 tokens'
 # A session that began before an earlier merge doesn't pull that PR's work in: the merge bounds the window.
 fresh
 pr 65 'x' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
-plist '66|2026-10-05T08:00:00Z|2026-10-05T08:00:00Z'
+plist '66|2026-10-05T07:30:00Z|2026-10-05T08:00:00Z|2026-10-05T08:00:00Z'
 line "$D/s.jsonl" c1 2026-10-05T07:00:00.000Z claude-opus-5-5 9000000 0 0 0
 line "$D/s.jsonl" c2 2026-10-05T10:30:00.000Z claude-opus-5-5 250000 0 0 0
 run 65
@@ -340,6 +340,39 @@ role model requests input output cache read cache write cost
 main claude-opus-5-5 1 250000 0 0 0 $1.00
 total 1 250000 0 0 0 $1.00
 peak main context: 250000 tokens'
+
+# The numbers don't depend on which PRs are asked for: PR 70 (10:00..12:00) and PR 71 (11:00..13:00) in one
+# session with requests at 10:15 (inside PR 70's own window) and 12:15 (inside PR 71's only). Asking for PR 71
+# alone drops the 10:15 request (PR 70's, though not asked for) rather than giving it to PR 71's widened window.
+fresh
+pr 70 'p' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 71 'q' 2026-10-01T11:00:00Z 2026-10-01T13:00:00Z
+plist '70|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '71|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z'
+line "$D/s.jsonl" w1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" w2 2026-10-01T12:15:00.000Z claude-opus-5-5 500000 0 0 0
+run 71
+check 'asking for the later PR alone' 0 'PR #71 q (2026-10-01T10:15:00 → 2026-10-01T13:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+total 1 500000 0 0 0 $2.00
+peak main context: 500000 tokens'
+run 70 71
+check 'asking for both' 0 'PR #70 p (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens
+
+PR #71 q (2026-10-01T10:15:00 → 2026-10-01T13:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+total 1 500000 0 0 0 $2.00
+peak main context: 500000 tokens'
+# An open PR the author has (not asked for) owns its window up to now.
+plist '70|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '71|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z' '72|2026-10-01T12:10:00Z||'
+run 71
+check 'an open PR not asked for owns its window' 0 'PR #71 q (2026-10-01T10:15:00 → 2026-10-01T13:00:00)
+no usage found'
 
 # `gh pr list` failing exits 1 with its message and prints no table (it is not read as "no earlier PRs").
 fresh
