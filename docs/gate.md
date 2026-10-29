@@ -68,9 +68,9 @@ default branch and reads its rules through origin's fetch URL, so that must be t
 fully-qualified host's trailing dot (`github.com.`). A URL whose host is github.com (or under it) but doesn't
 parse prints as `?<url>`, and callers fail closed on it. Other hosts and local paths aren't GitHub.
 
-Options outside the allowed list (`-u`, `-f`, `--force*`, `-q`, `-v`, `-n`, `--dry-run`, `--no-verify`,
-`--progress`, `--atomic`) block, since some of the others (`--all`, `--mirror`, `--tags`, `--delete`) send other
-refs. A refspec's destination is checked as well as its source: `HEAD:other` or `HEAD:refs/tags/x` writes a ref
+Only these push options pass: `-u`, `--set-upstream`, `-f`, `--force`, `--force-with-lease*`,
+`--force-if-includes`, `-q`, `-v`, `-n`, `--dry-run`, `--no-verify`, `--progress`, `--atomic`. Any other option
+blocks, since some (`--all`, `--mirror`, `--tags`, `--delete`) send other refs. A refspec's destination is checked as well as its source: `HEAD:other` or `HEAD:refs/tags/x` writes a ref
 the review didn't cover. Config that changes what a bare push sends blocks too: `push.default` `matching`, or
 `upstream`/`tracking` when the branch tracks another one; `remote.origin.push`; `push.followTags`;
 `push.recurseSubmodules` `on-demand` or `only`; `remote.origin.mirror`.
