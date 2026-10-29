@@ -30,7 +30,8 @@ review or a dying gate means an unreviewed push. The hook's `timeout` (2400 s) m
 (see Reviewer pipeline), or the budget guards nothing; `tests/gate-readme.sh` checks both against the README's
 snippet. The gate needs `jq`: without it, or when jq can't read the tool call, the gate blocks every call it sees
 (Bash, file writes, MCP) rather than reading the call as nothing, since it couldn't tell what the call was.
-Not opted in, not in a git repo and no GitHub remote still pass, as before.
+That holds in every repo, opted in or not, because the jq check comes before any opt-in check. With jq working, a
+repo that isn't opted in, a directory that isn't a git repo and a repo with no GitHub remote still pass, as before.
 
 The default branch comes from GitHub (`gh repo view`), not from a local `origin/HEAD`: that is state an agent
 can point at its own branch, which would leave nothing to review. When GitHub can't say, the gate blocks.
