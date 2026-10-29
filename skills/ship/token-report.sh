@@ -49,16 +49,17 @@ trap 'rm -rf "$tmp"' EXIT
 # before anything is printed, so a failing `gh` leaves no partial table.
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-: >"$tmp/windows"
-for pr in "$@"; do
-	info=$(gh pr view "$pr" -R "$repo" --json title,state,author,createdAt,mergedAt,closedAt,commits) || {
-		echo "token-report.sh: gh pr view $pr failed" >&2
+# window <pr> <true|false> <file>: appends the PR's own window to <file>; the second argument says whether the PR
+# was asked for (the report prints only those, but all the author's PRs compete for every request).
+window() {
+	info=$(gh pr view "$1" -R "$repo" --json title,state,author,createdAt,mergedAt,closedAt,commits) || {
+		echo "token-report.sh: gh pr view $1 failed" >&2
 		exit 1
 	}
 	# The window ends at the merge, else at the close of a PR closed unmerged, else now (open); any other state is
 	# an error, and so is a PR with no author (its earlier PRs can't be listed). Times are cut to
 	# YYYY-MM-DDTHH:MM:SS (transcripts carry milliseconds).
-	printf '%s\n' "$info" | jq -c --argjson pr "$pr" --arg now "$now" '
+	printf '%s\n' "$info" | jq -c --argjson pr "$1" --argjson asked "$2" --arg now "$now" '
 		(.author.login // "") as $a
 		| (.mergedAt // "") as $m
 		| (.closedAt // "") as $x
@@ -67,9 +68,13 @@ for pr in "$@"; do
 			elif .state == "OPEN" then {end: $now, status: "open"}
 			else error("PR #\($pr) is \(.state) with no merge or close time") end) as $e
 		| if $a == "" then error("PR #\($pr) has no author") else . end
-		| {pr: $pr, author: $a, title: ((.title // "") | gsub("[\t\n\r]"; " ")),
+		| {pr: $pr, asked: $asked, author: $a, title: ((.title // "") | gsub("[\t\n\r]"; " ")),
 			start: ([.createdAt, (.commits[0].authoredDate // empty)] | map(.[0:19]) | min),
-			end: $e.end[0:19], status: $e.status}' >>"$tmp/windows" || exit 1
+			end: $e.end[0:19], status: $e.status}' >>"$3" || exit 1
+}
+: >"$tmp/windows"
+for pr in "$@"; do
+	window "$pr" true "$tmp/windows"
 done
 
 # Each author's PRs, listed once: when each ended is where the work on the next one can start. A failed or odd
@@ -87,34 +92,31 @@ while IFS= read -r author; do
 		exit 1
 	}
 done <"$tmp/authors"
-# prevEnd: the latest end (merge, else close) strictly before the PR's start of any other PR by its author;
-# "" when there is none. A PR still open has no end.
-jq -c --slurpfile l "$tmp/lists" '
-	. as $w
-	| . + {prevEnd: ([$l[] | select(.author == $w.author) | .prs[] | select(.number != $w.pr)
-		| (.mergedAt // .closedAt) | select(type == "string") | .[0:19] | select(. < $w.start)] | max // "")}' \
-	"$tmp/windows" >"$tmp/windows2" || exit 1
+# prevend <in> <out>: adds prevEnd to each window: the latest end (merge, else close) strictly before the PR's
+# start of any other PR by its author; "" when there is none. A PR still open has no end.
+prevend() {
+	jq -c --slurpfile l "$tmp/lists" '
+		. as $w
+		| . + {prevEnd: ([$l[] | select(.author == $w.author) | .prs[] | select(.number != $w.pr)
+			| (.mergedAt // .closedAt) | select(type == "string") | .[0:19] | select(. < $w.start)] | max // "")}' \
+		"$1" >"$2" || exit 1
+}
+prevend "$tmp/windows" "$tmp/windows2"
 
-# The author's other PRs (not asked for) own their windows too, from their first commit (the list has no commit
-# dates, so each is read with `gh pr view`) to their end, and a request in one is theirs, not an asked PR's. Only
-# PRs that end at or after the earliest prevEnd can overlap a widened window.
+# The author's other PRs compete for every request too (see the jq below), so they get windows the same way,
+# each read with `gh pr view` (the list has no commit dates). Only PRs that end at or after the earliest
+# prevEnd can overlap a window of an asked PR; one that ended before can't hold a request of any of them.
 jq -r -n --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/lists" '
 	($w | map(.pr)) as $asked
 	| ($w | map(.prevEnd) | min) as $lo
 	| [$l[].prs[] | select(.number as $n | $asked | index($n) == null)
 		| select((.mergedAt // .closedAt // "9999")[0:19] >= $lo) | .number] | unique[]' >"$tmp/others.n" || exit 1
-: >"$tmp/others"
+: >"$tmp/windowsO"
 while IFS= read -r n; do
-	info=$(gh pr view "$n" -R "$repo" --json state,createdAt,mergedAt,closedAt,commits) || {
-		echo "token-report.sh: gh pr view $n failed" >&2
-		exit 1
-	}
-	printf '%s\n' "$info" | jq -c --argjson pr "$n" --arg now "$now" '
-		if (.mergedAt // .closedAt) == null and .state != "OPEN" then error("PR #\($pr) is \(.state) with no merge or close time") else . end
-		| {pr: $pr, other: true,
-			start0: ([.createdAt, (.commits[0].authoredDate // empty)] | map(.[0:19]) | min),
-			end: ((.mergedAt // .closedAt // $now)[0:19])}' >>"$tmp/others" || exit 1
+	window "$n" false "$tmp/windowsO"
 done <"$tmp/others.n"
+prevend "$tmp/windowsO" "$tmp/windowsO2"
+cat "$tmp/windows2" "$tmp/windowsO2" >"$tmp/windowsAll"
 
 # One record per request: a request spans several transcript lines, so keep the one with the most output.
 # Cache writes: the 5m/1h split, with any remainder of the total priced as 5m.
@@ -154,10 +156,11 @@ done
 # the end of the author's previous PR (prevEnd) and the first request of the main session(s) that worked in the
 # PR's own window, but never to after start0. Work after the last merge belongs to no window. A request inside
 # some PR's own window goes to the latest-started of those; only a request in none goes to the latest-started
-# widened window, so widening never takes work from an overlapping PR. The own windows are every PR the author
-# has that could matter (the asked ones, and the others read below), so a report does not depend on which PRs
-# are asked for; a request owned by a PR that is not asked for is dropped.
-jq -r -s --slurpfile w "$tmp/windows2" --slurpfile o "$tmp/others" --argjson prices "$prices" '
+# widened window, so widening never takes work from an overlapping PR. Every window is built and every request
+# assigned across all the PRs that could matter (the asked ones and the author's others, read above), by the
+# same rules; only then are the asked PRs' rows kept, and a request won by a PR not asked for is dropped. So a
+# PR's row is the same whichever other PRs are asked for.
+jq -r -s --slurpfile w "$tmp/windowsAll" --argjson prices "$prices" '
 	def milli: . * 1000 | round;
 	def rate($m; $p):
 		$prices[$m] as $e
@@ -171,24 +174,23 @@ jq -r -s --slurpfile w "$tmp/windows2" --slurpfile o "$tmp/others" --argjson pri
 	def sum(f): map(f) | add;
 	def nano: if (map(.c == null) | any) then null else (map(.c) | add) end;
 	def money: if . == null then "?" else (cents | tostring) end;
-	def pick($W; $O; $t):
-		([$W[], $O[]] | map(select(.start0 <= $t and $t <= .end))) as $own
+	def pick($W; $t):
+		[$W[] | select(.start0 <= $t and $t <= .end)] as $own
 		| [$W[] | select(.start <= $t and $t <= .end)] as $c
-		| if ($own | length) > 0 then $own | max_by([.start0, .pr]) | if .other then null else . end
+		| if ($own | length) > 0 then $own | max_by([.start0, .pr])
 		  elif ($c | length) > 0 then $c | max_by([.start, .pr])
 		  else null end;
 	. as $recs
-	| $o as $O
 	| ($w | map(. as $win
 		| ($recs | map(select(.k == "main" and .ts >= $win.start and .ts <= $win.end) | .f) | unique) as $fs
 		| ($recs | map(select(.k == "main" and (.f as $f | $fs | index($f) != null)) | .ts) | min // $win.start) as $ss
 		| . + {start0: .start, start: ([.start, ([$win.prevEnd, $ss] | max)] | min)})) as $W
 	| $recs
 	| (map(select(.k == "sub")) | reduce .[] as $r ({}; .[$r.f] = ([.[$r.f], $r.ts] | map(select(. != null)) | max))) as $last
-	| map(. + {pr: ((if .k == "main" then pick($W; $O; .ts) else pick($W; $O; $last[.f]) end) | if . == null then null else .pr end),
+	| map(. + {pr: ((if .k == "main" then pick($W; .ts) else pick($W; $last[.f]) end) | if . == null then null else .pr end),
 		c: cost})
 	| map(select(.pr != null)) as $all
-	| $W[] | . as $win
+	| $W[] | select(.asked) | . as $win
 	| ($all | map(select(.pr == $win.pr))) as $mine
 	| "H\t\($win.pr)\t\($win.title)\t\($win.start)\t\(if $win.status == "open" then "open" elif $win.status == "closed" then "\($win.end) closed" else $win.end end)",
 	  if ($mine | length) == 0 then "N" else

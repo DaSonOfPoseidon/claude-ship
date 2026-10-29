@@ -386,6 +386,57 @@ run 71
 check 'another PR unreadable' 1 ''
 grep -q 'gh pr view 99 failed' "$tmp/err" || { echo 'FAIL: no message for the unreadable other PR'; cat "$tmp/err"; fail=1; }
 
+# --- a PR's section is the same whichever other PRs are asked for (every PR the author has competes for every
+# request, and only the asked PRs are printed). same <a> <b> compares each one's section alone and together.
+section() { awk -v want="#$1" '$1 == "PR" { p = ($2 == want) } p && NF' "$tmp/out"; }
+same() {
+	run "$1" "$2"
+	[ "$rc" = 0 ] || { echo "FAIL (exit $rc): same $1 $2 together"; cat "$tmp/err"; fail=1; return; }
+	section "$1" >"$tmp/both.$1"
+	section "$2" >"$tmp/both.$2"
+	for n in "$1" "$2"; do
+		run "$n"
+		[ "$rc" = 0 ] || { echo "FAIL (exit $rc): same $n alone"; cat "$tmp/err"; fail=1; continue; }
+		section "$n" >"$tmp/alone.$n"
+		if [ ! -s "$tmp/alone.$n" ] || ! cmp -s "$tmp/alone.$n" "$tmp/both.$n"; then
+			echo "FAIL: PR #$n differs alone and with the other"
+			echo '--- alone'
+			cat "$tmp/alone.$n"
+			echo '--- together'
+			cat "$tmp/both.$n"
+			fail=1
+		fi
+	done
+}
+
+# PR 70/71 above (requests at 09:40, 10:15, 12:15).
+fresh
+pr 70 'p' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z 2026-10-01T09:30:00Z
+pr 71 'q' 2026-10-01T11:00:00Z 2026-10-01T13:00:00Z
+plist '70|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '71|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z'
+line "$D/s.jsonl" w0 2026-10-01T09:40:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" w1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" w2 2026-10-01T12:15:00.000Z claude-opus-5-5 500000 0 0 0
+same 70 71
+
+# PR 80 (10:00..12:00) and 81 (11:00..13:00) with a planning request at 09:00 ($4) before both, then 10:15 ($1)
+# and 12:15 ($1): both PRs' windows reach back to 09:00 and the later-started one (81) takes it, however many
+# of the two are asked for.
+fresh
+pr 80 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 81 'b' 2026-10-01T11:00:00Z 2026-10-01T13:00:00Z
+plist '80|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '81|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z'
+line "$D/s.jsonl" v0 2026-10-01T09:00:00.000Z claude-opus-5-5 1000000 0 0 0
+line "$D/s.jsonl" v1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" v2 2026-10-01T12:15:00.000Z claude-opus-5-5 250000 0 0 0
+run 80
+check 'the earlier PR alone' 0 'PR #80 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+same 80 81
+
 # `gh pr list` failing exits 1 with its message and prints no table (it is not read as "no earlier PRs").
 fresh
 pr 67 'y' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
