@@ -1,0 +1,130 @@
+# The helper scripts: design notes
+
+Each script keeps a short header (what it does, its arguments and exit codes) and brief comments on its checks;
+the reasons behind them are here. The gate's notes are in [`gate.md`](gate.md), classes of bug past reviews
+caught are in [`pitfalls.md`](pitfalls.md), and the label map and variables `p3-issue.sh` reads are in the
+[README](../README.md#per-repo-opt-in).
+
+## `scripts/codex-status.sh`
+
+The only copy of the status script. Repos run it through this repo's action (`action.yml`, called at `@v1`), and
+`install.sh` deploys it into the ship skill for local checks. `DRY_RUN=1` prints the status instead of setting
+it; `HEAD_SHA` checks another commit, to test against past reviews.
+
+| State | When |
+|---|---|
+| `success` | Codex completed a review of the head commit after it was pushed, and every Codex review thread is resolved |
+| `failure` | a Codex thread is unresolved, or Codex's review failed |
+| `pending` | no completed review of the head yet, or the review stalled or can't be tied to a request |
+
+Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
+
+**Push time.** Codex's summary names commits by a 7-character SHA, which someone could forge a collision for, so
+a review counts only if it finished after the head was last pushed. The push time comes from GitHub's own
+activity records for the branch (`push`, `force_push`, and `branch_creation` for a new branch's first push).
+
+**The summary.** Codex keeps one summary comment per PR and edits it as reviews run. Its Code Review row names
+the commit it reviewed and the status. A hidden `codex-review-state:v1` JSON marker in it says whether a review
+is running.
+
+**Rows that name no commit.** A clean review's row can show `—` instead of a commit (#30). Nothing ties that
+completion to a request: neither the summary's edit history nor Codex's reactions say which request it answers.
+A new request ends any review still running on the PR (#61: in all 14 overlaps across three repos, only one
+completion followed), so only the latest trusted request counts. It must have come after the push, and exactly
+one completion marker, the current one included, must follow it:
+
+- none means the review is still running;
+- more than one means a completion nobody asked for (an automatic review, #49), so the status fails closed with
+  `pending` and says to ask again;
+- a marker in the same second as the request counts as before it (times compare as text, to the second).
+
+Anyone can comment `@codex review`, so only the owner and collaborators count as trusted (an org member needn't
+have access to this repository). Earlier completions leave a marker: a receipt comment starting
+`<!-- codex-review-receipt:v1 -->` for a clean review (a few seconds before Codex edits the summary; seen on
+OBDCracker #145 and #28 here), or a pull request review when it had findings.
+
+**Stalls.** Codex sometimes leaves a review running forever: the 👀 stays on the request, the summary says
+running and is never edited again (openai/codex#55890, #61). After `CODEX_STALL_SECS` (default 900) with no
+summary edit, no trusted request and no push, the status stays `pending` but says so, so the review can be
+asked for again. A retry Codex hasn't picked up yet isn't a stall, and neither is a state that names another
+commit or that isn't JSON.
+
+**Errors.** Each GitHub call is its own assignment, so `set -e` stops on a failed call; reading a pipeline's last
+exit status would turn an empty result into "no findings".
+
+## `skills/ship/codex-round.sh`
+
+Counts the `@codex review` comments a PR has used, the way `codex-status.sh` counts requests: not from a bot, from
+the owner or a collaborator, and `@codex review` as a word. A request whose review stalled doesn't count: Codex's
+own 👀 is still on it after `CODEX_STALL_SECS`. Codex removes its 👀 when a review finishes (on #61's survey of
+three repos, all 125 finished requests had lost it and all 14 stalled ones kept it), and anyone can react, so only
+the bot's own 👀 marks a stall. A review still running past 15 minutes is left out only until it finishes; the
+skill counts rounds when it requests the next, after the last has finished or stalled.
+
+## `skills/ship/codex-wait.sh`
+
+Runs `codex-status.sh` with `DRY_RUN=1` every 60 seconds. A status that only a new request clears (stalled, or
+finished more than once) ends the wait with exit 3, so it isn't read as "not done yet" until the cap. Any failure
+of the status script ends the wait with its error.
+
+## `skills/ship/token-report.sh`
+
+Reads only this repo's transcripts, keeps no state and calls no model.
+
+**Attribution.** A main-session request belongs to the PR whose window holds its timestamp. A window runs from
+the earlier of the PR's creation and its first commit, to the merge, else to the close of a PR closed unmerged,
+else to now (open). A closed PR must not run to now, or it would swallow every later request. The latest-started
+window wins an overlap. A whole subagent transcript belongs to the PR whose window holds its last request:
+implementers start before their first commit but end after a push or a fix round. Anything else isn't printed.
+A session started in a worktree logs under that directory's own slug, so neither it nor its subagents are counted.
+
+**Prices.** USD per MTok, from the claude-api skill's `shared/models.md` (cached 2026-10-06). `w5` and `w1` are
+the 5-minute and 1-hour cache writes; `big` replaces `std` when a request's prompt (input + cache read + cache
+write) is over 100k tokens. Issue #70 says Sonnet cache reads cost $0.10; the skill docs say $0.20.
+
+**Records.** A request spans several transcript lines, so the one with the most output is kept. Cache writes use
+the 5m/1h split, with any remainder of the total priced as 5m. Costs are integer nano-dollars (tokens x $/MTok x
+1000), so rounding to the cent is exact. Times are cut to `YYYY-MM-DDTHH:MM:SS` (transcripts carry milliseconds)
+and compared as text.
+
+## `hooks/p3-issue.sh`
+
+Files a finding as an issue. The finding goes in a JSON file rather than on the command line because the gate
+reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
+
+- **Labels** come from `CLAUDE_P3_LABELS`, plus every rule in `.github/claude-ship/p3-labels` that matches the
+  finding's file, read from the default branch (a branch can't change how its own findings are filed). Labels the
+  repo doesn't have are dropped, and one that differs from a repo label only in case is filed under the repo's
+  spelling. The type fallback goes by the labels that will actually be applied.
+- **Milestone**, only with `CLAUDE_P3_MILESTONE=auto`: the branch's open PR's, else the one milestone of the
+  issues its commit subjects fix (`fixes #N`), else none.
+- **Never lost to its labels.** If filing fails, it retries without the milestone, then without labels.
+
+## `hooks/orchestrate-hint.sh`
+
+A convenience, not a protection: on any error it adds nothing and lets the prompt through. It looks the repo
+variables up only until it has hinted once per session and repo (claude-ship #66).
+
+## `install.sh`
+
+Only `origin/main` is deployed, so what runs has passed review. That holds for the installer too: after
+fetching, it runs main's copy of itself, so a checkout behind main still deploys what main's installer knows to
+(#20). The gate's hook entry lives in `~/.claude/settings.json` (see the README).
+
+## `action.yml` and the workflow
+
+The status script is the action's own copy, at the ref the caller names (`@v1`, a tag moved on release), so
+nothing in the calling repo, including a PR's changes, decides it. Triggers, permissions and the bot-only filter
+live in the caller (`skills/ship/templates/codex-review.yml`), since an action can't set them.
+
+`v1` moves (owner only) when claude-ship releases, which changes the check in every caller without a PR there. A
+PR that changes the ref needs write access; fork PRs get a read-only token, which can't set statuses.
+
+A repo's first PR (the one that adds the workflow) can't rely on the status: Codex reports a clean review by
+editing a comment, which runs the default branch's workflow, and that branch doesn't have it yet. Require
+`codex-review` in branch protection only after that PR merges, or it can't merge without an admin override.
+Resolving a thread doesn't trigger workflows, so after resolving run it by hand:
+
+```sh
+gh workflow run codex-review.yml -f pr=<number>
+```
