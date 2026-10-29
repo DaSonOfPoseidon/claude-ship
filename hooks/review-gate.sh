@@ -756,6 +756,26 @@ if [ -z "$rules" ]; then
 	exit 2
 fi
 
+# The reviewer's other context, the review checklist and docs/pitfalls.md, comes from the default branch too: a
+# branch that edits them would steer its own review (its edits are in the diff, reviewed as changes). ctx_file
+# <path>... sets ctx_ref and ctx_text to the first of the paths that exists on the default branch, else on the
+# branch (the bootstrap PR that adds them). It fails when neither has one, and blocks when a file that exists
+# can't be read, rather than falling back to the branch's copy.
+ctx_file() {
+	ctx_text=
+	for ctx_ref in "$upstream" HEAD; do
+		for ctx_path in "$@"; do
+			git cat-file -e "$ctx_ref:$ctx_path" 2>/dev/null || continue
+			if ! ctx_text=$(git show "$ctx_ref:$ctx_path"); then
+				echo "Blocked: couldn't read $ctx_path on $ctx_ref for the reviewer's context. Retry the push." >&2
+				exit 2
+			fi
+			return 0
+		done
+	done
+	return 1
+}
+
 # Records a pass for HEAD and for its branch diff.
 pass() {
 	: >"$state/$head.pass"
@@ -848,6 +868,19 @@ findings_schema='{"type":"object","required":["findings"],"properties":{"finding
 out="$state/$head.json"
 if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 	prompt="$state/$head.prompt.md"
+	# The reviewer's context is read before the prompt file is written, so a read failure leaves no half prompt.
+	checklist=
+	pitfalls=
+	if [ "$kind" = code ]; then
+		if ctx_file docs/CONTRIBUTING.md CONTRIBUTING.md; then
+			checklist=$(printf '%s\n' "$ctx_text" | sed -n '/^## Reviews/,/^## /p' | sed '$ { /^## /d; }')
+			checklist_src="CONTRIBUTING.md on $ctx_ref"
+		fi
+		if ctx_file docs/pitfalls.md; then
+			pitfalls=$ctx_text
+			pitfalls_src="docs/pitfalls.md on $ctx_ref"
+		fi
+	fi
 	{
 		if [ "$kind" = docs ]; then
 			cat "$dir/review-docs-prompt.md"
@@ -865,21 +898,16 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 			echo "also sweep the files the whole branch changes (under 'Branch files') for the same class of bug."
 		fi
 		if [ "$kind" = code ]; then
-			checklist=$({ git show HEAD:docs/CONTRIBUTING.md 2>/dev/null || git show HEAD:CONTRIBUTING.md 2>/dev/null; } |
-				sed -n '/^## Reviews/,/^## /p' | sed '$d')
 			if [ -n "$checklist" ]; then
 				echo
-				echo "## Review checklist (CONTRIBUTING.md)"
+				echo "## Review checklist ($checklist_src)"
 				printf '%s\n' "$checklist"
 			fi
-			for ref in HEAD "$upstream"; do
-				if pitfalls=$(git show "$ref:docs/pitfalls.md" 2>/dev/null); then
-					echo
-					echo "## Known pitfalls from past reviews (docs/pitfalls.md on $ref)"
-					printf '%s\n' "$pitfalls"
-					break
-				fi
-			done
+			if [ -n "$pitfalls" ]; then
+				echo
+				echo "## Known pitfalls from past reviews ($pitfalls_src)"
+				printf '%s\n' "$pitfalls"
+			fi
 		fi
 		if [ -s "$filed" ]; then
 			echo
