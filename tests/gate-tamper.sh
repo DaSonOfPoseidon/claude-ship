@@ -31,6 +31,9 @@ expect 0 '~/.claude/skills/ship/codex-wait.sh 29 >/dev/null 2>&1'
 expect 0 '~/.claude/skills/ship/codex-wait.sh 29 &>/dev/null'
 expect 0 'ls ~/x/.git/review-gate/ >&2'
 expect 0 'cat ~/.claude/hooks/review-prompt.md'
+expect 0 "sh -c 'cat ~/.claude/hooks/review-gate.sh >/dev/null'"
+expect 0 'sh -c "cat ~/.claude/hooks/review-gate.sh 2>&1"'
+expect 0 "sh -c 'cat ~/.claude/hooks/review-gate.sh >&2'"
 expect 0 '~/.claude/hooks/p3-issue.sh acme/app /tmp/s/finding.json 2>&1'
 expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-request.sh 29 2>&1 | tail"'
 
@@ -44,6 +47,8 @@ expect 2 'echo x 2>/dev/null >~/.claude/skills/ship/SKILL.md'
 expect 2 'echo x >/dev/null,~/.claude/skills/ship/SKILL.md'
 expect 2 'cat ~/.claude/hooks/review-gate.sh >/dev/null,x'
 expect 2 'cat ~/.claude/hooks/review-gate.sh >&2,x'
+expect 2 "cat ~/.claude/hooks/review-gate.sh >/dev/null'x'"
+expect 2 "cat ~/.claude/hooks/review-gate.sh >&2'.txt'"
 expect 2 ': > /repo/.git/review-gate/abc.pass'
 expect 2 'cd ~/.claude/hooks && echo x >review-gate.sh'
 # `>&1/…` is a file named after the digits, not a descriptor.

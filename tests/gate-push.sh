@@ -109,6 +109,9 @@ expect 2 'git push origin HEAD >/dev/null,x'
 expect 2 'git push origin HEAD 2>/dev/stderr:x'
 expect 2 'git push origin HEAD &>/dev/stdout+x'
 expect 2 'git push origin HEAD >&2,x'
+expect 2 "git push origin HEAD >&2'.txt'"
+expect 2 "git push origin HEAD >/dev/null'x'"
+expect 2 "git push origin HEAD &>/dev/null'x'"
 expect 2 'git push origin HEAD 2>&1; tail -1 x'
 expect 2 'git push origin HEAD >> /dev/null.x'
 expect 2 'git push origin HEAD | tee out.txt'

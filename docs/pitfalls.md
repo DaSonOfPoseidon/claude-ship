@@ -17,7 +17,10 @@ review finds a new class.
   `2.txt`) and `>&1/x` passed; so did `&>/dev/null.log` (no terminator at all) and `>/dev/null,x` (the `/dev/…`
   strips excluded only `[:alnum:]_./-`, so `,` `:` `+` `=` slipped through; claude-ship #41). End every strip
   with the characters that may follow (whitespace, a separator, the end), and test a following `.`, `/`, `-`,
-  `,` and `:`.
+  `,` and `:`. The terminator must also accept the end of the quoted word that contains the redirect:
+  `sh -c 'cat x >/dev/null'` ends in a closing quote and was blocked once the terminator tightened. Allow one
+  closing quote, but only when whitespace, a separator or the end follows it; `>&2'.txt'` and `>/dev/null'x'`
+  still write a file.
 - **Process rules are a table, not a list of special cases.** Patching one sentence per review finding moved
   the gap each round (OBDCracker #128, three rounds). State a rule once, as a table, and check every cell.
 - **A command interrupted midway may have done part of its work.** Check what exists (issues, commits)
