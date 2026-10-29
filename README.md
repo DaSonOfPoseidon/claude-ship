@@ -164,5 +164,6 @@ Every reviewer run appends `{date, repo, head, stage, model, cost_usd, findings}
 `~/.claude/state/review-costs.jsonl`.
 
 To measure what a PR cost to build, run `~/.claude/skills/ship/token-report.sh <pr>...` from a checkout of the
-repo. It reads that repo's Claude Code transcripts and `gh`, and prints each PR's tokens and API-price cost by
-role (main session, then each subagent type) and model, plus the main session's peak context.
+repo. It reads that repo's Claude Code transcripts, the cost log above and `gh`, and prints each PR's tokens and
+API-price cost by role (main session, then each subagent type, then the gate's reviewers) and model, plus the main
+session's peak context.

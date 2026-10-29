@@ -1,8 +1,10 @@
 #!/bin/sh
 # Prints each PR's Claude Code usage and API-price cost, split by role (the main session, then each
-# subagent type) and model, plus the main session's peak context. Run it from a checkout of the repo: it reads
-# only this repo's transcripts (~/.claude/projects/<slug>, or $CLAUDE_PROJECTS_DIR/<slug>) and `gh`, keeps no
-# state, and calls no model. How requests are attributed to PRs: docs/scripts.md.
+# subagent type) and model, plus the main session's peak context and the gate's reviewer runs (`gate <stage>` rows,
+# from its cost log). Run it from a checkout of the repo: it reads only this repo's transcripts
+# (~/.claude/projects/<slug>, or $CLAUDE_PROJECTS_DIR/<slug>), the gate's cost log (~/.claude/state/review-costs.jsonl,
+# or $CLAUDE_REVIEW_COSTS) and `gh`, keeps no state, and calls no model. How requests and gate runs are attributed
+# to PRs: docs/scripts.md.
 # Usage: token-report.sh <pr> [<pr>...]
 set -eu
 
@@ -70,7 +72,7 @@ window() {
 		| if $a == "" then error("PR #\($pr) has no author") else . end
 		| {pr: $pr, asked: $asked, author: $a, title: ((.title // "") | gsub("[\t\n\r]"; " ")),
 			start: ([.createdAt, (.commits[0].authoredDate // empty)] | map(.[0:19]) | min),
-			end: $e.end[0:19], status: $e.status}' >>"$3" || exit 1
+			end: $e.end[0:19], status: $e.status, commits: [.commits[]?.oid | select(type == "string")]}' >>"$3" || exit 1
 }
 : >"$tmp/windows"
 for pr in "$@"; do
@@ -118,6 +120,29 @@ done <"$tmp/others.n"
 prevend "$tmp/windowsO" "$tmp/windowsO2"
 cat "$tmp/windows2" "$tmp/windowsO2" >"$tmp/windowsAll"
 
+# The gate's reviewer costs (#110): one row per reviewer run in the gate's cost log. Lines that aren't a row (not
+# JSON, or missing repo, head, stage or date) are skipped with one warning, so a corrupt log isn't read as cheap.
+# A cost that isn't a number is kept as unpriced (null); costs become nano-dollars like the transcripts'.
+costs=${CLAUDE_REVIEW_COSTS:-$HOME/.claude/state/review-costs.jsonl}
+: >"$tmp/gate.raw"
+if [ -f "$costs" ]; then
+	jq -n -R -c '
+		inputs | select(. != "")
+		| (try fromjson catch null) as $o
+		| if ($o | type) == "object" and ($o.repo | type) == "string" and ($o.head | type) == "string"
+			and ($o.stage | type) == "string" and ($o.date | type) == "string"
+		  then {repo: $o.repo, head: $o.head, date: $o.date[0:19], stage: ($o.stage | gsub("[\t\n\r]"; " ")),
+			model: (if ($o.model | type) == "string" then $o.model | gsub("[\t\n\r]"; " ") else "unknown" end),
+			c: (if ($o.cost_usd | type) == "number" then $o.cost_usd * 1000000000 | round else null end)}
+		  else "bad" end' "$costs" >"$tmp/gate.raw" || {
+		echo "token-report.sh: can't read $costs" >&2
+		exit 1
+	}
+fi
+jq -c 'select(type == "object")' "$tmp/gate.raw" >"$tmp/gate" || exit 1
+bad=$(jq -s 'map(select(type == "string")) | length' "$tmp/gate.raw") || exit 1
+[ "$bad" = 0 ] || echo "token-report.sh: skipped $bad unreadable line(s) in $costs" >&2
+
 # One record per request: a request spans several transcript lines, so keep the one with the most output.
 # Cache writes: the 5m/1h split, with any remainder of the total priced as 5m.
 extract() {
@@ -160,7 +185,7 @@ done
 # assigned across all the PRs that could matter (the asked ones and the author's others, read above), by the
 # same rules; only then are the asked PRs' rows kept, and a request won by a PR not asked for is dropped. So a
 # PR's row is the same whichever other PRs are asked for.
-jq -r -s --slurpfile w "$tmp/windowsAll" --argjson prices "$prices" '
+jq -r -s --slurpfile w "$tmp/windowsAll" --slurpfile g "$tmp/gate" --arg repo "$repo" --argjson prices "$prices" '
 	def milli: . * 1000 | round;
 	def rate($m; $p):
 		$prices[$m] as $e
@@ -171,16 +196,18 @@ jq -r -s --slurpfile w "$tmp/windowsAll" --argjson prices "$prices" '
 		  else .i * ($r.i | milli) + .o * ($r.o | milli) + .cr * ($r.cr | milli)
 			+ .w5 * ($r.w5 | milli) + .w1 * ($r.w1 | milli) end;
 	def cents: (. + 5000000) / 10000000 | floor;
-	def sum(f): map(f) | add;
+	def sum(f): map(f) | add // 0;
 	def nano: if (map(.c == null) | any) then null else (map(.c) | add) end;
 	def money: if . == null then "?" else (cents | tostring) end;
+	def own($W; $t): [$W[] | select(.start0 <= $t and $t <= .end)];
 	def pick($W; $t):
-		[$W[] | select(.start0 <= $t and $t <= .end)] as $own
+		own($W; $t) as $own
 		| [$W[] | select(.start <= $t and $t <= .end)] as $c
 		| if ($own | length) > 0 then $own | max_by([.start0, .pr])
 		  elif ($c | length) > 0 then $c | max_by([.start, .pr])
 		  else null end;
 	. as $recs
+	| ($w | map(.commits) | add // []) as $allc
 	| ($w | map(. as $win
 		| ($recs | map(select(.k == "main" and .ts >= $win.start and .ts <= $win.end) | .f) | unique) as $fs
 		| ($recs | map(select(.k == "main" and (.f as $f | $fs | index($f) != null)) | .ts) | min // $win.start) as $ss
@@ -192,13 +219,19 @@ jq -r -s --slurpfile w "$tmp/windowsAll" --argjson prices "$prices" '
 	| map(select(.pr != null)) as $all
 	| $W[] | select(.asked) | . as $win
 	| ($all | map(select(.pr == $win.pr))) as $mine
+	| ($g | map(select((.repo | ascii_downcase) == ($repo | ascii_downcase))
+		| select((.head as $h | $win.commits | index($h)) != null
+			or ((.head as $h | $allc | index($h)) == null
+				and (own($W; .date) | if length == 0 then null else max_by([.start0, .pr]).pr end) == $win.pr)))) as $gm
 	| "H\t\($win.pr)\t\($win.title)\t\($win.start)\t\(if $win.status == "open" then "open" elif $win.status == "closed" then "\($win.end) closed" else $win.end end)",
-	  if ($mine | length) == 0 then "N" else
+	  if ($mine | length) == 0 and ($gm | length) == 0 then "N" else
 		($mine | map(. + {role: (if .k == "main" then "main" else .role end)})
 			| group_by([.role != "main", .role, .model])[]
 			| "R\t\(.[0].role)\t\(.[0].model)\t\(length)\t\(sum(.i))\t\(sum(.o))\t\(sum(.cr))\t\(sum(.w5 + .w1))\t\(nano | money)"),
-		"T\t\($mine | length)\t\($mine | sum(.i))\t\($mine | sum(.o))\t\($mine | sum(.cr))\t\($mine | sum(.w5 + .w1))\t\($mine | nano | money)",
-		"P\t\($mine | map(select(.k == "main") | .i + .cr + .w5 + .w1) | max // 0)",
+		($gm | group_by([.stage, .model])[]
+			| "R\tgate \(.[0].stage)\t\(.[0].model)\t\(length)\t-\t-\t-\t-\t\(nano | money)"),
+		"T\t\(($mine | length) + ($gm | length))\t\($mine | sum(.i))\t\($mine | sum(.o))\t\($mine | sum(.cr))\t\($mine | sum(.w5 + .w1))\t\($mine + $gm | nano | money)",
+		(if ($mine | length) > 0 then "P\t\($mine | map(select(.k == "main") | .i + .cr + .w5 + .w1) | max // 0)" else empty end),
 		($mine | map(select(.c == null) | .model) | unique[] | "W\t\(.)")
 	  end' "$tmp/records" >"$tmp/report"
 

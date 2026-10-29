@@ -38,9 +38,11 @@ export GH_DIR
 P=$tmp/projects
 D=$P/$slug
 
-# fresh: empties the fixtures and the transcript dir; the author has no PR besides the ones given to plist.
+# fresh: empties the fixtures, the transcript dir and the gate's cost log; the author has no PR besides the
+# ones given to plist.
 fresh() {
-	rm -rf "$GH_DIR" "$P"
+	rm -rf "$GH_DIR" "$P" "$tmp/costs.jsonl"
+	unset COSTS
 	mkdir -p "$GH_DIR" "$D"
 	echo '[]' >"$GH_DIR/list.json"
 }
@@ -52,14 +54,24 @@ plist() {
 		closedAt: (if $f[3] == "" then null else $f[3] end)})' >"$GH_DIR/list.json"
 }
 
-# pr <n> <title> <created> <merged or empty> [<first commit authored> [<closed at>]]
-# With <closed at> and no <merged>, the PR is closed without merging; with neither it is open.
+# pr <n> <title> <created> <merged or empty> [<first commit authored> [<closed at> [<commit shas, comma separated>]]]
+# With <closed at> and no <merged>, the PR is closed without merging; with neither it is open. The shas are the
+# commits' oids; the first commit carries the authored date, if there is one.
 pr() {
-	jq -n --arg t "$2" --arg c "$3" --arg m "$4" --arg a "${5:-}" --arg x "${6:-}" \
-		'{title:$t,author:{login:"me"},createdAt:$c,mergedAt:(if $m == "" then null else $m end),
+	jq -n --arg t "$2" --arg c "$3" --arg m "$4" --arg a "${5:-}" --arg x "${6:-}" --arg s "${7:-}" \
+		'($s | split(",") | map(select(. != ""))) as $o
+		| {title:$t,author:{login:"me"},createdAt:$c,mergedAt:(if $m == "" then null else $m end),
 		state:(if $m != "" then "MERGED" elif $x != "" then "CLOSED" else "OPEN" end),
 		closedAt:(if $m != "" then $m elif $x != "" then $x else null end),
-		commits:(if $a == "" then [] else [{authoredDate:$a}] end)}' >"$GH_DIR/pr-$1.json"
+		commits:([range(0; ([($o | length), (if $a == "" then 0 else 1 end)] | max))]
+			| map({authoredDate: (if . == 0 and $a != "" then $a else null end), oid: ($o[.] // null)}))}' >"$GH_DIR/pr-$1.json"
+}
+
+# gate <date> <repo> <head> <stage> <model> <cost or null> [<rc>]: appends a row to the gate's cost log, as
+# hooks/review-gate.sh writes it. Tests that don't set COSTS read a log that doesn't exist.
+gate() {
+	jq -nc --arg d "$1" --arg r "$2" --arg h "$3" --arg s "$4" --arg m "$5" --argjson c "$6" --argjson rc "${7:-0}" \
+		'{date:$d,repo:$r,head:$h,stage:$s,model:$m,rc:$rc,cost_usd:$c,findings:0}' >>"$tmp/costs.jsonl"
 }
 
 # line <file> <requestId> <timestamp> <model> <in> <out> <cache read> <cache write> [<5m> <1h>]
@@ -85,7 +97,7 @@ run() {
 		dir=$2
 		shift 2
 	fi
-	(cd "$dir" && PATH=$tmp/bin:$PATH CLAUDE_PROJECTS_DIR=$P sh "$root/skills/ship/token-report.sh" "$@") >"$tmp/raw" 2>"$tmp/err"
+	(cd "$dir" && PATH=$tmp/bin:$PATH CLAUDE_PROJECTS_DIR=$P CLAUDE_REVIEW_COSTS=${COSTS:-$tmp/no-such-costs.jsonl} sh "$root/skills/ship/token-report.sh" "$@") >"$tmp/raw" 2>"$tmp/err"
 	rc=$?
 	tr -s ' ' <"$tmp/raw" >"$tmp/out"
 }
@@ -469,6 +481,83 @@ rm -rf "$P"
 run 40
 check 'missing transcript dir' 2 ''
 grep -q -- "$slug" "$tmp/err" || { echo 'FAIL: error does not name the transcript dir'; cat "$tmp/err"; fail=1; }
+
+# --- the gate's reviewer costs (#110): rows from the cost log for the PR's commits, and for heads since
+# rewritten that were logged inside its window. PR 90: window 09:30..12:00, commits a1 a2 a3. PR 91: 14:00..16:00,
+# commit b1. PR 92 (not asked for): 10:30..10:45, commit c1.
+fresh
+pr 90 'g' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z 2026-10-01T09:30:00Z '' a1,a2,a3
+pr 91 'h' 2026-10-01T14:00:00Z 2026-10-01T16:00:00Z '' '' b1
+pr 92 'o' 2026-10-01T10:30:00Z 2026-10-01T10:45:00Z '' '' c1
+plist '90|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '91|2026-10-01T14:00:00Z|2026-10-01T16:00:00Z|2026-10-01T16:00:00Z' '92|2026-10-01T10:30:00Z|2026-10-01T10:45:00Z|2026-10-01T10:45:00Z'
+line "$D/s.jsonl" g1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+COSTS=$tmp/costs.jsonl
+# PR 90's commits: two finders and a verifier, one of the finders logged before the window (a commit match
+# doesn't need the date) and failed (rc 1) but still cost.
+gate 2026-10-01T11:00:00Z acme/app a1 finder sonnet 0.05
+gate 2026-10-01T08:00:00Z acme/app a2 finder sonnet 0.10 1
+# The gate logs the repo as spelled in the push URL: any case still matches.
+gate 2026-10-01T11:01:00Z Acme/App a1 verifier haiku 0.01
+# The same head in another repo: not this PR's.
+gate 2026-10-01T11:02:00Z other/app a1 finder sonnet 9
+# A head that is another PR's commit (c1, PR 92, not asked for) never counts by window, even inside PR 90's.
+gate 2026-10-01T10:40:00Z acme/app c1 finder sonnet 8
+# An unknown head (a rewritten commit) logged inside PR 90's window: PR 90's. Logged at 10:40, where PR 92's
+# window (the later-started) also holds it: PR 92's, so dropped. Logged at 13:00, in no window: nobody's.
+gate 2026-10-01T11:10:00Z acme/app zz finder sonnet 0.20
+gate 2026-10-01T10:40:00Z acme/app zy finder sonnet 7
+gate 2026-10-01T13:00:00Z acme/app zx finder sonnet 6
+# PR 91: a commit match, and an unknown head in its window.
+gate 2026-10-01T14:30:00Z acme/app b1 finder sonnet 0.30
+gate 2026-10-01T15:00:00Z acme/app zw verifier haiku 0.02
+# Lines the script can't use: not JSON, JSON without the fields, and a blank line (not counted).
+printf '%s\n' 'not json' '{"repo":"acme/app"}' '' >>"$tmp/costs.jsonl"
+want90='PR #90 g (2026-10-01T09:30:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+gate finder sonnet 3 - - - - $0.35
+gate verifier haiku 1 - - - - $0.01
+total 5 250000 0 0 0 $1.36
+peak main context: 250000 tokens'
+run 90 91
+check 'gate rows' 0 "$want90
+
+PR #91 h (2026-10-01T14:00:00 → 2026-10-01T16:00:00)
+role model requests input output cache read cache write cost
+gate finder sonnet 1 - - - - \$0.30
+gate verifier haiku 1 - - - - \$0.02
+total 2 0 0 0 0 \$0.32"
+[ "$(wc -l <"$tmp/err")" = 1 ] && grep -q '^token-report.sh: skipped 2 unreadable line(s) in .*costs.jsonl' "$tmp/err" ||
+	{ echo 'FAIL: want one warning counting the 2 unreadable log lines'; cat "$tmp/err"; fail=1; }
+# A PR's rows are the same asked alone.
+run 90
+check 'gate rows, PR alone' 0 "$want90"
+
+# A run with no cost (cost_usd null) makes its group and the total ?; the priced group stays priced.
+fresh
+pr 93 'n' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z '' '' d1
+COSTS=$tmp/costs.jsonl
+gate 2026-10-01T10:10:00Z acme/app d1 finder sonnet 0.05
+gate 2026-10-01T10:11:00Z acme/app d1 finder sonnet null
+gate 2026-10-01T10:12:00Z acme/app d1 verifier haiku 0.01
+run 93
+check 'gate run without a cost' 0 'PR #93 n (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+gate finder sonnet 2 - - - - ?
+gate verifier haiku 1 - - - - $0.01
+total 3 0 0 0 0 ?'
+[ ! -s "$tmp/err" ] || { echo 'FAIL: unexpected stderr (clean log)'; cat "$tmp/err"; fail=1; }
+
+# A log with nothing for the PR, or an empty one, reads like no log at all.
+: >"$tmp/costs.jsonl"
+gate 2026-10-05T10:10:00Z acme/app nothere finder sonnet 5
+run 93
+check 'log without rows for the PR' 0 'PR #93 n (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+no usage found'
+: >"$tmp/costs.jsonl"
+run 93
+check 'empty log' 0 'PR #93 n (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+no usage found'
 
 # --- both new scripts are committed executable (a hook or the skill runs them as commands).
 for f in skills/ship/token-report.sh tests/token-report.sh; do
