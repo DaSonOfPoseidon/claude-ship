@@ -535,9 +535,20 @@ owner=${slug%/*}
 name=${slug#*/}
 use_state
 
+# A push shown only by the raw command is usually quoted text, but `sh -c` and `eval` run it, so it is judged too.
+# The exception is the ship skill's own `gh pr/issue create/edit/comment/close`, whose quoted words are data: it must
+# be that single command, with no unquoted separator, redirect or command substitution. Nothing in it runs a push,
+# so push_scope judges none of it.
+data_only=
+if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment|close)[[:space:]]' &&
+	! printf '%s' "$words" | grep -Eq '[;&|<>()`]|\$(\(|@LP@|\[)' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
+	data_only=1
+fi
+
 # A push may send only HEAD, to origin; prints why not and fails otherwise. Options outside the list block
 # (--all, --mirror, --tags and --delete send other refs).
 push_scope() (
+	[ -z "$data_only" ] || return 0
 	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ] ||
 		[ "$(printf '%s' "$words" | grep -Eo "$git_push" | wc -l)" -gt 1 ]; then
 		echo "it runs more than one \`git push\`"
@@ -572,15 +583,7 @@ push_scope() (
 	# Shell syntax the split can't place (substitutions, a trailing `&`, a redirect, a second line, a `;` before the
 	# push) fails the whole-command shape check.
 	shape="^[[:space:]]*(cd[[:space:]]+[^[:space:];&|<>()\$\`]+[[:space:]]*&&[[:space:]]*)?([^[:space:];&|<>()\$\`]*/)?git([[:space:]][^;&|<>()\$\`]*)?([[:space:]]*\\|[[:space:]]*(tail|head|cat|grep)([[:space:]][^;&|<>()\$\`]*)?)*[[:space:]]*\$"
-	# A push shown only by the raw command is usually quoted text, but `sh -c` and `eval` run it, so it is judged too.
-	# The exception is the ship skill's own `gh pr/issue create/edit/comment`, whose quoted words are data: it must be
-	# that single command, with no unquoted separator, redirect or command substitution.
-	data_only=
-	if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment)[[:space:]]' &&
-		! printf '%s' "$words" | grep -Eq '[;&|<>()`]|\$(\(|@LP@|\[)' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
-		data_only=1
-	fi
-	if [ -z "$data_only" ] && { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then
+	if { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then
 		[ -n "$extra" ] || extra=$(printf '%s' "$bare" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
 		echo "it also runs \`$extra\`, which may change what the push sends after the gate checked it; run that in its own command first"
 		return 1
