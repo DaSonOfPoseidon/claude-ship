@@ -1,0 +1,46 @@
+name: Codex review status
+
+# Reusable workflow: the bot filter, per-PR concurrency and the claude-ship action. Callers keep only the
+# triggers and permissions (skills/ship/templates/codex-review.yml) and call this at `@v1`, so a fix reaches
+# every repo when the tag moves. In a called workflow `github.event` is the caller's event, so the PR number
+# expressions below read the caller's payload.
+on:
+  workflow_call:
+    inputs:
+      pr:
+        description: Pull request number; only needed when the caller's event carries none
+        type: string
+        required: false
+
+# Permissions come from the caller: a called workflow can't exceed them (contents read, issues read,
+# pull-requests read, statuses write; the script's push-activity lookup needs contents).
+
+jobs:
+  codex-status:
+    # Only Codex's own comments and reviews matter; anyone can comment on a public repo.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_review' &&
+        github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+        github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    # One run per PR at a time. A running run is never cancelled (that showed as a red check), and two runs
+    # writing one status at once could let a stale read overwrite a newer result. GitHub keeps only the newest
+    # queued run, and the last run to start reads the latest state. A queued run replaced before it starts still
+    # shows as cancelled, but the `codex-review` status that branch protection reads comes from the newer run,
+    # so it stays right. This is on the job, after the filter, so other people's comments can't queue a check.
+    # A dispatch run's number is in the caller's payload (`github.event.inputs.pr`), since `inputs` here are
+    # this workflow's own.
+    concurrency:
+      group: codex-review-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr || inputs.pr }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      # claude-ship's v1 tag decides, not the calling repo's files; it moves (owner only) on release. Pinned
+      # to `@v1` rather than `./`: a called workflow has no checkout of claude-ship, and `./` would mean the
+      # caller's repo. Changing this ref needs write access; fork PRs get a read-only token, which can't set
+      # statuses.
+      - uses: DaSonOfPoseidon/claude-ship@v1
+        with:
+          pr: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr || inputs.pr }}

@@ -38,8 +38,11 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    Keep them short and repo-specific: what must never break, what input is untrusted, what must stay out
    of the repo.
 2. Add a line `@AGENTS.md` to CLAUDE.md (create it if missing) so the rules aren't duplicated.
-3. Copy `templates/codex-review.yml` to `.github/workflows/codex-review.yml`. It calls the claude-ship
-   action (`DaSonOfPoseidon/claude-ship@v1`), so the repo keeps no copy of the status script. Lint it:
+3. Copy `templates/codex-review.yml` to `.github/workflows/codex-review.yml`. It is a short caller (triggers
+   and permissions) of claude-ship's reusable workflow (`DaSonOfPoseidon/claude-ship/.github/workflows/codex-status.yml@v1`),
+   which holds the bot filter and concurrency and calls the action, so the repo keeps no copy of either the
+   workflow body or the status script. Its check run is named `codex-review / codex-status`; the required
+   `codex-review` status is set by the script. Lint it:
    `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7`.
 4. Create `docs/pitfalls.md` if it doesn't exist, with the title `# Pitfalls` and this intro: "Classes of
    bug that reviews have caught here. Check every change against them, and add an entry when a review
