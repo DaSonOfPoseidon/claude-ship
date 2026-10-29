@@ -118,19 +118,25 @@ right-hand column.
 - **Not valid:** reply on the thread explaining why (with file:line evidence), then resolve it.
 - **Fix:** test-first, with a sweep for the same class. Reply on the thread with the fixing commit, then
   resolve the thread.
-- **File an issue:** write `{"file": "<path>", "title": "<path>: <summary>", "body": "<finding>"}` to a JSON
-  file in your scratchpad with the Write tool, then run `~/.claude/hooks/p3-issue.sh <owner/repo> <that file>`
-  from the PR's checkout. It applies the repo's labels and milestone the same way the gate does for its P3s.
-  Reply on the thread with the issue link it prints, then resolve the thread.
-- Resolve threads with GraphQL `resolveReviewThread(input: {threadId: "<id>"})`, using the ids
-  `codex-findings.sh` prints.
+- **File an issue:** reply on the thread with the issue's link, then resolve it. The issue is filed with
+  `~/.claude/hooks/p3-issue.sh`, which applies the repo's labels and milestone the same way the gate does for
+  its P3s.
 - When a finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in the same push.
+
+**Apply the outcomes in one call.** Write the triage to a JSON file in your scratchpad with the Write tool:
+`[{"thread": "<id>", "outcome": "not-valid" | "issue" | "fixed", "reply": "<text>", "issue": {"file": "<path>",
+"title": "<path>: <summary>", "body": "<finding>"}}]` (`issue` only for that outcome; thread ids as
+`codex-findings.sh` prints them). Then run `~/.claude/skills/ship/codex-triage.sh <pr> <that file>` from the PR's
+checkout. For each entry it files the issue (adding its link to the reply), posts the reply and resolves the
+thread. Include a fixed thread only once its fix is committed, so the reply can name the commit. It validates
+the whole file before any call and stops at the first failure, naming the threads done: check that thread for a
+half-applied reply before rerunning without the done ones.
 
 Then:
 - **Something was fixed:** go back to step 2 (the gate reviews only the new commits) and request the next
   round.
-- **Nothing was fixed** (everything was filed or answered): run `gh workflow run codex-review.yml -f pr=<pr>`
-  so the status rechecks with the resolved threads. No new round is needed.
+- **Nothing was fixed** (everything was filed or answered): the script has already run
+  `gh workflow run codex-review.yml` so the status rechecks with the resolved threads. No new round is needed.
 
 ## 5. Done
 

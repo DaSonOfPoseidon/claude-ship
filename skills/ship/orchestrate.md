@@ -97,7 +97,12 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
        `cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr>`. The request compares the PR's head with
        the checkout's HEAD.
 5. **Triage** with `codex-findings.sh` and the ship skill's step 4 outcome table:
-   - **Not valid / file an issue:** do it yourself: the reply, `p3-issue.sh`, the resolve.
+   - **Not valid / file an issue:** do it yourself, in one call: write the entries to a JSON file with the
+     Write tool and run `~/.claude/skills/ship/codex-triage.sh <pr> <file>` (format in the ship skill's step 4).
+     It files the issues, replies and resolves. It is yours to run, not the implementer's: subagents can't
+     resolve threads (#100). When the round also sends fixes, leave those threads out of the file (the
+     implementer replies to them and you resolve them below); the status recheck the script then ends with is
+     harmless, because the fix's push triggers the next one.
    - **Fix:** send the findings, with thread ids and what each fix should be, to the same implementer
      (`SendMessage` to its id), adding "request the next round" only when `codex-round.sh <pr>` is below 3.
      If its id is gone (after `/clear`), replace it
@@ -106,7 +111,7 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      call, #100). So after its report, resolve each thread its `replied:` lines list (`resolveReviewThread`,
      with the thread id) before the next wait or recheck. A round where it stopped early resolves only the
      threads its `replied:` lines list, and threads it never replied to stay open.
-   - **Nothing to fix:** `gh workflow run codex-review.yml -f pr=<pr>`.
+   - **Nothing to fix:** the script has already rechecked the status (`gh workflow run codex-review.yml`).
 
    Then back to 4. Rounds are capped at 3 as in the ship skill.
 6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries).

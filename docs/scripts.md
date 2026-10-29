@@ -61,6 +61,29 @@ three repos, all 125 finished requests had lost it and all 14 stalled ones kept 
 the bot's own 👀 marks a stall. A review still running past 15 minutes is left out only until it finishes; the
 skill counts rounds when it requests the next, after the last has finished or stalled.
 
+## `skills/ship/codex-triage.sh`
+
+Applies a round's triage in one call, so the orchestrator spends one turn on it instead of one per reply, issue
+and resolve (each turn re-reads its whole context, #71). It is run by whoever triages: in orchestrated mode the
+orchestrator, since subagents can't resolve threads (#100), from the checkout `p3-issue.sh` should read.
+
+- **Input** is a JSON array written with the Write tool, so reply text never passes through shell quoting. Each
+  entry has `thread`, `outcome` (`not-valid`, `issue` or `fixed`), `reply`, and `issue` (`file`, `title`, `body`)
+  exactly when the outcome is `issue`. The whole file is validated first: any invalid entry, or an empty array
+  (a caller bug), exits 2 before any call.
+- **Per entry**, in order: for `issue`, `p3-issue.sh` files it (found next to `hooks/`, else
+  `~/.claude/hooks/`) and its URL is appended to the reply; then the reply (`addPullRequestReviewThreadReply`),
+  then `resolveReviewThread`. Both are on the gate's mutation allowlist. The reply goes in as a `-f` variable,
+  never in the query text and never `-F` (which reads a value starting with `@` as a file), so quoted Codex
+  text can't alter the mutation.
+- **A `fixed` entry** replies and resolves too. In orchestrated mode the implementer has already replied on the
+  threads it fixed, so the orchestrator resolves those itself and leaves them out of the file.
+- **Stops at the first failed call**, printing `done:` (the threads finished) and `failed:` (the thread and
+  step) to stderr, exit 1. A failed reply may have posted and a failed resolve leaves a posted reply, so check
+  the thread before rerunning with the finished threads removed from the file.
+- **Ends with the status recheck** (`gh workflow run codex-review.yml`) only when no entry is `fixed`: a fix
+  means a push and a new request, which recheck it anyway.
+
 ## `skills/ship/codex-wait.sh`
 
 Runs `codex-status.sh` with `DRY_RUN=1` every 60 seconds. A status that only a new request clears (stalled, or
