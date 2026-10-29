@@ -2,18 +2,10 @@
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
 # Files a review finding as an issue, labelled by the finding's file: p3-issue.sh <owner/repo> <finding.json>,
-# where the JSON has `file`, `title` and `body` (in a file, since the gate reads a command naming ~/.claude/hooks
-# with a `>` anywhere in it as a write). Run from the checkout whose branch the finding is in; prints the issue's
-# URL. The review gate files its confirmed P3s with it, and the ship skill files Codex findings it defers with it.
-#
-# Labels: the repo variable CLAUDE_P3_LABELS (default `review:p3`), plus every rule matching `file` in
-# .github/claude-ship/p3-labels on the default branch (a branch can't change how its own findings are filed),
-# one rule per line, `<glob> <label>[,<label>...]`, where `*` spans `/`. If none of them is a type label (`bug`,
-# `documentation`, `enhancement`, `type:*`), CLAUDE_P3_TYPE_LABEL is added when set. Labels the repo doesn't have
-# are dropped, and one that differs from a repo label only in case is filed under the repo's spelling.
-# Milestone, only with CLAUDE_P3_MILESTONE=auto: the branch's open PR's, else the one milestone of the issues its
-# commit subjects fix (`fixes #N`), else none.
-# A finding is never lost to its labels: if filing fails, it retries without the milestone, then without labels.
+# where the JSON has `file`, `title` and `body`. Run from the checkout whose branch the finding is in; prints the
+# issue's URL. The review gate files its confirmed P3s with it, and the ship skill the Codex findings it defers.
+# Labels, milestone and fallbacks: README (Per-repo opt-in) and docs/scripts.md. Exits 1 if the JSON lacks
+# those fields or the issue can't be filed even without labels.
 set -u
 slug=$1
 file=$(jq -er .file "$2") && title=$(jq -er .title "$2") && body=$(jq -er .body "$2") || {
