@@ -740,7 +740,12 @@ git fetch -q origin "+refs/heads/$main:$upstream" || {
 	echo "Blocked: couldn't fetch origin/$main to diff against." >&2
 	exit 2
 }
-if [ -z "$(git diff --name-only "$upstream"...HEAD)" ]; then
+# A git diff that fails lists nothing, which would read as "no changes": block instead.
+branch_changed=$(git diff --name-only "$upstream"...HEAD) || {
+	echo "Blocked: couldn't list the files this branch changes against $upstream." >&2
+	exit 2
+}
+if [ -z "$branch_changed" ]; then
 	exit 0
 fi
 
@@ -805,7 +810,17 @@ for commit in $(git rev-list "$upstream"..HEAD); do
 	fi
 done
 
-if git diff --name-only "$range" | grep -Evq '(\.md$|^docs/)'; then
+# A change is docs-only when it lists at least one path and every path is a .md file or under docs/. Except that a
+# .md under hooks/, skills/, agents/ or .claude/ (the gate's prompts, skills, agents) and any AGENTS.md or CLAUDE.md
+# steer Claude, so they are behaviour and get the full review (claude-ship #105). --no-renames lists a rename's old
+# path too, so a script renamed to .md stays code. A failed git diff blocks, and an empty list counts as code.
+changed=$(git diff --name-only --no-renames "$range") || {
+	echo "Blocked: couldn't list the files changed in $range." >&2
+	exit 2
+}
+if [ -z "$changed" ] ||
+	printf '%s\n' "$changed" | grep -Evq '(\.md$|^docs/)' ||
+	printf '%s\n' "$changed" | grep -Eq '^(hooks|skills|agents|\.claude)/.*\.md$|(^|/)(AGENTS|CLAUDE)\.md$'; then
 	kind=code
 else
 	kind=docs
