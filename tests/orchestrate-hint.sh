@@ -7,12 +7,15 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/vars"
 # gh stub: `repo view` prints the slug unless $tmp/no-repo exists; `variable get X` prints $tmp/vars/X or fails
-# as gh does for a missing variable.
+# as gh does for a missing variable, or fails with a connection error while $tmp/gh-down exists (and, if that file
+# names a variable, only for that one).
 cat >"$tmp/bin/gh" <<EOF
 #!/bin/sh
 case "\$1 \$2" in
 "repo view") [ -e "$tmp/no-repo" ] && exit 1; echo acme/app ;;
-"variable get") cat "$tmp/vars/\$3" 2>/dev/null || { echo "variable \$3 was not found" >&2; exit 1; } ;;
+"variable get") if [ -e "$tmp/gh-down" ] && { [ ! -s "$tmp/gh-down" ] || [ "\$3" = "\$(cat "$tmp/gh-down")" ]; }; then
+	echo "error connecting to api.github.com" >&2; exit 1; fi
+	cat "$tmp/vars/\$3" 2>/dev/null || { echo "variable \$3 was not found" >&2; exit 1; } ;;
 *) exit 1 ;;
 esac
 EOF
@@ -63,6 +66,29 @@ echo true >"$tmp/vars/CLAUDE_AUTONOMOUS"
 hint no "gh can't read the repo" plan s7
 rm "$tmp/no-repo"
 hint yes "gh works again" plan s7
+
+# A lookup that fails for any other reason than "not found" (network, rate limit) isn't an answer, so it adds
+# nothing and isn't remembered: the next prompt asks again.
+: >"$tmp/gh-down"
+hint no "gh down, both on" plan s8
+hint no "gh down, still" plan s8
+rm "$tmp/gh-down"
+hint yes "gh back up, same session" plan s8
+# Down for only the second lookup.
+echo CLAUDE_ORCHESTRATE >"$tmp/gh-down"
+hint no "gh down for the second lookup" plan s9
+rm "$tmp/gh-down"
+hint yes "second lookup works again" plan s9
+# Down for only the first lookup.
+echo CLAUDE_AUTONOMOUS >"$tmp/gh-down"
+hint no "gh down for the first lookup" plan s10
+rm "$tmp/gh-down"
+hint yes "first lookup works again" plan s10
+# A variable that is really missing is an answer and stays remembered, even if it is set afterwards.
+rm "$tmp/vars/CLAUDE_ORCHESTRATE"
+hint no "orchestrate missing, remembered" plan s11
+echo true >"$tmp/vars/CLAUDE_ORCHESTRATE"
+hint no "orchestrate set later, same session" plan s11
 
 # Input that isn't JSON passes without a hint.
 printf 'not json' | TMPDIR=$tmp PATH=$tmp/bin:$PATH sh "$root/hooks/orchestrate-hint.sh" >"$tmp/out" 2>&1

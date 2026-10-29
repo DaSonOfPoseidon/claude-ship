@@ -3,7 +3,9 @@
 #
 # UserPromptSubmit hook: in plan mode, in a GitHub repo where CLAUDE_AUTONOMOUS and CLAUDE_ORCHESTRATE are both
 # `true`, it points Claude to the `ship` skill's orchestrated PR loop (skills/ship/orchestrate.md), once per
-# session and repo (claude-ship #66; docs/scripts.md). On any error it adds nothing and lets the prompt through.
+# session and repo (claude-ship #66; docs/scripts.md). On any error it adds nothing and lets the prompt through;
+# a variable lookup that fails for any reason but "not found" (network, rate limit) isn't remembered either, so
+# the next prompt asks again (claude-ship #67).
 set -u
 
 input=$(cat)
@@ -22,9 +24,20 @@ mark="$marks/$session-$(printf '%s' "$top" | cksum | cut -d' ' -f1)"
 
 slug=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || exit 0
 [ -n "$slug" ] || exit 0
-autonomous=$(gh variable get CLAUDE_AUTONOMOUS -R "$slug" 2>/dev/null) || autonomous=
-orchestrate=$(gh variable get CLAUDE_ORCHESTRATE -R "$slug" 2>/dev/null) || orchestrate=
-# Either variable may be missing (gh exits non-zero), which means off; remember the answer for the session.
+# Prints a variable's value, nothing if it is not set; fails if GitHub can't say (same split as the gate's).
+lookup() {
+	if out=$(gh variable get "$1" -R "$slug" 2>&1); then
+		printf '%s' "$out"
+		return 0
+	fi
+	case $out in
+	*'not found'* | *'Not Found'*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+autonomous=$(lookup CLAUDE_AUTONOMOUS) || exit 0
+orchestrate=$(lookup CLAUDE_ORCHESTRATE) || exit 0
+# A missing variable means off, and so does a value; remember the answer for the session.
 mkdir -p "$marks" 2>/dev/null && : >"$mark" 2>/dev/null
 [ "$autonomous" = true ] && [ "$orchestrate" = true ] || exit 0
 
