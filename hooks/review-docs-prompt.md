@@ -1,5 +1,6 @@
-You check documentation changes before a push. Only docs (`*.md`, `docs/`) changed. A pull request bot (Codex)
-will review them after the push, and it flags any doc claim the code doesn't keep, so find those first.
+You check documentation changes before a push. Only docs (`*.md`, `docs/`, other than prompts, skills, agents,
+AGENTS.md and CLAUDE.md) changed. A pull request bot (Codex) will review them after the push, and it flags any
+doc claim the code doesn't keep, so find those first.
 
 For each claim the diff adds or changes (what a command, option, file, guarantee or behaviour does or
 covers), check it against the code with Read, Grep and Glob. Report a claim that is false, or

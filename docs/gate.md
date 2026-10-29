@@ -212,7 +212,11 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
 - Confirmed P0–P2 findings block. Confirmed P3s don't: the gate files them as issues with `p3-issue.sh` (labels
   from the repo variable `CLAUDE_P3_LABELS`, default `review:p3`, plus the repo's per-file label map, and an
   optional milestone) and lists them in later prompts so they aren't found twice.
-- Docs-only changes (`*.md`, `docs/`) get a Haiku claims check instead of a full review.
+- Docs-only changes get a Haiku claims check instead of a full review. A change is docs-only when every changed
+  path is `*.md` or under `docs/`, except `.md` files under `hooks/`, `skills/`, `agents/` or `.claude/` and any
+  `AGENTS.md` or `CLAUDE.md`: those prompts, skills, agents and rules steer Claude, so they are behaviour and get
+  the full review (#105). A rename counts both its old and new path, and if `git diff` fails to list the changed
+  paths the push is blocked.
 - Results are cached per HEAD commit and per branch diff (`git patch-id`) in `.git/review-gate/`, so a re-push or
   a clean rebase costs nothing. After a commit passes, later pushes review only the newer commits, with a sweep
   for the same class of bug across the branch. A commit that was already reviewed keeps its findings, so

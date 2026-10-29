@@ -138,3 +138,7 @@ review finds a new class.
   had two reviewers of 1100 s each under a 1200 s hook timeout, and read a missing or failing `jq` as an empty tool
   name, which falls into `exit 0` (claude-ship #103). Keep the budget below the timeout, block on anything the gate
   could not read, and keep a test reading the README snippet so the registration cannot drift.
+- **A file's extension doesn't say whether it's behaviour.** A `.md` prompt, skill, agent or rules file changes what
+  Claude does, yet the gate treated every `*.md` as docs and gave it only the Haiku claims check. Classify by path
+  and role, not extension: the gate's `kind` block lists the `.md` locations that are behaviour, lists a rename's old
+  path too (`--no-renames`), blocks when the list can't be read, and treats an empty one as code (claude-ship #105).
