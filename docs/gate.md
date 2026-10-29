@@ -219,6 +219,11 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   re-pushing it re-blocks without a new review.
 - The project's review rules come from the default branch's `AGENTS.md` (a branch can't weaken its own review),
   else from the branch's own, which is how the bootstrap PR that adds them gets reviewed.
+- The rest of the reviewer's context comes the same way: the checklist (the `## Reviews` section of
+  `docs/CONTRIBUTING.md`, else `CONTRIBUTING.md`) and `docs/pitfalls.md` are read from the default branch, and from
+  the branch only when the default branch has none of that file (the bootstrap PR). A branch that edits them could
+  otherwise tell its own reviewer what to skip; its edits are in the diff, reviewed as changes. A file that exists
+  on the default branch but can't be read blocks instead of falling back to the branch's copy.
 - Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`.
 - The reviewers share one time budget, `REVIEW_GATE_BUDGET` (default 2200 s) counted from the gate's start: each run
   gets `min(1100 s, what is left)`, and none starts with fewer than `REVIEW_GATE_MIN_SECS` (default 120 s) left; the
