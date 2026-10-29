@@ -95,6 +95,27 @@ jq -c --slurpfile l "$tmp/lists" '
 		| (.mergedAt // .closedAt) | select(type == "string") | .[0:19] | select(. < $w.start)] | max // "")}' \
 	"$tmp/windows" >"$tmp/windows2" || exit 1
 
+# The author's other PRs (not asked for) own their windows too, from their first commit (the list has no commit
+# dates, so each is read with `gh pr view`) to their end, and a request in one is theirs, not an asked PR's. Only
+# PRs that end at or after the earliest prevEnd can overlap a widened window.
+jq -r -n --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/lists" '
+	($w | map(.pr)) as $asked
+	| ($w | map(.prevEnd) | min) as $lo
+	| [$l[].prs[] | select(.number as $n | $asked | index($n) == null)
+		| select((.mergedAt // .closedAt // "9999")[0:19] >= $lo) | .number] | unique[]' >"$tmp/others.n" || exit 1
+: >"$tmp/others"
+while IFS= read -r n; do
+	info=$(gh pr view "$n" -R "$repo" --json state,createdAt,mergedAt,closedAt,commits) || {
+		echo "token-report.sh: gh pr view $n failed" >&2
+		exit 1
+	}
+	printf '%s\n' "$info" | jq -c --argjson pr "$n" --arg now "$now" '
+		if (.mergedAt // .closedAt) == null and .state != "OPEN" then error("PR #\($pr) is \(.state) with no merge or close time") else . end
+		| {pr: $pr, other: true,
+			start0: ([.createdAt, (.commits[0].authoredDate // empty)] | map(.[0:19]) | min),
+			end: ((.mergedAt // .closedAt // $now)[0:19])}' >>"$tmp/others" || exit 1
+done <"$tmp/others.n"
+
 # One record per request: a request spans several transcript lines, so keep the one with the most output.
 # Cache writes: the 5m/1h split, with any remainder of the total priced as 5m.
 extract() {
@@ -134,9 +155,9 @@ done
 # PR's own window, but never to after start0. Work after the last merge belongs to no window. A request inside
 # some PR's own window goes to the latest-started of those; only a request in none goes to the latest-started
 # widened window, so widening never takes work from an overlapping PR. The own windows are every PR the author
-# has (the `gh pr list` result, as createdAt..end), not just the PRs asked for, so a report does not depend on
-# which PRs are asked for; a request owned by a PR that is not asked for is dropped.
-jq -r -s --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/lists" --arg nowts "$now" --argjson prices "$prices" '
+# has that could matter (the asked ones, and the others read below), so a report does not depend on which PRs
+# are asked for; a request owned by a PR that is not asked for is dropped.
+jq -r -s --slurpfile w "$tmp/windows2" --slurpfile o "$tmp/others" --argjson prices "$prices" '
 	def milli: . * 1000 | round;
 	def rate($m; $p):
 		$prices[$m] as $e
@@ -157,11 +178,7 @@ jq -r -s --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/lists" --arg nowts "$
 		  elif ($c | length) > 0 then $c | max_by([.start, .pr])
 		  else null end;
 	. as $recs
-	| ($w | map(.pr)) as $asked
-	| ([$l[].prs[] | select(.number as $n | $asked | index($n) == null)
-		| select(.createdAt | type == "string")
-		| {pr: .number, other: true, start0: .createdAt[0:19],
-			end: ((.mergedAt // .closedAt // $nowts)[0:19])}] | unique_by(.pr)) as $O
+	| $o as $O
 	| ($w | map(. as $win
 		| ($recs | map(select(.k == "main" and .ts >= $win.start and .ts <= $win.end) | .f) | unique) as $fs
 		| ($recs | map(select(.k == "main" and (.f as $f | $fs | index($f) != null)) | .ts) | min // $win.start) as $ss

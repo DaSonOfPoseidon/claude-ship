@@ -104,9 +104,10 @@ previous PR (the latest merge or close before this PR's own start, among their o
 own window, and never to after its own start. The report shows the widened start. Work after the last merge
 isn't printed. A request inside some PR's own window goes to the latest-started of those; only a request in none
 goes to the latest-started widened window, so widening never takes work from an overlapping PR. The own windows
-are every PR the author has in the same `gh pr list` (creation to merge, close or now), not just the PRs asked
-for, and a request owned by a PR that isn't asked for is dropped: the numbers must not depend on which PRs are
-asked for. A failed or odd
+are every PR the author has that ends at or after the earliest previous-PR end (each read with `gh pr view`, since
+the list has no commit dates, so from its first commit or creation to its end), not just the PRs asked for, and a
+request owned by a PR that isn't asked for is dropped: the numbers must not depend on which PRs are asked for.
+A failed or odd
 `gh pr list`, or a PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would reach
 the window back to the session's start. A whole subagent transcript belongs to the PR whose window holds its last
 request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
