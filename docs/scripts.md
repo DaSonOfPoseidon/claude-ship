@@ -111,11 +111,24 @@ Only `origin/main` is deployed, so what runs has passed review. That holds for t
 fetching, it runs main's copy of itself, so a checkout behind main still deploys what main's installer knows to
 (#20). The gate's hook entry lives in `~/.claude/settings.json` (see the README).
 
-## `action.yml` and the workflow
+## `action.yml` and the workflows
 
 The status script is the action's own copy, at the ref the caller names (`@v1`, a tag moved on release), so
-nothing in the calling repo, including a PR's changes, decides it. Triggers, permissions and the bot-only filter
-live in the caller (`skills/ship/templates/codex-review.yml`), since an action can't set them.
+nothing in the calling repo, including a PR's changes, decides it. The bot-only filter, the per-PR concurrency
+and the action call live in the reusable workflow `.github/workflows/codex-status.yml`, which callers reference
+at the same `@v1`, so one fix reaches every repo when the tag moves (before, each repo carried a 46-line copy
+that went stale). Triggers and permissions stay in the short caller (`skills/ship/templates/codex-review.yml`),
+since a called workflow can't set triggers or exceed its caller's permissions. This repo's own caller uses the
+local path (`./.github/workflows/codex-status.yml`), so a PR exercises the new file before `v1` moves.
+
+Inside a called workflow `github.event` is the caller's event, so the PR number expressions work as before. The
+`inputs` context there is the workflow's own `workflow_call` inputs, not the caller's dispatch inputs, so a
+dispatch run's number is read from `github.event.inputs.pr`. The action step stays `@v1` rather than `./`: a
+called workflow has no checkout of claude-ship, and `./` would mean the caller's repo. A dispatch run uses the
+default branch's caller, so that path can only be checked after a change merges.
+
+The check run is named `codex-review / codex-status` (caller job / called job). The required `codex-review`
+commit *status* the script sets is unchanged, and it is what branch protection reads.
 
 `v1` moves (owner only) when claude-ship releases, which changes the check in every caller without a PR there. A
 PR that changes the ref needs write access; fork PRs get a read-only token, which can't set statuses.

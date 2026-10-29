@@ -1,7 +1,8 @@
 name: Codex review status
 description: Sets the `codex-review` commit status on a PR's head from Codex's reviews and review threads.
 # The status script is this action's own copy, at the ref the caller names, so nothing in the calling repo
-# decides it. Triggers, permissions and the bot-only filter live in the caller (docs/scripts.md,
+# decides it. The bot-only filter and concurrency live in the reusable workflow
+# (.github/workflows/codex-status.yml), triggers and permissions in the caller (docs/scripts.md,
 # skills/ship/templates/codex-review.yml).
 inputs:
   pr:

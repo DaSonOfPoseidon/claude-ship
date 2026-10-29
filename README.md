@@ -12,8 +12,9 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   (below).
 - `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. It sets the `codex-review` commit
   status that branch protection requires (success once Codex reviewed the PR's head and every Codex thread is
-  resolved). Every opted-in repo, this one included, calls it from `.github/workflows/codex-review.yml`, a
-  copy of `skills/ship/templates/codex-review.yml`.
+  resolved). Every opted-in repo, this one included, calls it through the reusable workflow
+  `.github/workflows/codex-status.yml` from a short caller, `.github/workflows/codex-review.yml` (a copy of
+  `skills/ship/templates/codex-review.yml`).
 
 ## Orchestrated mode
 
@@ -38,17 +39,27 @@ and the gate still reviews every push.
 
 ## The codex-review action
 
-Repos call it at `@v1`; the script is never copied into them:
+Repos call it through a reusable workflow at `@v1`; neither the script nor the workflow body is copied into
+them. The caller is short (copy `skills/ship/templates/codex-review.yml`):
 
 ```yaml
-- uses: DaSonOfPoseidon/claude-ship@v1
-  with:
-    pr: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+on:
+  pull_request: { types: [opened, synchronize, reopened] }
+  pull_request_review: { types: [submitted] }
+  issue_comment: { types: [created, edited] }
+  workflow_dispatch: { inputs: { pr: { description: Pull request number, required: true } } }
+permissions: { contents: read, issues: read, pull-requests: read, statuses: write }
+jobs:
+  codex-review:
+    uses: DaSonOfPoseidon/claude-ship/.github/workflows/codex-status.yml@v1
 ```
 
-The triggers, the filter that only Codex's own comments count, and the permissions stay in the caller, since
-an action can't set them; copy the whole template. The script needs `contents`, `issues` and `pull-requests`
-read, and `statuses` write. How it decides, and why a repo's first PR can't get the status, is in
+The reusable workflow (`.github/workflows/codex-status.yml`) holds the filter that only Codex's own comments
+count, the per-PR concurrency and the action call, so a fix there reaches every repo when `v1` moves. The
+triggers and permissions stay in the caller (a called workflow can't exceed its caller's permissions). The
+script needs `contents`, `issues` and `pull-requests` read, and `statuses` write. The check run is now named
+`codex-review / codex-status`; the `codex-review` commit *status* that branch protection requires is unchanged.
+How the script decides, and why a repo's first PR can't get the status, is in
 [`docs/scripts.md`](docs/scripts.md).
 
 **Releasing.** Merging to main changes no repo's guard. To release a merged change, move the tag:
@@ -57,8 +68,8 @@ read, and `statuses` write. How it decides, and why a repo's first PR can't get 
 git fetch origin && git tag -f v1 origin/main && git push -f origin v1
 ```
 
-Claude's gate blocks tag pushes, so the owner runs this. The same command creates `v1` the first time. Until
-`v1` exists, every caller's `codex-review` run fails to resolve the action and sets no status, so create it
+Claude's gate blocks tag pushes, so the owner runs this (it moves the workflow and the action together). The same command creates `v1` the first time. Until
+`v1` exists, every caller's `codex-review` run fails to resolve the workflow and sets no status, so create it
 right after the PR that added `action.yml` merges, before any repo switches to the action.
 
 Other repos can call the action because claude-ship is public. If it ever goes private, every caller fails to

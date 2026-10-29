@@ -1,7 +1,8 @@
 name: Codex review
 
-# Sets the `codex-review` status that branch protection requires, via the claude-ship action. It re-checks on
-# a new commit, a Codex review, or an edit to Codex's summary comment (how it reports a finished review).
+# Sets the `codex-review` status that branch protection requires, via claude-ship's reusable workflow (the bot
+# filter, per-PR concurrency and the action live there). It re-checks on a new commit, a Codex review, or an
+# edit to Codex's summary comment (how it reports a finished review).
 # Resolving a thread triggers nothing, so run it by hand: gh workflow run codex-review.yml -f pr=<number>
 # This file's own PR can't get the status (issue_comment runs the default branch's copy, which lacks it yet):
 # require `codex-review` in branch protection only after that PR merges.
@@ -18,6 +19,7 @@ on:
         description: Pull request number
         required: true
 
+# A called workflow can't exceed these.
 permissions:
   # codex-status.sh reads the branch's push activity, which needs contents read.
   contents: read
@@ -26,27 +28,6 @@ permissions:
   statuses: write
 
 jobs:
-  codex-status:
-    # Only Codex's own comments and reviews matter; anyone can comment on a public repo.
-    if: >-
-      github.event_name == 'pull_request' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request_review' &&
-        github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-        github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
-    # One run per PR at a time. A running run is never cancelled (that showed as a red check), and two runs
-    # writing one status at once could let a stale read overwrite a newer result. GitHub keeps only the newest
-    # queued run, and the last run to start reads the latest state. A queued run replaced before it starts still
-    # shows as cancelled, but the `codex-review` status that branch protection reads comes from the newer run,
-    # so it stays right. This is on the job, after the filter, so other people's comments can't queue a check.
-    concurrency:
-      group: codex-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    steps:
-      # claude-ship's v1 tag decides, not this repo's files; it moves (owner only) on release. Changing this ref
-      # needs write access; fork PRs get a read-only token, which can't set statuses.
-      - uses: DaSonOfPoseidon/claude-ship@v1
-        with:
-          pr: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  codex-review:
+    # claude-ship's v1 tag decides, not this repo's files; it moves (owner only) on release.
+    uses: DaSonOfPoseidon/claude-ship/.github/workflows/codex-status.yml@v1
