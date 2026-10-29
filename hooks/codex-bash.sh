@@ -15,10 +15,18 @@
 # path, spaces included, is in the command).
 set -u
 
+# poll is set when the command starts with sleep, cat, tail or head: the agent is polling the output of a background
+# codex-wait.sh, which it never needs to do. It ends its turn and waits for the completion notification
+# (agents/ship-codex.md).
+poll=
+
 deny() {
 	echo "ship-codex may only run ~/.claude/skills/ship/codex-round.sh <pr> [owner/repo], codex-request.sh <pr> <owner/repo> <sha>," \
 		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>, codex-findings.sh <pr>, codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json," \
 		"gh pr view|checks <pr> (no --web), as one plain command, and Write that triage file ($1)." >&2
+	if [ -n "$poll" ]; then
+		echo "To wait for codex-wait.sh: don't poll: end your turn and wait for codex-wait.sh's completion notification." >&2
+	fi
 	exit 2
 }
 
@@ -100,6 +108,14 @@ esac
 # The command, from a string field only; malformed input, a missing field or a non-string denies.
 cmd=$(printf '%s' "$input" | jq -er '.tool_input.command | select(type == "string")' 2>/dev/null) || deny "unreadable input"
 
+# The first word, so a denial can tell the agent that a poll is not how it waits.
+set -f
+# shellcheck disable=SC2086
+set -- $cmd
+case ${1:-} in
+sleep | cat | tail | head) poll=1 ;;
+esac
+
 # Only these characters: no quote, escape, expansion, redirect, list or glob character can reach the shell, so the
 # words below are the words the command runs. (The ~ of the script path is the shell's home directory.)
 case $cmd in
@@ -107,7 +123,6 @@ case $cmd in
 esac
 
 # Split on spaces (no glob characters are left to expand).
-set -f
 # shellcheck disable=SC2086
 set -- $cmd
 [ $# -ge 2 ] || deny "too short"

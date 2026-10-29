@@ -105,6 +105,10 @@ review finds a new class.
   minutes and counted as a round (claude-ship #133). And one verdict, used by every script that acts on it:
   `codex-request.sh` judged a request stale with its own clock while `codex-status.sh` judged it another way, so
   it replaced a review that was still running (claude-ship #139). Ask the status script instead of re-deriving it.
+- **An agent that reports before its background job finishes hands over a wrong result.** `ship-codex` moved
+  `codex-wait.sh` to the background, tried to poll it (denied), and sent `outcome: error` to the implementer
+  while the review was still running (claude-ship #142). Tell the agent to end its turn, send no report text
+  and wait for the completion notification, and tell its caller that a result without an `outcome:` isn't the report.
 - **A new script is committed without its execute bit.** Written with an editor, it lands as `100644`, and
   `install.sh` copies modes as they are, so a hook registered as a command fails with `Permission denied`
   while tests that run it with `sh` pass (claude-ship #69). Commit scripts as `100755`

@@ -54,6 +54,7 @@ expect 0 "$ship/codex-round.sh 12 DaSonOfPoseidon/claude-ship"
 expect 0 "$ship/codex-request.sh 12 o/r $sha"
 expect 0 "$ship/codex-wait.sh 12"
 expect 0 "CODEX_WAIT_SECS=570 $ship/codex-wait.sh 12"
+expect 0 "CODEX_WAIT_SECS=1200 $ship/codex-wait.sh 12"
 expect 0 "$ship/codex-findings.sh 12"
 expect 0 "$ship/codex-triage.sh 12 $tf/triage-o+r-12.json"
 expect 0 "$ship/codex-triage.sh 137 $tf/triage-DaSonOfPoseidon+claude-ship-137.json"
@@ -291,6 +292,22 @@ grep -q 'codex-round.sh' "$tmp/err" || {
 	echo "FAIL: a denial doesn't name the allowed forms"
 	fail=1
 }
+# A denied poll of a background wait says what to do instead: end the turn and wait for the notification. Only
+# those commands say so (a denial of anything else doesn't mention it), and every form stays denied.
+for poll in 'sleep 60' 'cat /x/out' 'tail -f /x/out' 'head /x/out' 'sleep 60; cat /x/out' 'cat /x/out | tail'; do
+	expect 2 "$poll"
+	grep -q "don't poll: end your turn and wait for codex-wait.sh's completion notification" "$tmp/err" || {
+		echo "FAIL: the denial of '$poll' doesn't tell the agent to wait for the notification"
+		fail=1
+	}
+done
+for other in 'rm x' 'git log' "$ship/codex-wait.sh" 'gh pr merge 12' 'catalog x' 'sleeping 60'; do
+	expect 2 "$other"
+	if grep -q 'notification' "$tmp/err"; then
+		echo "FAIL: the denial of '$other' mentions the notification"
+		fail=1
+	fi
+done
 # A hook registered as a command needs its execute bit (claude-ship #69).
 [ -x "$root/hooks/codex-bash.sh" ] || {
 	echo "FAIL: hooks/codex-bash.sh isn't executable"
