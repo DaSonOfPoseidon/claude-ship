@@ -1,8 +1,11 @@
 # Labels for P3 issues by the finding's file (hooks/p3-issue.sh): <glob> <label>[,<label>...]
+# Every path needs an area, and the last rule gives all of them a priority and a status, so the PR loop's queue
+# (open status:ready issues by priority) picks the issue up. tests/p3-issue.sh checks it for every tracked file.
 hooks/*                  area:gate
 tests/gate-*             area:gate
 tests/p3-issue.sh        area:gate
 skills/*                 area:skill
+agents/*                 area:skill
 action.yml               area:action
 scripts/*                area:action
 tests/codex-status.sh    area:action
@@ -11,8 +14,12 @@ tests/codex-wait.sh      area:skill
 tests/token-report.sh    area:skill
 tests/orchestrate-hint.sh area:gate
 .github/workflows/*      area:action
+.github/claude-ship/*    area:gate
 install.sh               area:install
 tests/install.sh         area:install
-README.md                documentation
-AGENTS.md                documentation
-docs/*                   documentation
+README.md                documentation,area:docs
+AGENTS.md                documentation,area:docs
+docs/*                   documentation,area:docs
+docs/gate.md             area:gate
+docs/scripts.md          area:skill
+*                        priority:low,status:ready
