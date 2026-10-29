@@ -62,12 +62,10 @@ if ! CLAUDE_HOME="$tmp/dest" sh "$tmp/checkout/install.sh" >"$tmp/out2" 2>&1; th
 	sed 's/^/  /' "$tmp/out2"
 	fail=1
 fi
-for f in hooks/review-verify-prompt.md; do
-	[ ! -e "$tmp/dest/$f" ] || {
-		echo "FAIL: the renamed-away $f was left behind"
-		fail=1
-	}
-done
+if [ -e "$tmp/dest/hooks/review-verify-prompt.md" ]; then
+	echo "FAIL: the renamed-away hooks/review-verify-prompt.md was left behind"
+	fail=1
+fi
 for f in hooks/review-verifier.md agents/mine.md hooks/review-gate.sh; do
 	[ -e "$tmp/dest/$f" ] || {
 		echo "FAIL: $f wasn't kept"
