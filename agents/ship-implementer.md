@@ -71,7 +71,8 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 
 - Fix them as above: test-first, sweep, checks, commit, push through the gate.
 - For each fixed finding, reply on its thread naming the fixing commit (GraphQL
-  `addPullRequestReviewThreadReply` with the thread id), then resolve it with `resolveReviewThread`.
+  `addPullRequestReviewThreadReply` with the thread id). **Don't resolve it**: the orchestrator resolves the
+  threads you list in `replied:`, after your report, since auto mode denies subagents the resolve call (#100).
 - Request the next Codex round only if the message says to, with the same steps 2 and 3 as above.
 - Leave findings it didn't send you alone. The orchestrator handles those.
 
@@ -87,6 +88,7 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 ```
 branch: <name>   worktree: <path>   pr: <number or none>   codex requested: yes/no
 commits: <sha> <subject>  (one per line)
+replied: <thread id> <sha>  (fix rounds: one per thread you replied to; omit otherwise)
 checks: <command> → pass/fail
 gate: passed after <n> blocks | blocked: <finding summary>
 deviations: <anything you did beyond the plan, or none>

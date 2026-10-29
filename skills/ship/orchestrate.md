@@ -102,6 +102,10 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      (`SendMessage` to its id), adding "request the next round" only when `codex-round.sh <pr>` is below 3.
      If its id is gone (after `/clear`), replace it
      (see **Replacing an implementer**), and give the new one the plan file and the findings.
+     The implementer only replies to its threads; it doesn't resolve them (auto mode denies subagents that
+     call, #100). So after its report, resolve each thread its `replied:` lines list (`resolveReviewThread`,
+     with the thread id) before the next wait or recheck. A round where it stopped early resolves only the
+     threads its `replied:` lines list, and threads it never replied to stay open.
    - **Nothing to fix:** `gh workflow run codex-review.yml -f pr=<pr>`.
 
    Then back to 4. Rounds are capped at 3 as in the ship skill.
