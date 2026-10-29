@@ -87,7 +87,8 @@ only:
 
 - the push,
 - at most one leading `cd <dir> &&`,
-- harmless redirects (whole descriptor duplications, `/dev/null`, `/dev/stdout`, `/dev/stderr`), and
+- harmless redirects (a whole descriptor duplication, `/dev/null`, `/dev/stdout` or `/dev/stderr`, each followed by
+  whitespace, a separator or the end, so `>&2.txt` and `&>/dev/null.log` are file writes and block), and
 - trailing pipes into read-only filters (`tail`, `head`, `cat`, `grep`).
 
 Redirects are taken out first, then every simple command (split at `;&|()` and newlines) must be one of those.
