@@ -179,7 +179,11 @@ Otherwise, keep going without asking.
      `~` for `home`, as `agents/ship-codex.md` describes). A request already out for the head, even in round 3,
      is waited for, not refused. Its report's `fix:` lines go to the
      implementer, as in the fallback flow above
-   - findings open (the head's latest review completed and left unresolved Codex threads): start the same
+   - findings open: the head's latest review completed and left unresolved Codex threads. Tell it from a pending
+     review yourself, before starting the agent: `gh pr view <pr> --json headRefOid,reviews` shows a review by
+     `chatgpt-codex-connector` whose `commit.oid` is the head, and no `@codex review` comment on the PR
+     (`gh pr view <pr> --json comments`) is newer than that review's `submittedAt`. A newer request means the
+     review is pending, so use the first bullet. `ship-codex` does not check this in triage-only mode. Then start the same
      `ship-codex` with `mode: triage-only`. It requests and waits for nothing, takes the round from
      `codex-round.sh` as it is, lists the findings and applies the rule-decided outcomes. Normal mode here would
      post a new request (an answered request doesn't block one) and triage the findings a round too late, or

@@ -90,7 +90,9 @@ review would only cost a round for the same head. Don't request or wait. `replie
 
 The orchestrator sends this when it resumes a PR whose latest review already completed and left findings open.
 A request now would be a new round (the script posts again once the last request is answered), and the findings
-belong to the round that produced them. Don't request, wait or resolve anything first.
+belong to the round that produced them. The orchestrator has checked that the head's review is complete (a
+Codex review on the head, no newer request); you don't, and you never wait. Don't request, wait or resolve
+anything first.
 1. `codex-round.sh <pr> <slug>`: the rounds used, which is the completed review's round, as it is (no plus one).
    It may be 0 if the review was started outside the skill; treat that as round 1.
 2. `gh pr checks <pr> -R <slug>`, then `codex-findings.sh <pr>`. No thread left: `outcome: clean`. A status of
