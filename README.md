@@ -132,7 +132,7 @@ and may not name a git config file. In opted-in repos, `gh api` may make only th
 issue dependency links ("blocked by"), which are issue metadata like labels; any other
 write, such as commits, refs, PRs, statuses, checks or settings, blocks. It catches Claude's own slips but isn't a security boundary: it matches command text,
 and its state is protected by those patterns alone. Branch protection requiring the `codex-review` status is
-the server-side backstop.
+the server-side backstop. The design notes behind each check are in [`docs/gate.md`](docs/gate.md).
 
 ## Costs
 
