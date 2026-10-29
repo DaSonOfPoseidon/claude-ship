@@ -107,6 +107,32 @@ variables up only until it has an answer once per session and repo (claude-ship 
 is an answer. A lookup that fails otherwise (network, rate limit) isn't: it adds nothing, writes no mark, and the
 next prompt asks again (claude-ship #67).
 
+## `hooks/explorer-bash.sh`
+
+A PreToolUse hook in `agents/ship-explorer.md`'s frontmatter (claude-ship #68). The explorer reads issue and PR
+text, which can steer it, and had a free shell with only prose asking it to stay read-only. Claude Code runs a
+subagent's frontmatter hooks only while that subagent runs, and exit 2 denies the call and shows the agent the
+stderr. They are ignored for plugin subagents and, for a project's agents, until the workspace is trusted; the
+installed agent is a user agent. The frontmatter names the installed path, `install.sh` deploys the script
+there, and no `settings.json` entry is needed.
+
+- **An allowlist of characters, then of commands.** The command may hold only letters, digits, space and
+  `_./:=,@%+^~-`. With no quote, escape, `$`, backtick, redirect, list separator, glob or brace character,
+  the words the hook checks are the words that run (`--out''put`, `--out{put,}` and `\--output` can't hide an
+  option). Some harmless quoted forms (`--grep="a b"`) are refused as a result. The first word must then be
+  `git` or `gh` with a listed subcommand directly after it, so `git -c` / `-C` / `--git-dir` never get a say.
+- **Options that write or run something.** git: `--output`, `--ext-diff`, `--textconv`, `--no-index`,
+  `--open-files-in-pager`, and `-o` / `-O`. git accepts any unambiguous abbreviation of a long option and bundled
+  short options (`-nO`), so a long option denies when it abbreviates or extends one of these, and a short cluster
+  denies when it holds `o` or `O` (so `-Sfoo` is refused too). gh: `-f`, `-F`, `--field`, `--raw-field`, `-X`,
+  `--method`, `--input` (the short ones also bundled: `-XPOST`) and any `mutation`, in any case; `--web` / `-w`
+  for `view` and `diff`. gh's long options can't be abbreviated, so those match exactly.
+- **Left out.** `ls`, `cat`, `wc`, `head`, `tail`: the explorer has Read, Grep and Glob, and the prose never
+  listed them. A denied call tells the agent what is allowed.
+- **Fails closed.** Input that isn't JSON, has no string `tool_input.command`, or is empty denies. It does not
+  stop `git diff` using a `diff.external` driver from the repo's own config, which a branch can't set. Like the
+  gate, it is for Claude's slips and steering, not a security boundary.
+
 ## `install.sh`
 
 Only `origin/main` is deployed, so what runs has passed review. That holds for the installer too: after
