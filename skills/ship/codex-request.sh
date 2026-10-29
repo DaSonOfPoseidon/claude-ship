@@ -3,10 +3,11 @@
 # GitHub's PR API can still report the previous head, and an `@codex review` posted then reviews that one.
 # The wanted commit is <sha> (the full SHA of the commit pushed, so this works from any checkout), else this
 # checkout's HEAD. If a request for that head is already out (the latest one from the owner or a collaborator
-# came after the head's push, nothing from Codex followed it, and it is younger than CODEX_STALL_SECS, default
-# 900), it posts nothing and exits 0, so repeating the call is safe; a stalled or answered request may be asked
-# again (docs/scripts.md). Otherwise, if the PR has already used CODEX_ROUND_CAP rounds (default 3, counted by
-# codex-round.sh), it posts nothing and exits 4: the ship skill allows no fourth review unless the user asks.
+# came after the head's push, nothing from Codex followed it, and codex-status.sh, run as a dry run, still says
+# it is waiting for Codex), it posts nothing and exits 0, so repeating the call is safe; a stalled, unacknowledged
+# or answered request may be asked again (docs/scripts.md), and a failing codex-status.sh exits 2. Otherwise, if
+# the PR has already used CODEX_ROUND_CAP rounds (default 3, counted by codex-round.sh), it posts nothing and
+# exits 4: the ship skill allows no fourth review unless the user asks.
 # Usage: codex-request.sh <pr> [owner/repo] [sha]   (CODEX_REQUEST_TRIES sets how many 10s checks to make,
 # default 18)
 set -eu
@@ -29,6 +30,13 @@ if [ -n "${3:-}" ]; then
 	fi
 else
 	want=$(git rev-parse HEAD)
+fi
+here=$(cd "$(dirname "$0")" && pwd)
+status=$here/codex-status.sh
+[ -x "$status" ] || status=$here/../../scripts/codex-status.sh
+if [ ! -x "$status" ]; then
+	echo "No executable codex-status.sh next to $0; run claude-ship's install.sh." >&2
+	exit 2
 fi
 tries=${CODEX_REQUEST_TRIES:-18}
 while :; do
@@ -69,10 +77,21 @@ if [ "$head_repo" != - ]; then
 				--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
 			answers=$(printf '%s\n%s\n' "$receipts" "$reviews" | grep . | cut -c1-19 |
 				awk -v r="$requested_at" '$0 > r' | grep -c . || true)
-			at=$(jq -rn --arg t "${requested_at}Z" '$t | fromdateiso8601')
-			if [ "$answers" -eq 0 ] && [ $(($(date +%s) - at)) -lt "${CODEX_STALL_SECS:-900}" ]; then
-				echo "A review of $want is already requested (since ${requested_at}Z); not asking again."
-				exit 0
+			if [ "$answers" -eq 0 ]; then
+				# Whether that request is still being worked on is codex-status.sh's verdict, not a clock of
+				# our own (#139: a review running for 16 min was replaced). Only its plain "waiting" leaves the
+				# request alone; stalled, not acknowledged and the rest of its verdicts go on to the cap.
+				# HEAD_SHA and REPO make it judge the wanted commit of the named repo, whatever the checkout.
+				if ! status_out=$(DRY_RUN=1 HEAD_SHA=$want REPO=$slug "$status" "$pr"); then
+					echo "codex-status.sh failed${status_out:+: $status_out}" >&2
+					exit 2
+				fi
+				case $status_out in
+				'pending: Waiting for Codex to review'*)
+					echo "A review of $want is already requested (since ${requested_at}Z); not asking again."
+					exit 0
+					;;
+				esac
 			fi
 		fi
 	fi
