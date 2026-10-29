@@ -103,7 +103,9 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
 ## `hooks/orchestrate-hint.sh`
 
 A convenience, not a protection: on any error it adds nothing and lets the prompt through. It looks the repo
-variables up only until it has hinted once per session and repo (claude-ship #66).
+variables up only until it has an answer once per session and repo (claude-ship #66). A variable that isn't set
+is an answer. A lookup that fails otherwise (network, rate limit) isn't: it adds nothing, writes no mark, and the
+next prompt asks again (claude-ship #67).
 
 ## `install.sh`
 
