@@ -81,8 +81,13 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    If it fails, stop and fix the cause: a failed count isn't round 0.
 3. `~/.claude/skills/ship/codex-request.sh <pr>` from the checkout that pushed (Bash timeout 300000). It
    waits until GitHub shows HEAD as the PR's head, then posts `@codex review`; posted earlier, Codex
-   reviews the previous commit and the round is wasted. This is round `round+1`. If it fails, don't post
-   the comment by hand: find out why the PR's head isn't HEAD.
+   reviews the previous commit and the round is wasted. This is round `round+1`, unless it posted nothing because that head's request was already out: then it is round `round`. If it fails, don't post
+   the comment by hand: find out why the PR's head isn't HEAD. From any other checkout, name the commit
+   instead: `codex-request.sh <pr> <owner/repo> <sha>` (the full SHA that was pushed) waits for that head,
+   not for the checkout's HEAD. It is safe to repeat: when a request for that head is already out (after
+   its push, unanswered, under 15 minutes old) it posts nothing and exits 0. Otherwise, with 3 rounds already
+   used (`CODEX_ROUND_CAP`) it posts nothing and exits 4. In orchestrated mode a
+   `ship-codex` agent runs steps 2 to 4 for the implementer (`orchestrate.md`).
 4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command
    (Bash `run_in_background`), with nothing chained after it: no `;`, `&&` or `|`. Anything chained after it
    delays the notification (a stall sat unnoticed on OBDCracker #208). Check CI separately once it exits.

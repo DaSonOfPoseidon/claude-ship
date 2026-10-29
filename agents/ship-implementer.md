@@ -54,18 +54,53 @@ finding costs a full extra round, so care here is cheaper than speed.
   writes.
 - Confirmed P3s are filed as issues by the gate itself. Don't fix them here.
 
-## Open the PR and request Codex
+## Open the PR and run the Codex rounds
 
-Only when the orchestrator's message says to:
+Only when the orchestrator's message says to. Codex rounds run in a `ship-codex` agent (Haiku), so you don't
+wait for the review yourself and the orchestrator sees only your final report.
 
 1. `gh pr create` with the plan's title (one-line Conventional Commit) and a body with `Fixes #N` for each
    issue the plan closes. Use the repo's PR template if it has one.
-2. `~/.claude/skills/ship/codex-round.sh <pr>`. If it prints 3 or more, don't request; report it.
-3. `~/.claude/skills/ship/codex-request.sh <pr>`, with a Bash timeout of 300000. If it fails, report the
-   error. Never post `@codex review` by hand.
-4. Don't wait for the review. The orchestrator does.
+2. After the PR exists and a push has succeeded, start `ship-codex` (Agent tool, `subagent_type: ship-codex`)
+   with a message giving:
+   - `pr`: the number; `slug`: `gh repo view --json nameWithOwner --jq .nameWithOwner`;
+   - `sha`: `git rev-parse HEAD`, run right after the push (the head the review is for);
+   - `worktree`: your working directory;
+   - the triage file, twice: `triage file (Write)` is `$HOME/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json`
+     as an absolute path (the slug's `/` written `+`, e.g. `triage-DaSonOfPoseidon+claude-ship-137.json`), and
+     `triage file (Bash)` is the same with the home directory written `~`. It is a fixed directory, so the
+     checkout path (spaces included) is in no command;
+   - `replied`: the thread ids you replied to since its last round (none in round 1);
+   - `mode: resolve-only`, only in the no-commit case below.
 
-## Fix rounds (when resumed)
+   It returns a report with an `outcome:`. Wait for it. Don't request or wait for Codex any other way, and
+   never post `@codex review` by hand.
+3. Act on the outcome:
+
+   | `outcome:` | What to do |
+   |---|---|
+   | `clean` | done: final report |
+   | `fix` | fix its `fix:` threads (below), then start a new `ship-codex` with every thread you replied to as `replied`, and `mode: resolve-only` if you made no commit. At most 3 rounds in all: its `round:` says which one it was |
+   | `stop`, `round-cap`, `stalled`, `timeout`, `error` | don't act on it: final report with its lines (`stop:`, `denied:`, `done:` and `file:` lines word for word) |
+
+   **Fixing a `fix:` thread.** Read the whole thread first (a GraphQL read of the thread's comments by id,
+   through `gh api graphql`), then judge it against the code. Valid: fix it test-first, sweep for the class,
+   run the checks and commit; push the round's commits through the gate in one push. Reply on the thread
+   naming the fixing commit (GraphQL `addPullRequestReviewThreadReply` with the thread id). Not valid: reply
+   with file:line evidence. Either way, don't resolve it (auto mode denies subagents that call, #100): the next
+   `ship-codex` resolves the threads you pass as `replied`. Leave threads it didn't send you alone.
+
+   **When you judged every thread not valid** and made no commit, there is nothing new to review: the head is
+   the one Codex already reviewed, and another request would spend a round on it. Start `ship-codex` with
+   `mode: resolve-only` and the replied thread ids. It resolves them (the script then rechecks the status) and
+   reports `clean` only if no Codex thread is left. When at least one fix was committed and pushed, start a
+   normal round on the new head, with every thread you replied to (fixed or not) as `replied`.
+4. If the Agent call itself fails (no such agent, or you can't start agents), fall back to the old flow so the
+   orchestrator can wait: `~/.claude/skills/ship/codex-round.sh <pr>`, and below 3,
+   `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). Then report
+   `codex: not run (<the error>)` and `codex requested: yes`, and don't wait.
+
+## Fix rounds when the orchestrator resumes you (fallback flow)
 
 The orchestrator sends the Codex findings to fix, each with its thread id.
 
@@ -73,7 +108,8 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 - For each fixed finding, reply on its thread naming the fixing commit (GraphQL
   `addPullRequestReviewThreadReply` with the thread id). **Don't resolve it**: the orchestrator resolves the
   threads you list in `replied:`, after your report, since auto mode denies subagents the resolve call (#100).
-- Request the next Codex round only if the message says to, with the same steps 2 and 3 as above.
+- Request the next Codex round only if the message says to, with the `codex-round.sh` and
+  `codex-request.sh <pr> <slug> <sha>` steps of the fallback above. Don't wait for the review.
 - Leave findings it didn't send you alone. The orchestrator handles those.
 
 ## Never
@@ -83,12 +119,14 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 - Never waive a review, or edit anything under `~/.claude`.
 - Never push a branch other than the plan's.
 
-## Report (15 lines or fewer)
+## Report (15 lines or fewer, not counting the `stop:`, `denied:`, `done:` and `file:` lines)
 
 ```
 branch: <name>   worktree: <path>   pr: <number or none>   codex requested: yes/no
 commits: <sha> <subject>  (one per line)
-replied: <thread id> <sha>  (fix rounds: one per thread you replied to; omit otherwise)
+codex: <last ship-codex outcome> round <n>  (omit if it never ran)
+stop: / denied: / done: / file: <those lines of the last ship-codex report, word for word>  (omit if none)
+replied: <thread id> <sha>  (fallback flow only: one per thread you replied to; omit otherwise)
 checks: <command> → pass/fail
 gate: passed after <n> blocks | blocked: <finding summary>
 deviations: <anything you did beyond the plan, or none>

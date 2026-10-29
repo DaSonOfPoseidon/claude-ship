@@ -32,7 +32,7 @@ if ! CLAUDE_HOME="$tmp/dest" sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1; the
 fi
 for f in main-installer-ran hooks/review-gate.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
 	skills/ship/orchestrate.md skills/ship/codex-status.sh agents/ship-explorer.md agents/ship-implementer.md \
-	agents/mine.md; do
+	agents/ship-codex.md hooks/codex-bash.sh agents/mine.md; do
 	[ -e "$tmp/dest/$f" ] || {
 		echo "FAIL: $f wasn't deployed"
 		fail=1

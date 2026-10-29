@@ -11,6 +11,8 @@ action.yml               area:action
 scripts/*                area:action
 tests/codex-status.sh    area:action
 tests/codex-round.sh     area:skill
+tests/codex-bash.sh      area:skill
+tests/codex-request.sh   area:skill
 tests/codex-triage.sh    area:skill
 tests/codex-wait.sh      area:skill
 tests/token-report.sh    area:skill
