@@ -5,7 +5,8 @@
 # checkout's HEAD. If a request for that head is already out (the latest one from the owner or a collaborator
 # came after the head's push, nothing from Codex followed it, and it is younger than CODEX_STALL_SECS, default
 # 900), it posts nothing and exits 0, so repeating the call is safe; a stalled or answered request may be asked
-# again (docs/scripts.md).
+# again (docs/scripts.md). Otherwise, if the PR has already used CODEX_ROUND_CAP rounds (default 3, counted by
+# codex-round.sh), it posts nothing and exits 4: the ship skill allows no fourth review unless the user asks.
 # Usage: codex-request.sh <pr> [owner/repo] [sha]   (CODEX_REQUEST_TRIES sets how many 10s checks to make,
 # default 18)
 set -eu
@@ -75,5 +76,11 @@ if [ "$head_repo" != - ]; then
 			fi
 		fi
 	fi
+fi
+# No request for this head is pending, so this would start a new round: not past the cap.
+rounds=$("$(dirname "$0")/codex-round.sh" "$pr" "$slug")
+if [ "$rounds" -ge "${CODEX_ROUND_CAP:-3}" ]; then
+	echo "PR #$pr has used $rounds Codex rounds (cap ${CODEX_ROUND_CAP:-3}); not asking again." >&2
+	exit 4
 fi
 gh pr comment "$pr" -R "$slug" -b "@codex review"

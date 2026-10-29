@@ -141,6 +141,35 @@ run 'outsiders do not count' 0 1 1 o/r "$sha"
 setup "$sha" - '300 OWNER'
 run 'push unknown' 0 1 1 o/r "$sha"
 
+# The round cap: three requests used (all from before this push) means no fourth is posted: exit 4.
+setup "$sha" 600 '5000 OWNER
+4000 OWNER
+3000 COLLABORATOR'
+run 'cap reached' 4 0 1 o/r "$sha"
+# Two used is below the cap.
+setup "$sha" 600 '5000 OWNER
+4000 OWNER'
+run 'below the cap' 0 1 1 o/r "$sha"
+# Outsiders' comments use no round.
+setup "$sha" 600 '5000 OWNER
+4000 OWNER
+3000 NONE
+2000 MEMBER'
+run 'outsiders use no round' 0 1 1 o/r "$sha"
+# The cap is not a reason to refuse a request already out for this head: that round is still pending.
+setup "$sha" 600 '5000 OWNER
+4000 OWNER
+300 OWNER'
+run 'cap, but this head is pending' 0 0 1 o/r "$sha"
+# The user may allow a later round.
+setup "$sha" 600 '5000 OWNER
+4000 OWNER
+3000 OWNER'
+CODEX_ROUND_CAP=4
+export CODEX_ROUND_CAP
+run 'cap raised' 0 1 1 o/r "$sha"
+unset CODEX_ROUND_CAP
+
 # Misuse exits 2.
 setup "$sha" 600 ''
 run 'no pr' 2 0
