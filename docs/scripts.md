@@ -94,12 +94,21 @@ of the status script ends the wait with its error.
 
 Reads only this repo's transcripts, keeps no state and calls no model.
 
-**Attribution.** A main-session request belongs to the PR whose window holds its timestamp. A window runs from
-the earlier of the PR's creation and its first commit, to the merge, else to the close of a PR closed unmerged,
-else to now (open). A closed PR must not run to now, or it would swallow every later request. The latest-started
-window wins an overlap. A whole subagent transcript belongs to the PR whose window holds its last request:
-implementers start before their first commit but end after a push or a fix round. Anything else isn't printed.
-A session started in a worktree logs under that directory's own slug, so neither it nor its subagents are counted.
+**Attribution.** A main-session request belongs to the PR whose window holds its timestamp. A PR's own window
+runs from the earlier of its creation and its first commit, to the merge, else to the close of a PR closed
+unmerged, else to now (open). A closed PR must not run to now, or it would swallow every later request.
+The window then widens at the start (#80), because most of a PR's main-session work (planning, exploring,
+implementing) comes before its first commit: the start moves back to the later of the end of the author's
+previous PR (the latest merge or close before this PR's own start, among their other PRs from one
+`gh pr list --author`, newest 200) and the first request of the main transcripts that have a request in the PR's
+own window, and never to after its own start. The report shows the widened start. Work after the last merge
+isn't printed. A request inside some PR's own window goes to the latest-started of those; only a request in none
+goes to the latest-started widened window, so widening never takes work from an overlapping PR. A failed or odd
+`gh pr list`, or a PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would reach
+the window back to the session's start. A whole subagent transcript belongs to the PR whose window holds its last
+request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
+printed. A session started in a worktree logs under that directory's own slug, so neither it nor its subagents
+are counted.
 
 **Prices.** USD per MTok, from the claude-api skill's `shared/models.md` (cached 2026-10-06). `w5` and `w1` are
 the 5-minute and 1-hour cache writes; `big` replaces `std` when a request's prompt (input + cache read + cache
