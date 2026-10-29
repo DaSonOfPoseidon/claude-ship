@@ -61,6 +61,23 @@ three repos, all 125 finished requests had lost it and all 14 stalled ones kept 
 the bot's own 👀 marks a stall. A review still running past 15 minutes is left out only until it finishes; the
 skill counts rounds when it requests the next, after the last has finished or stalled.
 
+## `skills/ship/codex-request.sh`
+
+Posts `@codex review` once GitHub shows the wanted commit as the PR's head. The wanted commit is the optional
+third argument, the full 40-character SHA that was pushed (a short or non-hex one exits 2), else the current
+checkout's HEAD. The argument is for callers that aren't in the checkout that pushed: the `ship-codex` agent runs
+from the implementer's worktree, but an orchestrator resuming a PR doesn't (the pitfall about steps that read the
+current checkout).
+
+**Repeat-safe.** It posts nothing, and exits 0 saying so, when a request for this head is already out: the latest
+trusted request (owner or collaborator, as `codex-status.sh` counts them) is no earlier than the head's last push
+(from the branch's activity records, as in `codex-status.sh`), no Codex receipt or review follows it, and it is
+younger than `CODEX_STALL_SECS` (default 900). So an agent that restarts, or a second caller, doesn't spend a
+round on the same head. Each leg lets a real re-request through: a request from before the push was for an
+earlier head; an answered one is finished, and asking again is a deliberate new round; an unanswered one past 15
+minutes is the stall `codex-wait.sh` reports with exit 3. When no push of the head is on record there is nothing
+to tie a request to, so it asks (the old behaviour).
+
 ## `skills/ship/codex-triage.sh`
 
 Applies a round's triage in one call, so the orchestrator spends one turn on it instead of one per reply, issue
@@ -173,6 +190,40 @@ there, and no `settings.json` entry is needed.
 - **Fails closed.** Input that isn't JSON, has no string `tool_input.command`, or is empty denies. It does not
   stop `git diff` using a `diff.external` driver from the repo's own config, which a branch can't set. Like the
   gate, it is for Claude's slips and steering, not a security boundary.
+
+## `hooks/codex-bash.sh`
+
+A PreToolUse hook in `agents/ship-codex.md`'s frontmatter, for its Bash and Write (claude-ship #132). The agent
+runs a Codex round from PR text and Codex's findings, which can steer it. Unlike `explorer-bash.sh` (which
+exits 0 to say "no objection"), this one prints an allow decision, which pre-approves the call for this agent
+only: without it, auto mode would deny a subagent the calls the round needs (#100). So it is an **allowlist of
+exact commands**, not a list of what is dangerous, and a hook's `allow` is a grant, not an absence of a deny.
+Whether the allow also skips auto mode's check is confirmed only on an installed run; the tests cover what the
+hook decides, not what Claude Code does with it.
+
+- **Same word discipline as the explorer hook.** The command may hold only letters, digits, space and
+  `_./:=,@%+^~-`, so the words checked are the words that run. The first word is then an installed script path
+  written with `~/` exactly (not `$HOME`, an absolute path, `./`, `..` or `env`/`sh`), or `gh`, or the one
+  environment prefix below.
+- **Allowed, as one plain command.** `codex-round.sh <pr> [owner/repo]`, `codex-request.sh <pr> <owner/repo>
+  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `codex-triage.sh <pr> <file>`, and
+  `gh pr view|checks <pr> ...`. `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
+  with no part starting with `-`, no part that is `.`, and no `..` anywhere, a sha is 40 lowercase hex characters. Nothing else may precede or follow: any other variable
+  (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, and `CODEX_WAIT_SECS` only before the wait.
+- **gh.** Only `pr view` and `pr checks`, after a PR number. `--web`, and any short option cluster holding `w`,
+  deny, as does the same word after a `--` (which can be an option's argument), so every word is checked.
+- **The triage file.** `codex-triage.sh` takes exactly `<git common dir>/claude-ship/triage-<pr>.json`, with the
+  PR's own number; Write takes the same directory and `triage-<digits>.json`, nothing else (no `..`, no
+  subdirectory, no other name). The directory is the git common directory of the hook's working directory, which
+  is the implementer's worktree, so it is shared by every worktree and outside the repo's files. Outside a git
+  checkout, both deny. A Write's content isn't the hook's to judge: `codex-triage.sh` validates the file.
+- **Fails closed.** Input that isn't JSON, has no string `tool_name`, `tool_input.command` (Bash) or
+  `tool_input.file_path` (Write), or names any other tool, exits 2 with a reason the agent sees. A hook that
+  fails to run at all (missing, not executable) doesn't deny: Claude Code reads that as a non-blocking error and
+  the call goes on to the normal permission check, which is not an allow. The deployed mode is tested.
+- **The gate still sees these commands.** The pre-push gate's own hook runs on the same calls; a deny from either
+  wins over this allow. Every write the agent makes is through a ship script the gate's `gh api` allowlist
+  already covers.
 
 ## `install.sh`
 

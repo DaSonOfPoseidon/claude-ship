@@ -30,7 +30,8 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | A question the explorer marked "unsure" | `general-purpose` agent with `model: sonnet` | Sonnet |
 | Implement a **normal** or **high-risk** unit, fix its gate and Codex findings | `ship-implementer` agent | Sonnet, high |
 | Implement a **trivial** unit (docs or config, no logic, ~20 lines) | `ship-implementer` with `model: haiku` | Haiku, high |
-| Wait for Codex, list findings, file issues | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `p3-issue.sh`) | none |
+| Run a Codex round: request, wait, CI, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
+| The mechanics under it: wait, list, file issues | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`) | none |
 
 - A trivial unit whose Haiku implementer the gate blocked twice goes to a new Sonnet `ship-implementer`
   (see **Replacing an implementer**).
@@ -84,37 +85,49 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
 1. **Pick** the next unit (or ready issue). Check that its issue is still open and still ready.
 2. **Plan** it, if it has no plan file yet (above).
 3. **Implement:** start a `ship-implementer` with the plan file's path, the default branch, and "open the PR
-   and request Codex round 1", plus `model: haiku` for a trivial unit. Keep its agent id for this PR.
-4. **Read its report.**
-   - If it stopped, handle the reason (table below).
-   - Otherwise run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command (nothing
-     chained after it), with the exit codes as in the ship skill's step 3.4. Two differences, since your own
-     checkout isn't on the PR's branch:
-     - Check that the printed status names the PR's head
-       (`gh pr view <pr> --json headRefOid -q .headRefOid`), not your HEAD.
-     - To request again after exit 3, run the ship skill's steps 3.2 and 3.3 from the implementer's worktree:
-       `cd <worktree> && ~/.claude/skills/ship/codex-round.sh <pr>`, and only below 3,
-       `cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr>`. The request compares the PR's head with
-       the checkout's HEAD.
-5. **Triage** with `codex-findings.sh` and the ship skill's step 4 outcome table:
-   - **Not valid / file an issue:** do it yourself, in one call: write the entries to a JSON file with the
-     Write tool and run `~/.claude/skills/ship/codex-triage.sh <pr> <file>` (format in the ship skill's step 4).
-     It files the issues, replies and resolves. It is yours to run, not the implementer's: subagents can't
-     resolve threads (#100). When the round also sends fixes, hold these entries and run the file once after
-     the implementer's report, with its replied threads added as `resolve` entries (see the **Fix** bullet).
+   and run the Codex rounds", plus `model: haiku` for a trivial unit. Keep its agent id for this PR. The
+   implementer starts a `ship-codex` agent after each push, which requests the review, waits, reads CI and the
+   findings, and applies the rule-decided outcomes (the ship skill's step 4 table: P3, and P2 in round 3, are
+   filed as issues). The implementer reads each finding it is sent in full and judges it: it fixes the valid
+   ones, answers the invalid ones with evidence, pushes, and starts the next round, up to 3 rounds. You are not
+   in that loop: you wait for its final report.
+4. **Read its report.** Its `codex:` line is the last round's outcome.
+   - `clean`, with CI green: go to 6.
+   - It stopped (`stopped because:`), or `codex:` is `stop`, `stalled`, `timeout`, `round-cap` or `error`:
+     handle it as the stop table below says. A `stop:` line is a P0/P1 finding in round 3 or later: ask the
+     user. `stalled` is Codex stalling twice on one head: tell the user. `round-cap` and `timeout` need no new
+     request unless the user asks.
+   - `denied:` lines: the agent's triage write or call was denied (auto mode denies subagents some calls,
+     #100). The line names the thread ids and the triage file. Apply them yourself, once:
+     `~/.claude/skills/ship/codex-triage.sh <pr> <file>` from the implementer's worktree
+     (`cd <worktree> && …`, since `p3-issue.sh` reads the branch), after reading the file. If the file isn't
+     there, write one from `codex-findings.sh` and the ship skill's step 4 table. You triage by hand only
+     these.
+   - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
+     flow** below.
+5. **Fallback flow (the implementer couldn't start `ship-codex`).** It requested round 1 and stopped. Then:
+   - Run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command (nothing chained after it),
+     with the exit codes as in the ship skill's step 3.4. Since your own checkout isn't on the PR's branch,
+     check that the printed status names the PR's head (`gh pr view <pr> --json headRefOid -q .headRefOid`),
+     not your HEAD, and to request again after exit 3 run, from the implementer's worktree,
+     `cd <worktree> && ~/.claude/skills/ship/codex-round.sh <pr>` and only below 3
+     `cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr> <slug> <head sha>`.
+   - Triage with `codex-findings.sh` and the ship skill's step 4 table. **Not valid / file an issue:** write the
+     entries to a JSON file with the Write tool and run `~/.claude/skills/ship/codex-triage.sh <pr> <file>`
+     (format in the ship skill's step 4) from the worktree; it is yours to run since subagents can't resolve
+     threads (#100). When the round also sends fixes, hold these entries and run the file once after the
+     implementer's report, with its replied threads added as `resolve` entries.
    - **Fix:** send the findings, with thread ids and what each fix should be, to the same implementer
-     (`SendMessage` to its id), adding "request the next round" only when `codex-round.sh <pr>` is below 3.
-     If its id is gone (after `/clear`), replace it
-     (see **Replacing an implementer**), and give the new one the plan file and the findings.
-     The implementer only replies to its threads; it doesn't resolve them (auto mode denies subagents that
-     call, #100). So after its report, add each thread its `replied:` lines list to the round's triage file
-     as a `{"thread": "<id>", "outcome": "resolve"}` entry (one `codex-triage.sh` call for the whole round),
-     before the next wait or recheck. A round where it stopped early resolves only the threads its `replied:`
-     lines list, and threads it never replied to stay open. The script then ends with the status recheck, since
-     the implementer's push ran while those threads were still open.
+     (`SendMessage` to its id), adding "request the next round" only when `codex-round.sh <pr>` is below 3. If
+     its id is gone (after `/clear`), replace it (see **Replacing an implementer**) and give the new one the
+     plan file and the findings. The implementer only replies to its threads and doesn't resolve them (#100), so
+     after its report add each thread its `replied:` lines list to the round's triage file as a
+     `{"thread": "<id>", "outcome": "resolve"}` entry (one `codex-triage.sh` call for the whole round), before
+     the next wait or recheck. The script ends with the status recheck, since the implementer's push ran while
+     those threads were still open.
    - **Nothing to fix:** the script has already rechecked the status (`gh workflow run codex-review.yml`).
 
-   Then back to 4. Rounds are capped at 3 as in the ship skill.
+   Then wait again. Rounds are capped at 3 as in the ship skill.
 6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries).
    - With `merge: yes`:
      1. Remove the implementer's worktree (as in **Replacing an implementer**, step 2). Git won't delete a
@@ -154,9 +167,12 @@ Otherwise, keep going without asking.
 
 1. Read `loop.md`, if there is one, and list the in-flight PRs.
 2. Finish in-flight PRs first, picking each up at its state:
-   - no review requested yet: request one, from the worktree that has the branch (`git worktree list`), or
-     through a new implementer if none does (see **Replacing an implementer**)
-   - a review pending: wait for it
-   - findings open: triage them
+   - no review requested yet, or a review pending: start a `ship-codex` agent directly (it does both: it
+     requests only if no request for the head is out, then waits), with `pr`, `slug`, `sha` (the PR's head,
+     `gh pr view <pr> --json headRefOid -q .headRefOid`), `worktree` (from `git worktree list`; if no
+     worktree has the branch, replace the implementer first, see **Replacing an implementer**) and the `triage
+     file` path (`<git common dir>/claude-ship/triage-<pr>.json`). Its report's `fix:` lines go to the
+     implementer, as in the fallback flow above
+   - findings open: the same: a `ship-codex` run lists them and applies the rule-decided outcomes
    - green: done
 3. Then take the queue.

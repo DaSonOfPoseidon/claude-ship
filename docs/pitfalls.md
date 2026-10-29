@@ -119,3 +119,9 @@ review finds a new class.
   so git still parses the pager option and runs the helper (claude-ship #68, `hooks/explorer-bash.sh`). Check every
   word, before and after any `--`, and accept refusing a pathspec that looks like a denied option. The same goes
   for any word a checker skips: option values (`-e`, `-f`, `--jq`) can look like anything.
+- **A hook's allow is a grant, not the absence of a deny.** `hooks/codex-bash.sh` approves calls for a subagent
+  that auto mode would otherwise deny, so every form it lets through must be exact: the installed script by its
+  `~/` path (not `$HOME`, `./`, `..`, `sh`, `env`), numeric and hex arguments by pattern, one named environment
+  variable in one place, and a file argument by equality with the one path expected, never by a prefix or a glob.
+  Anything the hook doesn't list exits 2. Test the near misses of every allowed form (`.bak`, `..`, another PR's
+  number, an extra argument, an option after `--`), not just the allowed ones (claude-ship #132).

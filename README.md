@@ -8,8 +8,8 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   `hooks/review-*.md` files.
 - `skills/ship/`: the `ship` skill (bootstrap a repo, request Codex reviews, triage by the outcome table,
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
-- `skills/ship/orchestrate.md`, `agents/`, `hooks/orchestrate-hint.sh` and `hooks/explorer-bash.sh`: the optional orchestrated mode
-  (below).
+- `skills/ship/orchestrate.md`, `agents/`, `hooks/orchestrate-hint.sh`, `hooks/explorer-bash.sh` and
+  `hooks/codex-bash.sh`: the optional orchestrated mode (below).
 - `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. It sets the `codex-review` commit
   status that branch protection requires (success once Codex reviewed the PR's head and every Codex thread is
   resolved). Every opted-in repo, this one included, calls it through the reusable workflow
@@ -26,7 +26,8 @@ the rest, one PR at a time (claude-ship #66):
 | Planning, Codex triage, merge decisions | the main session | Opus, the session's effort |
 | Questions about the code, for the plan (its Bash is held to read-only `git` and `gh` by `hooks/explorer-bash.sh`) | `agents/ship-explorer.md` | Haiku, medium |
 | Implementing a unit, fixing its gate and Codex findings, opening the PR | `agents/ship-implementer.md` | Sonnet, high; Haiku for trivial units |
-| Waiting, listing findings, filing issues | the ship scripts | none |
+| Running each Codex round for the implementer: request, wait, CI, findings, the rule-decided issues and resolves (its Bash and Write are held to the ship scripts and one triage file by `hooks/codex-bash.sh`) | `agents/ship-codex.md` | Haiku, medium |
+| The mechanics under it: waiting, listing findings, filing issues | the ship scripts | none |
 
 Progress lives on GitHub (PRs and labels), with the plans kept in `.git/claude-ship/` outside the repo's
 files, so the loop resumes after `/clear` with "continue the PR loop". The full process is in
