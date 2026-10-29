@@ -24,6 +24,14 @@ them). Codex reads the same section, so both reviewers judge by the same rules a
 The reviewer's own sessions load the hooks too; `REVIEW_GATE_INNER=1` makes the gate exit at once there, so it
 never recurses.
 
+**Registration must say `"onFailure": "block"`** (README › Install; Claude Code 2.1.295 or later). A plain command
+hook that times out, crashes or exits with anything but 0 or 2 lets the tool call through, so without it a slow
+review or a dying gate means an unreviewed push. The hook's `timeout` (2400 s) must also exceed the reviewer budget
+(see Reviewer pipeline), or the budget guards nothing; `tests/gate-readme.sh` checks both against the README's
+snippet. The gate needs `jq`: without it, or when jq can't read the tool call, the gate blocks every call it sees
+(Bash, file writes, MCP) rather than reading the call as nothing, since it couldn't tell what the call was.
+Not opted in, not in a git repo and no GitHub remote still pass, as before.
+
 The default branch comes from GitHub (`gh repo view`), not from a local `origin/HEAD`: that is state an agent
 can point at its own branch, which would leave nothing to review. When GitHub can't say, the gate blocks.
 
@@ -211,6 +219,11 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
 - The project's review rules come from the default branch's `AGENTS.md` (a branch can't weaken its own review),
   else from the branch's own, which is how the bootstrap PR that adds them gets reviewed.
 - Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`.
+- The reviewers share one time budget, `REVIEW_GATE_BUDGET` (default 2200 s) counted from the gate's start: each run
+  gets `min(1100 s, what is left)`, and none starts with fewer than `REVIEW_GATE_MIN_SECS` (default 120 s) left; the
+  gate then blocks with "ran out of time". Two reviewers at 1100 s each would otherwise outlast the hook's timeout
+  (2400 s, README › Install). A finder's result is kept, so the retry resumes at the verifier. A value that isn't
+  a plain number blocks. A reviewer that times out (`timeout` exits 124) or fails blocks like any failure.
 
 **Reviewers only read.** `--tools` makes Read, Grep and Glob the only built-in tools (no shell, since even
 `git diff --output=<file>` writes), and `--strict-mcp-config` with no config loads no MCP or plugin tools,
