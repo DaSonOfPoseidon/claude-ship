@@ -93,6 +93,56 @@ reply T2
 resolve T2
 workflow workflow run codex-review.yml -R o/r -f pr=7'
 
+# resolve: no reply call (with or without a reply field) and no issue. Its fix was pushed before the thread
+# is resolved, so the push-triggered status run saw the thread open: the recheck still runs, unless a
+# "fixed" entry (whose push is still to come) is in the file.
+cat >"$tmp/t.json" <<'EOF'
+[{"thread":"T1","outcome":"resolve"},
+ {"thread":"T2","outcome":"resolve","reply":"already replied"}]
+EOF
+run
+check 'all resolve: resolve only, then the recheck' 0 'resolve T1
+resolve T2
+workflow workflow run codex-review.yml -R o/r -f pr=7'
+[ "$(head -2 "$tmp/out")" = "T1 resolve
+T2 resolve" ] || {
+	echo "FAIL: resolve output lines"
+	cat "$tmp/out"
+	fail=1
+}
+cat >"$tmp/t.json" <<'EOF'
+[{"thread":"T1","outcome":"not-valid","reply":"no"},
+ {"thread":"T2","outcome":"resolve"}]
+EOF
+run
+check 'not-valid with resolve: the recheck runs' 0 'reply T1
+resolve T1
+resolve T2
+workflow workflow run codex-review.yml -R o/r -f pr=7'
+cat >"$tmp/t.json" <<'EOF'
+[{"thread":"T1","outcome":"resolve"},
+ {"thread":"T2","outcome":"fixed","reply":"fixed in abc1234"}]
+EOF
+run
+check 'resolve with fixed: no workflow' 0 'resolve T1
+reply T2
+resolve T2'
+
+# A reply fails after a resolve entry: the resolve entry is in the done list.
+cat >"$tmp/t.json" <<'EOF'
+[{"thread":"T1","outcome":"resolve"},
+ {"thread":"T2","outcome":"not-valid","reply":"b"},
+ {"thread":"T3","outcome":"resolve"}]
+EOF
+FAIL_REPLY=T2 run
+check 'reply fails after a resolve entry' 1 'resolve T1
+reply T2'
+grep -q 'done: T1' "$tmp/out" || {
+	echo "FAIL: done list after a resolve entry"
+	cat "$tmp/out"
+	fail=1
+}
+
 # Invalid files exit 2 before any call.
 # bad <label> <json>
 bad() {
@@ -108,6 +158,9 @@ bad 'issue missing a field' '[{"thread":"T1","outcome":"issue","reply":"r","issu
 bad 'empty reply' '[{"thread":"T1","outcome":"fixed","reply":""}]'
 bad 'empty thread' '[{"thread":"","outcome":"fixed","reply":"r"}]'
 bad 'empty array' '[]'
+bad 'issue on a resolve entry' '[{"thread":"T1","outcome":"resolve","issue":{"file":"f","title":"t","body":"b"}}]'
+bad 'resolve with a non-string reply' '[{"thread":"T1","outcome":"resolve","reply":5}]'
+bad 'resolve then an invalid entry' '[{"thread":"T1","outcome":"resolve"},{"thread":"T2","outcome":"not-valid"}]'
 bad 'a valid entry then an invalid one' '[{"thread":"T1","outcome":"fixed","reply":"r"},{"thread":"T2","outcome":"x","reply":"r"}]'
 
 # The second reply fails: the first thread is done, nothing after it runs.
