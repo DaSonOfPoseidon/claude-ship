@@ -22,7 +22,8 @@ pushed), `worktree` (your working directory), and the triage file twice: `triage
 `<home>/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json` for the Write tool, and `triage file (Bash)`,
 the same with the home directory written `~`, for `codex-triage.sh` (the hook accepts only these two spellings,
 and `~` keeps a home or checkout path with a space out of the command). Optionally `replied` (thread ids the
-implementer already replied to) and `mode: resolve-only` (see **Resolve only**). If one is missing, report
+implementer already replied to), `mode: resolve-only` (see **Resolve only**) or `mode: triage-only` (see
+**Triage only**). If one is missing, report
 `outcome: error` and stop.
 
 ## Rules
@@ -44,7 +45,7 @@ implementer already replied to) and `mode: resolve-only` (see **Resolve only**).
 
 ## The round
 
-With `mode: resolve-only`, skip to **Resolve only** instead.
+With `mode: resolve-only` or `mode: triage-only`, skip to **Resolve only** or **Triage only** instead.
 
 1. `codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). It waits until GitHub shows `<sha>` as the PR's
    head, then posts `@codex review`, unless a request for this head is already out (it says so and posts
@@ -84,6 +85,17 @@ review would only cost a round for the same head. Don't request or wait. `replie
 2. `codex-round.sh <pr> <slug>` for the round, then `gh pr checks <pr> -R <slug>` and `codex-findings.sh <pr>`.
    No thread left: `outcome: clean`. Otherwise sort what is left by the **Outcomes** table at that round and
    report as for a round (`reviewed: -`).
+
+## Triage only
+
+The orchestrator sends this when it resumes a PR whose latest review already completed and left findings open.
+A request now would be a new round (the script posts again once the last request is answered), and the findings
+belong to the round that produced them. Don't request, wait or resolve anything first.
+1. `codex-round.sh <pr> <slug>`: the rounds used, which is the completed review's round, as it is (no plus one).
+   It may be 0 if the review was started outside the skill; treat that as round 1.
+2. `gh pr checks <pr> -R <slug>`, then `codex-findings.sh <pr>`. No thread left: `outcome: clean`. A status of
+   `failure` with no thread is `outcome: error`. Otherwise sort the threads by the **Outcomes** table at that
+   round, triage the `issue` ones, and report as for a round (`reviewed: -`).
 
 ## Outcomes
 

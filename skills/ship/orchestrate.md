@@ -179,6 +179,10 @@ Otherwise, keep going without asking.
      `~` for `home`, as `agents/ship-codex.md` describes). A request already out for the head, even in round 3,
      is waited for, not refused. Its report's `fix:` lines go to the
      implementer, as in the fallback flow above
-   - findings open: the same: a `ship-codex` run lists them and applies the rule-decided outcomes
+   - findings open (the head's latest review completed and left unresolved Codex threads): start the same
+     `ship-codex` with `mode: triage-only`. It requests and waits for nothing, takes the round from
+     `codex-round.sh` as it is, lists the findings and applies the rule-decided outcomes. Normal mode here would
+     post a new request (an answered request doesn't block one) and triage the findings a round too late, or
+     return `round-cap` without reading them
    - green: done
 3. Then take the queue.
