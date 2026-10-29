@@ -1,11 +1,7 @@
 #!/bin/sh
-# Tests codex-status.sh against Codex summaries whose Code Review row names no commit (`—`), as on
-# OBDCracker #145 (claude-ship #30). Such a row counts for the head only when the latest trusted
-# `@codex review` request (owner or collaborator) came after the head's push and is followed by exactly one
-# completion marker (a receipt or Codex review, the current one included), and the review finished after it.
-# A new request ends any review still running (claude-ship #61).
-# The fake gh below serves fixtures and applies
-# the script's own --jq filters with real jq, so the filters are tested too.
+# Tests codex-status.sh, mostly against Codex summaries whose Code Review row names no commit (`—`, claude-ship
+# #30 and #61; the rules are in docs/scripts.md). The fake gh below serves fixtures and applies the script's own
+# --jq filters with real jq, so the filters are tested too.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
@@ -84,8 +80,7 @@ expect() {
 	check "$1" "$2"
 }
 
-# with_msg <text> expect …: also requires <text> in the output. A prefix assignment on a function call
-# (`WANT_MSG=… expect …`) may persist after it in some shells, so it's set and cleared here.
+# with_msg <text> expect …: also requires <text> in the output (a prefix assignment may persist in some shells).
 WANT_MSG=
 STATE=
 AGE=0
@@ -133,9 +128,8 @@ $m"
 expect success 'round 2 after clean' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" "receipt 2026-10-21T15:00:00Z
 $m"
-# A new request ends any review still running (claude-ship #61), so only the latest trusted request counts.
-# A review of the old head running when the new head is pushed and re-requested ends there: the one marker
-# after the new request is its own.
+# A new request ends any review still running (claude-ship #61), so only the latest trusted request counts: a
+# review of the old head that is running when the new head is pushed and re-requested ends there.
 expect success 'overlap race' '—' $p $c "2026-10-21T14:50:00Z OWNER
 $r1" "$m"
 # R1 and R2 on the old head, R1 completes, the new head is pushed, R3 ends R2: the marker after R3 is R3's.
@@ -143,8 +137,7 @@ expect success 'R1 R2 push R3' '—' 2026-10-21T15:20:00Z $c "2026-10-21T15:00:0
 2026-10-21T15:05:00Z OWNER
 2026-10-21T15:30:00Z OWNER" "review 2026-10-21T15:10:00Z
 $m"
-# Two markers after the latest request: one wasn't asked for (an automatic review, #49), and it can't be
-# told which is the request's. Fail closed, and say how to recover.
+# Two markers after the latest request (one unasked for, #49) can't be told apart: fail closed and say how to recover.
 with_msg 'more than once' expect pending 'two markers after the request' '—' 2026-10-21T15:20:00Z 2026-10-21T15:50:00Z "2026-10-21T15:00:00Z OWNER
 2026-10-21T15:30:00Z OWNER" "review 2026-10-21T15:10:00Z
 receipt 2026-10-21T15:41:19Z
@@ -172,7 +165,7 @@ expect pending 'marker ties request' '—' $p $c "$r1" 'receipt 2026-10-21T15:26
 # A waiting review (no request yet) keeps the plain message.
 with_msg 'Waiting for Codex' expect pending 'plain waiting' '—' $p $c '' ''
 
-# openai/codex#55890 (claude-ship #61): a review that says running and hasn't changed for 15 min stalled.
+# openai/codex#55890, claude-ship #61: a review that says running and hasn't changed for 15 min stalled.
 # stall <state> <age> <row> expect …: the summary's state marker, its age in seconds, and its row ('' keeps
 # expect's completed row).
 ROW=
@@ -199,8 +192,7 @@ stall running 960 '' expect success 'stale state, completed row' '`7ca1cc3`' $p 
 # A state marker that isn't JSON reads as not stalled.
 stall 'x"}' 960 "$running" with_msg 'Waiting for Codex' expect pending 'unreadable state' '`7ca1cc3`' $p $c "$r1" ''
 
-# Gate on #61: a retry Codex hasn't picked up yet isn't a stall. The summary is still 16 min old, but the
-# latest trusted request came a minute ago.
+# Gate on #61: a retry Codex hasn't picked up yet isn't a stall (the summary is 16 min old, the latest request a minute old).
 recent=$(jq -rn 'now - 60 | todate')
 stall running 960 "$running" with_msg 'Waiting for Codex' expect pending 'retry not picked up yet' '`7ca1cc3`' $p $c "$r1
 $recent OWNER" ''

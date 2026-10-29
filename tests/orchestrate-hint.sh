@@ -1,7 +1,6 @@
 #!/bin/sh
-# Tests the plan-mode hint: it asks for the orchestrated loop only in plan mode, in a GitHub repo with both
-# CLAUDE_AUTONOMOUS and CLAUDE_ORCHESTRATE `true`, once per session, and adds nothing on any error
-# (claude-ship #66).
+# Tests the plan-mode hint (claude-ship #66): it asks for the orchestrated loop only in plan mode, in a GitHub
+# repo with both CLAUDE_AUTONOMOUS and CLAUDE_ORCHESTRATE `true`, once per session, and adds nothing on any error.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
