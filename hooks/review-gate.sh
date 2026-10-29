@@ -16,6 +16,10 @@ set -u
 # The reviewer's own sessions load the hooks too; never recurse.
 [ "${REVIEW_GATE_INNER:-}" = 1 ] && exit 0
 
+# When the gate started, for the reviewers' shared time budget (run_reviewer). Empty if `date` fails; run_reviewer
+# then blocks.
+started=$(date +%s 2>/dev/null)
+
 dir=$(cd "$(dirname "$0")" && pwd)
 costs="$HOME/.claude/state/review-costs.jsonl"
 
@@ -773,10 +777,36 @@ fi
 
 # Runs a headless reviewer: run_reviewer <stage> <model> <prompt file> <schema> <output file>. It reads only:
 # no shell, no MCP or plugin tools, and the branch's own CLAUDE.md, hooks and settings don't load (docs/gate.md ›
-# Reviewer pipeline).
+# Reviewer pipeline). The reviewers share one budget of REVIEW_GATE_BUDGET seconds from the gate's start (the
+# hook's timeout in settings.json must be longer): each run gets 1100 s or what is left, and none starts with
+# fewer than REVIEW_GATE_MIN_SECS left. A finder's result is kept, so the retry of a push that ran out of time
+# resumes at the verifier.
 run_reviewer() {
+	budget=${REVIEW_GATE_BUDGET:-2200}
+	min_secs=${REVIEW_GATE_MIN_SECS:-120}
+	for secs in "$budget" "$min_secs" "$started"; do
+		case $secs in
+		'' | 0?* | *[!0-9]*)
+			echo "Blocked: the review gate's time budget isn't a number (REVIEW_GATE_BUDGET='$budget', REVIEW_GATE_MIN_SECS='$min_secs', start '$started'). Fix them and retry the push." >&2
+			exit 2
+			;;
+		esac
+	done
+	now=$(date +%s 2>/dev/null)
+	case $now in
+	'' | *[!0-9]*)
+		echo "Blocked: couldn't read the time for the review gate's budget. Retry the push." >&2
+		exit 2
+		;;
+	esac
+	left=$((started + budget - now))
+	if [ "$left" -lt "$min_secs" ]; then
+		echo "Blocked: the review ran out of time ($((now - started)) s of $budget s used before the $1 reviewer; it needs $min_secs s). Retry the push; a finished finder's result is kept." >&2
+		exit 2
+	fi
+	[ "$left" -le 1100 ] || left=1100
 	echo "review-gate: $1 ($2) on $(git rev-parse --short HEAD) ($range)..." >&2
-	REVIEW_GATE_INNER=1 timeout 1100 claude -p --model "$2" --no-session-persistence --safe-mode --restricted \
+	REVIEW_GATE_INNER=1 timeout "$left" claude -p --model "$2" --no-session-persistence --safe-mode --restricted \
 		--tools Read,Grep,Glob --strict-mcp-config --allowedTools Read Grep Glob \
 		--output-format json --json-schema "$4" <"$3" >"$5" 2>"$5.err"
 	rc=$?

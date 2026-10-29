@@ -198,7 +198,7 @@ git init -q --bare -b master "$tmp/origin.git"
 # fixture_unreviewed: a branch one commit ahead of origin's master, with review rules and no pass for HEAD.
 fixture_unreviewed() {
 	fixture https://github.com/acme/app.git nopass
-	git -C "$repo" push -q "$tmp/origin.git" HEAD:refs/heads/master
+	git -C "$repo" push -qf "$tmp/origin.git" HEAD:refs/heads/master
 	printf '## Code Review Rules\n\n- P0: x\n' >"$repo/AGENTS.md"
 	git -C "$repo" add AGENTS.md
 	git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m rules
@@ -229,6 +229,69 @@ expect_review 2 'gh pr create --title t --body "see git push"' started
 # A real push still gets its review, and a command that is not data-only is still blocked (before any review).
 expect_review 2 'git push origin HEAD' started
 expect_review 2 'gh pr comment 7 --body "x" && git push origin HEAD' none
+
+# The reviewers share one time budget (claude-ship #103): REVIEW_GATE_BUDGET seconds from the gate's start, each
+# run capped at 1100 s and at what is left, and no run starts with fewer than REVIEW_GATE_MIN_SECS left. A fake
+# `timeout` logs the limit it was given, a fake `date` (FAKE_DATE_STEP) moves the clock a fixed step per call, and
+# the fake claude in fbin returns one finding for the finder and fails the verifier.
+cat >"$tmp/rbin/timeout" <<EOT
+#!/bin/sh
+echo "\$1" >>"$tmp/timeouts"
+shift
+exec "\$@"
+EOT
+mkdir -p "$tmp/fbin"
+cat >"$tmp/fbin/date" <<EOT
+#!/bin/sh
+[ -n "\${FAKE_DATE_STEP:-}" ] || exec $(command -v date) "\$@"
+n=\$(cat "$tmp/clock" 2>/dev/null || echo 0)
+echo "\$n"
+echo \$((n + FAKE_DATE_STEP)) >"$tmp/clock"
+EOT
+cat >"$tmp/fbin/claude" <<EOT
+#!/bin/sh
+touch "$tmp/reviewed"
+case " \$* " in
+*" sonnet "*) printf '{"structured_output":{"findings":[{"file":"a","line":1,"severity":"P2","summary":"s","failure_scenario":"f"}]}}' ;;
+*) exit 1 ;;
+esac
+EOT
+chmod +x "$tmp/rbin/timeout" "$tmp/fbin/date" "$tmp/fbin/claude"
+
+# expect_budget <env assignments, or -> <exit code> <review started|none> <timeouts, space-separated, or none>
+# <text in stderr>: runs a real push in a fresh unreviewed fixture with the fake claude, date and timeout.
+expect_budget() {
+	fixture_unreviewed
+	# A change to a non-doc file, so it gets the finder and the verifier, not the docs check.
+	echo 'echo x' >"$repo/x.sh"
+	git -C "$repo" add x.sh
+	git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m code
+	rm -f "$tmp/reviewed" "$tmp/timeouts" "$tmp/clock"
+	[ "$1" != - ] || set -- "FOO=1" "$2" "$3" "$4" "$5"
+	jq -nc --arg c 'git push origin HEAD' --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		env "$1" PATH="$tmp/fbin:$tmp/rbin:$PATH" sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ -e "$tmp/reviewed" ]; then got=started; else got=none; fi
+	limits=$(cat "$tmp/timeouts" 2>/dev/null | tr '\n' ' ')
+	limits=${limits% }
+	if [ "$rc" != "$2" ] || [ "$got" != "$3" ] || [ "${limits:-none}" != "$4" ] || ! grep -q "$5" "$tmp/err"; then
+		echo "FAIL ($1): exit $rc (want $2), review $got (want $3), timeouts '${limits:-none}' (want '$4'), stderr wants '$5'"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+# Within budget, each reviewer gets the full 1100 s (the fake verifier exits 1, so the review fails, not times out).
+expect_budget - 2 started '1100 1100' 'verifier reviewer failed'
+# The budget is spent before the first reviewer: it never starts.
+expect_budget REVIEW_GATE_BUDGET=100 2 none none 'ran out of time'
+expect_budget REVIEW_GATE_BUDGET=119 2 none none 'ran out of time'
+# Time passed in the finder is gone from the verifier's allowance, and a verifier with nothing left never starts.
+expect_budget FAKE_DATE_STEP=1100 2 started 1100 'ran out of time'
+expect_budget FAKE_DATE_STEP=1000 2 started '1100 200' 'verifier reviewer failed'
+expect_budget REVIEW_GATE_MIN_SECS=3000 2 none none 'ran out of time'
+# A budget that isn't a number blocks rather than reading as zero or as no limit.
+expect_budget REVIEW_GATE_BUDGET=abc 2 none none 'REVIEW_GATE_BUDGET'
+expect_budget REVIEW_GATE_BUDGET=0100 2 none none 'REVIEW_GATE_BUDGET'
 # Nothing is pushed, so a dirty tree is no reason to block a data-only command, but it still blocks a push.
 : >"$repo/dirty"
 expect_review 0 'gh pr comment 7 --body "git push origin HEAD"' none
