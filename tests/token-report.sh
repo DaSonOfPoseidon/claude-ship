@@ -496,7 +496,8 @@ COSTS=$tmp/costs.jsonl
 # doesn't need the date) and failed (rc 1) but still cost.
 gate 2026-10-01T11:00:00Z acme/app a1 finder sonnet 0.05
 gate 2026-10-01T08:00:00Z acme/app a2 finder sonnet 0.10 1
-gate 2026-10-01T11:01:00Z acme/app a1 verifier haiku 0.01
+# The gate logs the repo as spelled in the push URL: any case still matches.
+gate 2026-10-01T11:01:00Z Acme/App a1 verifier haiku 0.01
 # The same head in another repo: not this PR's.
 gate 2026-10-01T11:02:00Z other/app a1 finder sonnet 9
 # A head that is another PR's commit (c1, PR 92, not asked for) never counts by window, even inside PR 90's.

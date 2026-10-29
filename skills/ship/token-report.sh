@@ -219,7 +219,7 @@ jq -r -s --slurpfile w "$tmp/windowsAll" --slurpfile g "$tmp/gate" --arg repo "$
 	| map(select(.pr != null)) as $all
 	| $W[] | select(.asked) | . as $win
 	| ($all | map(select(.pr == $win.pr))) as $mine
-	| ($g | map(select(.repo == $repo)
+	| ($g | map(select((.repo | ascii_downcase) == ($repo | ascii_downcase))
 		| select((.head as $h | $win.commits | index($h)) != null
 			or ((.head as $h | $allc | index($h)) == null
 				and (own($W; .date) | if length == 0 then null else max_by([.start0, .pr]).pr end) == $win.pr)))) as $gm

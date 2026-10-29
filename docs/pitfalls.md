@@ -146,3 +146,7 @@ review finds a new class.
   Claude does, yet the gate treated every `*.md` as docs and gave it only the Haiku claims check. Classify by path
   and role, not extension: the gate's `kind` block lists the `.md` locations that are behaviour, lists a rename's old
   path too (`--no-renames`), blocks when the list can't be read, and treats an empty one as code (claude-ship #105).
+- **Two spellings of the same repo are not equal strings.** The gate logs `slug` as written in origin's push URL;
+  `gh repo view` returns GitHub's canonical `nameWithOwner`. Comparing them with `==` drops every row of a repo
+  whose remote differs in case, and the missing rows read as a cheap report. Compare repo slugs without case
+  (`ascii_downcase`), and test with a differently-cased row (claude-ship #110).
