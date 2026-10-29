@@ -120,9 +120,14 @@ Register the hook once in `~/.claude/settings.json`:
 ```json
 {"hooks": {"PreToolUse": [{
   "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*__(push_files|create_or_update_file|delete_file|create_branch|create_pull_request|update_pull_request|update_pull_request_branch|merge_pull_request)",
-  "hooks": [{"type": "command", "command": "~/.claude/hooks/review-gate.sh", "timeout": 1200}]
+  "hooks": [{"type": "command", "command": "~/.claude/hooks/review-gate.sh", "timeout": 2400, "onFailure": "block"}]
 }]}}
 ```
+
+`onFailure: block` needs Claude Code 2.1.295 or later. Without it, Claude Code lets the call through when the hook
+times out, crashes or exits with anything but 0 or 2, so a slow review would push unreviewed code. The `timeout`
+must stay above the gate's reviewer budget (2200 s by default, `REVIEW_GATE_BUDGET`); the gate also needs `jq`
+and blocks every call without it.
 
 For orchestrated mode, also register the hint hook:
 

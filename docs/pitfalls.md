@@ -133,3 +133,8 @@ review finds a new class.
   variable in one place, and a file argument by equality with the one path expected, never by a prefix or a glob.
   Anything the hook doesn't list exits 2. Test the near misses of every allowed form (`.bak`, `..`, another PR's
   number, an extra argument, an option after `--`), not just the allowed ones (claude-ship #132).
+- **A hook that dies is not a hook that said no.** Claude Code lets a tool call through when a plain command hook
+  times out, crashes or exits with anything but 0 or 2, unless its registration has `"onFailure": "block"`. The gate
+  had two reviewers of 1100 s each under a 1200 s hook timeout, and read a missing or failing `jq` as an empty tool
+  name, which falls into `exit 0` (claude-ship #103). Keep the budget below the timeout, block on anything the gate
+  could not read, and keep a test reading the README snippet so the registration cannot drift.
