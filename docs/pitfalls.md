@@ -31,7 +31,11 @@ review finds a new class.
   run from the wrong directory spun for 30 minutes after the review had finished. Use absolute paths, and
   stop on any error.
 - **A pipeline's exit status is its last command's.** `x=$(gh api … | wc -l)` succeeds when `gh` fails,
-  so a failed call reads as an empty result. Assign each call on its own, then pipe the result.
+  so a failed call reads as an empty result. Assign each call on its own, then pipe the result. Ignoring the
+  status and hiding stderr (`2>/dev/null`) does the same: the gate's PR and thread lookups, and the `git log` and
+  `git diff` inside its prompt, read a failed call as "no PR", "no threads" or an empty diff and skipped the
+  check (claude-ship #106). Assign the call, test its status with `|| { …; exit 2; }`, and do it before the file
+  that quotes it is written.
 - **Options and environment before a subcommand change what it does.** `git -c push.default=matching push`,
   `git --git-dir x push`, `GIT_DIR=x git push` and `env … git push` all push something other than what a check
   of `git push`'s own arguments sees (claude-ship #3, five gate rounds). Check the whole command, and block
