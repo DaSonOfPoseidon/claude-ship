@@ -144,7 +144,7 @@ protected=$(printf '%s' "$cmd_all" |
 	grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship|agents/ship-)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
 if [ -n "$protected" ]; then
 	write=$(printf '%s' "$cmd_all" |
-		sed -E 's/[0-9]*>&([0-9]+|-)([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)([^[:alnum:]_/.-]|$)#\3#g' |
+		sed -E 's/[0-9]*>&([0-9]+|-)([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)([[:space:];&|)]|$)#\3#g' |
 		grep -Eo '[^[:space:]]*>[^[:space:]]*([[:space:]]+[^[:space:];&|]+)?' | head -1)
 	[ -n "$write" ] || write=$(printf '%s' "$cmd_all" |
 		grep -Eo '(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)' |
@@ -558,8 +558,8 @@ push_scope() (
 	# into read-only filters: the checks below read git config and refs first, so anything else could change what the
 	# push sends after they passed (docs/gate.md › Push shape). Redirects are taken out first, then every simple
 	# command (split at `;&|()` and newlines) must be one of those.
-	bare=$(printf '%s' "$push_cmd" | sed -E 's/&>>?[[:space:]]*\/dev\/(null|stdout|stderr)([^[:alnum:]_.\/-]|$)/ \2/g;
-		s/[0-9]*>>?[[:space:]]*\/dev\/(null|stdout|stderr)([^[:alnum:]_.\/-]|$)/ \2/g; s/[0-9]*>&([0-9]+|-)([[:space:];&|)]|$)/ \2/g')
+	bare=$(printf '%s' "$push_cmd" | sed -E 's/&>>?[[:space:]]*\/dev\/(null|stdout|stderr)([[:space:];&|)]|$)/ \2/g;
+		s/[0-9]*>>?[[:space:]]*\/dev\/(null|stdout|stderr)([[:space:];&|)]|$)/ \2/g; s/[0-9]*>&([0-9]+|-)([[:space:];&|)]|$)/ \2/g')
 	extra=$(
 		seen=
 		first=1
