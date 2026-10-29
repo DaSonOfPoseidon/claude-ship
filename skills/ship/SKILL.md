@@ -85,7 +85,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    the comment by hand: find out why the PR's head isn't HEAD. From any other checkout, name the commit
    instead: `codex-request.sh <pr> <owner/repo> <sha>` (the full SHA that was pushed) waits for that head,
    not for the checkout's HEAD. It is safe to repeat: when a request for that head is already out (after
-   its push, unanswered, under 15 minutes old) it posts nothing and exits 0. Otherwise, with 3 rounds already
+   its push, unanswered, and `codex-status.sh` still says it is waiting for Codex) it posts nothing and exits
+   0. Otherwise, with 3 rounds already
    used (`CODEX_ROUND_CAP`) it posts nothing and exits 4. In orchestrated mode a
    `ship-codex` agent runs steps 2 to 4 for the implementer (`orchestrate.md`).
 4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command
@@ -95,10 +96,13 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    on any error from `codex-status.sh` (fix that, don't retry blindly).
    - **Exit 3**: only a new request clears the status. Run step 3 again, once per HEAD. If that one ends in
      exit 3 too, stop and tell the user. A new request ends any earlier review, so old requests never need
-     deleting. Exit 3 prints one of two statuses:
+     deleting. Exit 3 prints one of three statuses:
      - **"stalled"**: Codex's summary says running but hasn't changed in 15 min. Codex sometimes drops a
        review this way and never finishes it (openai/codex#55890, claude-ship #61). `codex-round.sh`
        doesn't count the stalled request, so the retry doesn't use a round.
+     - **"not acknowledged"**: the request is over 5 min old and Codex has shown nothing: no 👀, no summary
+       edit, no receipt, no review (claude-ship #133). It never picked the request up, so exit 3 comes after
+       5 min instead of 20. `codex-round.sh` doesn't count it either, so the retry doesn't use a round.
      - **"finished more than once"**: a completion came that nobody asked for (an automatic review), so the
        status can't tell which one is the request's. The retry uses a round.
    - **Exit 1, timed out** after 20 min without a result or a stall: tell the user and don't request again.

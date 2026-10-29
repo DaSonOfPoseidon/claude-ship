@@ -95,7 +95,7 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    - `clean`, with CI green: go to 6.
    - It stopped (`stopped because:`), or `codex:` is `stop`, `stalled`, `timeout`, `round-cap` or `error`:
      handle it as the stop table below says. A `stop:` line is a P0/P1 finding in round 3 or later: ask the
-     user. `stalled` is Codex stalling twice on one head: tell the user. `round-cap` and `timeout` need no new
+     user. `stalled` is Codex stalling (or never acknowledging a request) twice on one head: tell the user. `round-cap` and `timeout` need no new
      request unless the user asks.
    - `denied:` lines: the agent's triage write or call was denied, or `codex-triage.sh` failed part-way (auto
      mode denies subagents some calls, #100). `file:` names the triage file, `done:` the threads the script

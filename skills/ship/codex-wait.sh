@@ -3,7 +3,8 @@
 # else scripts/codex-status.sh) with DRY_RUN=1 every 60s until it stops printing `pending`, then prints that
 # line. A review of an older commit counts as pending. Exits 1 on timeout, 2 on usage or if codex-status.sh
 # fails (its error is shown, not read as "not done yet"), and 3 on a pending status that only a new request
-# clears: a stalled review, or one that "finished more than once" (docs/scripts.md).
+# clears: a stalled review, one that "finished more than once", or a request Codex never "acknowledged"
+# (docs/scripts.md).
 # Usage: codex-wait.sh <pr>   (from anywhere in the checkout; CODEX_WAIT_SECS caps the wait, default 1200)
 set -eu
 # A missing PR number exits 2 (usage), so a caller never reads it as a result or a timeout.
@@ -26,7 +27,7 @@ while :; do
 		exit 2
 	fi
 	case $out in
-	pending:*stalled* | pending:*'finished more than once'*)
+	pending:*stalled* | pending:*'finished more than once'* | pending:*acknowledged*)
 		echo "$out"
 		exit 3
 		;;

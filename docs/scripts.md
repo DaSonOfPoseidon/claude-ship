@@ -15,7 +15,7 @@ it; `HEAD_SHA` checks another commit, to test against past reviews.
 |---|---|
 | `success` | Codex completed a review of the head commit after it was pushed, and every Codex review thread is resolved |
 | `failure` | a Codex thread is unresolved, or Codex's review failed |
-| `pending` | no completed review of the head yet, or the review stalled or can't be tied to a request |
+| `pending` | no completed review of the head yet, or the review stalled, was never acknowledged, or can't be tied to a request |
 
 Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
 
@@ -49,6 +49,18 @@ summary edit, no trusted request and no push, the status stays `pending` but say
 asked for again. A retry Codex hasn't picked up yet isn't a stall, and neither is a state that names another
 commit or that isn't JSON.
 
+**Not acknowledged.** Sometimes Codex never picks a request up at all (#133): no 👀, no summary edit, nothing.
+Without a rule the wait ran its full 20 minutes and the user had to step in. The status is `pending` and says
+so when the latest trusted request came after the head's push (or in the same second, as `codex-request.sh` counts it), is `CODEX_ACK_SECS` (default 300) old, and
+Codex has shown no sign of it since: no summary edit, no 👀 of its own on the request, no receipt and no review
+after it. Codex removes its 👀 when a review finishes, and where it puts the 👀 while a review runs isn't
+verified, so any bot activity after the request counts and the 👀 only adds to it. A tie in the second counts
+as a sign of life. Anyone can react, so only the bot's login counts. The reactions, receipts and reviews are
+read only for a request this old (the list of requests shows a 👀 count, and the call is skipped when it is
+0), so a normal run makes no extra call. A stall (above) keeps its own message when both apply, and a retry
+that is only a minute old is waiting, not unacknowledged. The output contract of the action is unchanged: the
+state is still `pending`.
+
 **Errors.** Each GitHub call is its own assignment, so `set -e` stops on a failed call; reading a pipeline's last
 exit status would turn an empty result into "no findings".
 
@@ -61,6 +73,14 @@ three repos, all 125 finished requests had lost it and all 14 stalled ones kept 
 the bot's own 👀 marks a stall. A review still running past 15 minutes is left out only until it finishes; the
 skill counts rounds when it requests the next, after the last has finished or stalled.
 
+A request Codex never acknowledged (#133) doesn't count either: it is `CODEX_ACK_SECS` (default 300) old, has no
+bot 👀 now, and the bot made no summary edit, receipt or review between it and the next request (or now, for the
+latest). Both states are tested because Codex removes its 👀 when it finishes, so a missing 👀 alone doesn't mean
+the request was dropped: the receipt, review or summary edit it left show that it ran. The window ends at the next
+request because the summary keeps only its latest edit time, so an edit can vouch only for the request it
+follows; a receipt or review stays and vouches for its own. A 👀 count of 0 in the comment list skips the
+reactions call.
+
 ## `skills/ship/codex-request.sh`
 
 Posts `@codex review` once GitHub shows the wanted commit as the PR's head. The wanted commit is the optional
@@ -71,12 +91,16 @@ current checkout).
 
 **Repeat-safe.** It posts nothing, and exits 0 saying so, when a request for this head is already out: the latest
 trusted request (owner or collaborator, as `codex-status.sh` counts them) is no earlier than the head's last push
-(from the branch's activity records, as in `codex-status.sh`), no Codex receipt or review follows it, and it is
-younger than `CODEX_STALL_SECS` (default 900). So an agent that restarts, or a second caller, doesn't spend a
-round on the same head. Each leg lets a real re-request through: a request from before the push was for an
-earlier head; an answered one is finished, and asking again is a deliberate new round; an unanswered one past 15
-minutes is the stall `codex-wait.sh` reports with exit 3. When no push of the head is on record there is nothing
-to tie a request to, so it asks (the old behaviour).
+(from the branch's activity records, as in `codex-status.sh`), no Codex receipt or review follows it, and
+`codex-status.sh` (next to it, else `scripts/`, run with `DRY_RUN=1`, `HEAD_SHA` and `REPO`) still prints the plain
+`pending: Waiting for Codex to review …`. So an agent that restarts, or a second caller, doesn't spend a round on
+the same head. Each leg lets a real re-request through: a request from before the push was for an earlier head;
+an answered one is finished, and asking again is a deliberate new round; any other verdict (stalled, not
+acknowledged, finished more than once, success, failure) is one `codex-wait.sh` reports or a result, and a new
+request is what clears it. The staleness verdict is the status script's alone: the request side used a clock of
+its own (age under 15 minutes) and replaced a review that was still running, since the summary had been edited a
+minute ago (#139). If the status script fails, the call exits 2 and posts nothing. When no push of the head is on
+record there is nothing to tie a request to, so it asks (the old behaviour).
 
 **Round cap.** When it would post, it first counts the rounds with `codex-round.sh` (next to it); at
 `CODEX_ROUND_CAP` (default 3) or more it posts nothing and exits 4. The check comes after the repeat check on
@@ -113,8 +137,8 @@ orchestrator, since subagents can't resolve threads (#100), from the checkout `p
 
 ## `skills/ship/codex-wait.sh`
 
-Runs `codex-status.sh` with `DRY_RUN=1` every 60 seconds. A status that only a new request clears (stalled, or
-finished more than once) ends the wait with exit 3, so it isn't read as "not done yet" until the cap. Any failure
+Runs `codex-status.sh` with `DRY_RUN=1` every 60 seconds. A status that only a new request clears (stalled, not
+acknowledged, or finished more than once) ends the wait with exit 3, so it isn't read as "not done yet" until the cap. Any failure
 of the status script ends the wait with its error.
 
 ## `skills/ship/token-report.sh`

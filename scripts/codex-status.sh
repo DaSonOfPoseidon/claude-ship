@@ -42,8 +42,14 @@ row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || 
 # or one that isn't JSON, isn't a stall.
 summary_at=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .updated_at")
-latest_request=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-	--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
+# One line per trusted request: `<created_at> <id> <👀 count>`. The latest one counts.
+request_lines=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+	--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | "\(.created_at) \(.id) \(.reactions.eyes // 0)"')
+latest=$(printf '%s\n' "$request_lines" | grep . | sort | tail -1)
+latest_request=${latest%% *}
+latest_rest=${latest#* }
+latest_id=${latest_rest%% *}
+latest_eyes=${latest_rest##* }
 since=$(printf '%s\n%s\n%s\n' "$summary_at" "$latest_request" "$pushed_at" | grep . | cut -c1-19 | sort | tail -1)
 review_state=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v1 \(.*\) -->$/\1/p' | tail -1 |
 	jq -r --arg h "$head" '.code_review | select(.commit_sha == null or .commit_sha == $h) | .status // empty' 2>/dev/null || true)
@@ -116,6 +122,44 @@ after_push() {
 		{ [ -z "$requested_at" ] || { later "$requested_at" "$pushed_at" && later "$completed_at" "$requested_at"; }; }
 }
 
+# Not acknowledged (#133): the latest trusted request, made after the head's push, is CODEX_ACK_SECS old and Codex
+# has shown no sign of it: no summary edit, no 👀 of its own on the request, no receipt or review after it. Codex
+# removes its 👀 when a review finishes, so any bot activity after the request counts, not the 👀 alone. The
+# calls beyond the summary are made only for a request this old.
+ack_secs=${CODEX_ACK_SECS:-300}
+unacked=
+req=$(echo "$latest_request" | cut -c1-19)
+# A request in the push's own second belongs to this head, as codex-request.sh counts it (>=); otherwise a
+# request tied with the push could never be retried.
+if [ -n "$req" ] && [ -n "$pushed_at" ] && { [ "$req" = "$pushed_at" ] || later "$req" "$pushed_at"; }; then
+	req_epoch=$(jq -rn --arg t "${req}Z" '$t | fromdateiso8601')
+	if [ $(($(date +%s) - req_epoch)) -ge "$ack_secs" ]; then
+		# Not before the request: a tie counts as a sign of life (times compare as text, to the second).
+		since_request() { [ -n "$1" ] && { [ "$1" = "$req" ] || later "$1" "$req"; }; }
+		last_summary=$(printf '%s\n' "$summary_at" | grep . | cut -c1-19 | sort | tail -1)
+		unacked=1
+		if since_request "$last_summary"; then
+			unacked=
+		elif [ "$latest_eyes" -gt 0 ]; then
+			# The list shows only a count, and anyone can react, so only the bot's own 👀 counts.
+			mine=$(gh api --paginate "repos/$repo/issues/comments/$latest_id/reactions" \
+				--jq ".[] | select(.content == \"eyes\") | select(.user.login == \"$bot\") | 1")
+			[ -z "$mine" ] || unacked=
+		fi
+		if [ -n "$unacked" ]; then
+			receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+				--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
+			reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+				--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
+			for t in $(printf '%s\n%s\n' "$receipts" "$reviews" | grep . | cut -c1-19); do
+				if since_request "$t"; then
+					unacked=
+				fi
+			done
+		fi
+	fi
+fi
+
 if [ "$findings" -gt 0 ]; then
 	state=failure
 	description="$findings unresolved Codex thread(s); fix or answer each, then resolve it"
@@ -131,6 +175,9 @@ elif [ -n "$stalled" ]; then
 elif [ -n "$ambiguous" ]; then
 	state=pending
 	description="Codex finished more than once since the last request for $short, so neither is tied to it; ask again with @codex review"
+elif [ -n "$unacked" ]; then
+	state=pending
+	description="Codex hasn't acknowledged the request for $short in $((ack_secs / 60)) min; ask again with @codex review"
 else
 	state=pending
 	description="Waiting for Codex to review $short"

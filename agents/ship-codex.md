@@ -64,9 +64,10 @@ With `mode: resolve-only` or `mode: triage-only`, skip to **Resolve only** or **
      `outcome: error`, `stopped because: the PR head is now <that sha>`.
    - 1: still pending. Run it once more (so about 19 minutes in all), then `outcome: timeout`.
    - 2: `outcome: error` with the message.
-   - 3: a stall, or a completion nobody asked for, so only a new request clears it. Once per head: go back to
+   - 3: a stall, a request Codex never acknowledged, or a completion nobody asked for, so only a new request
+     clears it. Once per head: go back to
      step 1 (the request step applies the cap: exit 4 is `outcome: round-cap`), then step 2 again for the new
-     round (a stalled request isn't counted, so the round stays; a "finished more than once" one is, so the
+     round (a stalled or unacknowledged request isn't counted, so the round stays; a "finished more than once" one is, so the
      round rises and its column applies), then wait again from step 4. A second exit 3 for this head:
      `outcome: stalled`.
 5. `gh pr checks <pr> -R <slug>`: `ci: pass` if all pass, `fail` if any failed, `pending` otherwise (its non-zero exit is

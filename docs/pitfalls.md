@@ -101,6 +101,10 @@ review finds a new class.
   `running` summary forever, with no review, receipt or error (openai/codex#55890). The ship skill waited 15
   minutes, then forbade a retry, so every stall needed the user (claude-ship #61). Bound the wait by the
   job's own last update, not by a total time, retry once, and don't charge a round for a job that never ran.
+  The same holds for a job that never starts: a request Codex never picked up kept the wait running its full 20
+  minutes and counted as a round (claude-ship #133). And one verdict, used by every script that acts on it:
+  `codex-request.sh` judged a request stale with its own clock while `codex-status.sh` judged it another way, so
+  it replaced a review that was still running (claude-ship #139). Ask the status script instead of re-deriving it.
 - **A new script is committed without its execute bit.** Written with an editor, it lands as `100644`, and
   `install.sh` copies modes as they are, so a hook registered as a command fails with `Permission denied`
   while tests that run it with `sh` pass (claude-ship #69). Commit scripts as `100755`
