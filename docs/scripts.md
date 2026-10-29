@@ -78,6 +78,13 @@ earlier head; an answered one is finished, and asking again is a deliberate new 
 minutes is the stall `codex-wait.sh` reports with exit 3. When no push of the head is on record there is nothing
 to tie a request to, so it asks (the old behaviour).
 
+**Round cap.** When it would post, it first counts the rounds with `codex-round.sh` (next to it); at
+`CODEX_ROUND_CAP` (default 3) or more it posts nothing and exits 4. The check comes after the repeat check on
+purpose: a request already pending for this head is round 3's own review, which must still be waited for, so it
+exits 0, not 4. Putting the cap in the script lets `ship-codex` hand a retry after an exit 3 to the same call and
+learn the cap and the new round from it, instead of every caller counting first. The user lifts it for a later
+round by setting `CODEX_ROUND_CAP`.
+
 ## `skills/ship/codex-triage.sh`
 
 Applies a round's triage in one call, so the orchestrator spends one turn on it instead of one per reply, issue
@@ -212,11 +219,17 @@ hook decides, not what Claude Code does with it.
   (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, and `CODEX_WAIT_SECS` only before the wait.
 - **gh.** Only `pr view` and `pr checks`, after a PR number. `--web`, and any short option cluster holding `w`,
   deny, as does the same word after a `--` (which can be an option's argument), so every word is checked.
-- **The triage file.** `codex-triage.sh` takes exactly `<git common dir>/claude-ship/triage-<pr>.json`, with the
-  PR's own number; Write takes the same directory and `triage-<digits>.json`, nothing else (no `..`, no
-  subdirectory, no other name). The directory is the git common directory of the hook's working directory, which
-  is the implementer's worktree, so it is shared by every worktree and outside the repo's files. Outside a git
-  checkout, both deny. A Write's content isn't the hook's to judge: `codex-triage.sh` validates the file.
+- **The triage file** lives in a fixed directory, `~/.claude/state/claude-ship/`, named
+  `triage-<owner>+<repo>-<pr>.json` (the slug's `/` written `+`, which a slug can't contain, so the name reads back
+  one way). An earlier version used the checkout's git common directory, whose path went into the command: a path
+  with a space split into two words, and the quoting that would fix it is exactly what the character check
+  refuses (Codex, #137). The fixed directory keeps every checkout path out of the command. `codex-triage.sh`
+  takes the file written with `~` (the shell expands it, so a home path with a space is still one word), and
+  only with the PR's own number; Write takes the same file as an absolute path under `$HOME`, nothing else
+  (no `..`, no other directory, no subdirectory, no other name; the name's repository part must read back as a
+  valid slug, with exactly one `+`). The state directory is outside the gate's protected paths (hooks, settings,
+  `skills/ship`, `agents/ship-*`), and holds nothing the gate or the loop reads. A Write's content isn't the
+  hook's to judge: `codex-triage.sh` validates the file. With no `HOME`, a Write denies.
 - **Fails closed.** Input that isn't JSON, has no string `tool_name`, `tool_input.command` (Bash) or
   `tool_input.file_path` (Write), or names any other tool, exits 2 with a reason the agent sees. A hook that
   fails to run at all (missing, not executable) doesn't deny: Claude Code reads that as a non-blocking error and

@@ -66,9 +66,12 @@ wait for the review yourself and the orchestrator sees only your final report.
    - `pr`: the number; `slug`: `gh repo view --json nameWithOwner --jq .nameWithOwner`;
    - `sha`: `git rev-parse HEAD`, run right after the push (the head the review is for);
    - `worktree`: your working directory;
-   - `triage file`: the repo's git common directory (`git rev-parse --path-format=absolute --git-common-dir`)
-     followed by `/claude-ship/triage-<pr>.json`, as one absolute path;
-   - `replied`: the thread ids you replied to since its last round (none in round 1).
+   - the triage file, twice: `triage file (Write)` is `$HOME/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json`
+     as an absolute path (the slug's `/` written `+`, e.g. `triage-DaSonOfPoseidon+claude-ship-137.json`), and
+     `triage file (Bash)` is the same with the home directory written `~`. It is a fixed directory, so the
+     checkout path (spaces included) is in no command;
+   - `replied`: the thread ids you replied to since its last round (none in round 1);
+   - `mode: resolve-only`, only in the no-commit case below.
 
    It returns a report with an `outcome:`. Wait for it. Don't request or wait for Codex any other way, and
    never post `@codex review` by hand.
@@ -77,8 +80,8 @@ wait for the review yourself and the orchestrator sees only your final report.
    | `outcome:` | What to do |
    |---|---|
    | `clean` | done: final report |
-   | `fix` | fix its `fix:` threads (below), then start a new `ship-codex` with every thread you replied to as `replied`. At most 3 rounds in all: its `round:` says which one it was |
-   | `stop`, `round-cap`, `stalled`, `timeout`, `error` | don't act on it: final report with its lines (`stop:` and `denied:` lines word for word) |
+   | `fix` | fix its `fix:` threads (below), then start a new `ship-codex` with every thread you replied to as `replied`, and `mode: resolve-only` if you made no commit. At most 3 rounds in all: its `round:` says which one it was |
+   | `stop`, `round-cap`, `stalled`, `timeout`, `error` | don't act on it: final report with its lines (`stop:`, `denied:`, `done:` and `file:` lines word for word) |
 
    **Fixing a `fix:` thread.** Read the whole thread first (a GraphQL read of the thread's comments by id,
    through `gh api graphql`), then judge it against the code. Valid: fix it test-first, sweep for the class,
@@ -86,6 +89,12 @@ wait for the review yourself and the orchestrator sees only your final report.
    naming the fixing commit (GraphQL `addPullRequestReviewThreadReply` with the thread id). Not valid: reply
    with file:line evidence. Either way, don't resolve it (auto mode denies subagents that call, #100): the next
    `ship-codex` resolves the threads you pass as `replied`. Leave threads it didn't send you alone.
+
+   **When you judged every thread not valid** and made no commit, there is nothing new to review: the head is
+   the one Codex already reviewed, and another request would spend a round on it. Start `ship-codex` with
+   `mode: resolve-only` and the replied thread ids. It resolves them (the script then rechecks the status) and
+   reports `clean` only if no Codex thread is left. When at least one fix was committed and pushed, start a
+   normal round on the new head, with every thread you replied to (fixed or not) as `replied`.
 4. If the Agent call itself fails (no such agent, or you can't start agents), fall back to the old flow so the
    orchestrator can wait: `~/.claude/skills/ship/codex-round.sh <pr>`, and below 3,
    `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). Then report
@@ -110,13 +119,13 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 - Never waive a review, or edit anything under `~/.claude`.
 - Never push a branch other than the plan's.
 
-## Report (15 lines or fewer, not counting `stop:` and `denied:` lines)
+## Report (15 lines or fewer, not counting the `stop:`, `denied:`, `done:` and `file:` lines)
 
 ```
 branch: <name>   worktree: <path>   pr: <number or none>   codex requested: yes/no
 commits: <sha> <subject>  (one per line)
 codex: <last ship-codex outcome> round <n>  (omit if it never ran)
-stop: / denied: <those lines of the last ship-codex report, word for word>  (omit if none)
+stop: / denied: / done: / file: <those lines of the last ship-codex report, word for word>  (omit if none)
 replied: <thread id> <sha>  (fallback flow only: one per thread you replied to; omit otherwise)
 checks: <command> → pass/fail
 gate: passed after <n> blocks | blocked: <finding summary>

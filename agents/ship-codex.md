@@ -18,9 +18,12 @@ don't spend turns waiting and sorting. Your report is all they see: make it exac
 ## Inputs
 
 The message that started you gives: `pr`, `slug` (owner/repo), `sha` (the full 40-character head the implementer
-pushed), `worktree` (your working directory), `triage file` (an absolute path ending in
-`claude-ship/triage-<pr>.json`), and optionally `replied` (thread ids the implementer already replied to after
-fixing them). If one is missing, report `outcome: error` and stop.
+pushed), `worktree` (your working directory), and the triage file twice: `triage file (Write)`, an absolute path
+`<home>/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json` for the Write tool, and `triage file (Bash)`,
+the same with the home directory written `~`, for `codex-triage.sh` (the hook accepts only these two spellings,
+and `~` keeps a home or checkout path with a space out of the command). Optionally `replied` (thread ids the
+implementer already replied to) and `mode: resolve-only` (see **Resolve only**). If one is missing, report
+`outcome: error` and stop.
 
 ## Rules
 
@@ -31,7 +34,7 @@ fixing them). If one is missing, report `outcome: error` and stop.
   - `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>`
   - `CODEX_WAIT_SECS=<n> ~/.claude/skills/ship/codex-wait.sh <pr>` (the only environment variable allowed)
   - `~/.claude/skills/ship/codex-findings.sh <pr>`
-  - `~/.claude/skills/ship/codex-triage.sh <pr> <triage file>`
+  - `~/.claude/skills/ship/codex-triage.sh <pr> <triage file (Bash)>`
   - `gh pr view <pr> ...` and `gh pr checks <pr> ...` (add `-R <slug>`), without `--web`
 - **Never** call `gh api`, post or edit a comment, request a review by hand, resolve a thread, or retry a denied
   call by another route. When a write is denied or a script fails, stop that step and report it under `denied:`.
@@ -41,27 +44,46 @@ fixing them). If one is missing, report `outcome: error` and stop.
 
 ## The round
 
-1. `codex-round.sh <pr> <slug>` prints how many rounds the PR has used. If it prints 3 or more, report
-   `outcome: round-cap` and stop. This round is that number plus one.
-2. `codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). It waits until GitHub shows `<sha>` as the PR's
-   head, then posts `@codex review`. If a request for this head is already out it says so and posts nothing:
-   carry on. Any failure: `outcome: error` with its message (never post the comment by hand).
+With `mode: resolve-only`, skip to **Resolve only** instead.
+
+1. `codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). It waits until GitHub shows `<sha>` as the PR's
+   head, then posts `@codex review`, unless a request for this head is already out (it says so and posts
+   nothing), or the PR has already used 3 rounds and none is pending (exit 4, nothing posted). Exit 0: a request
+   for this head is pending, whether just posted or already there. Exit 4: `outcome: round-cap`, stop. Any
+   other failure: `outcome: error` with its message (never post the comment by hand).
+2. `codex-round.sh <pr> <slug>` prints how many rounds the PR has used, the pending one included. That number is
+   this review's round, and the **Outcomes** table's column. Take it after every request step, never before:
+   a pending third round is still processed, and a round isn't "the count plus one".
 3. If `replied` has thread ids, resolve them now, before waiting: open threads keep the status at `failure`, so
    the wait would return at once. Write the triage file (see **Triage file**) with one
-   `{"thread": "<id>", "outcome": "resolve"}` entry per id, and run `codex-triage.sh <pr> <triage file>`. If that
-   is denied or fails, report `outcome: error` with `denied:` and stop.
+   `{"thread": "<id>", "outcome": "resolve"}` entry per id, and run `codex-triage.sh`. If that is denied or
+   fails, report `outcome: error` with the `denied:` and `done:` lines (see **Report**) and stop.
 4. Wait: `CODEX_WAIT_SECS=570 codex-wait.sh <pr>` with Bash timeout 600000. Read its exit code:
    - 0: it printed the status line. Check that it ends with `(<sha>)`; if it names another commit, the PR moved:
      `outcome: error`, `stopped because: the PR head is now <that sha>`.
    - 1: still pending. Run it once more (so about 19 minutes in all), then `outcome: timeout`.
    - 2: `outcome: error` with the message.
-   - 3: a stall, or a completion nobody asked for. Run step 2 once more, then wait again from step 4. A second
-     exit 3 for this head: `outcome: stalled`.
+   - 3: a stall, or a completion nobody asked for, so only a new request clears it. Once per head: go back to
+     step 1 (the request step applies the cap: exit 4 is `outcome: round-cap`), then step 2 again for the new
+     round (a stalled request isn't counted, so the round stays; a "finished more than once" one is, so the
+     round rises and its column applies), then wait again from step 4. A second exit 3 for this head:
+     `outcome: stalled`.
 5. `gh pr checks <pr> -R <slug>`: `ci: pass` if all pass, `fail` if any failed, `pending` otherwise (its non-zero exit is
    the result, not an error).
 6. `codex-findings.sh <pr>`: one block per unresolved Codex thread: `<thread id> <P0..P3 or P?> <path>:<line>`,
    its title, its first paragraph. A status of `failure` with no thread (Codex's review itself failed) is
    `outcome: error`, quoting the status.
+
+## Resolve only
+
+The implementer sends this when it judged every finding of a round not valid, so it made no commit and a new
+review would only cost a round for the same head. Don't request or wait. `replied` must hold the thread ids
+(none: `outcome: error`).
+1. Write the triage file with one `resolve` entry per id and run `codex-triage.sh` (see **Triage file**). It ends
+   by rechecking the status itself. Denied or failed: `outcome: error` with the `denied:` and `done:` lines, stop.
+2. `codex-round.sh <pr> <slug>` for the round, then `gh pr checks <pr> -R <slug>` and `codex-findings.sh <pr>`.
+   No thread left: `outcome: clean`. Otherwise sort what is left by the **Outcomes** table at that round and
+   report as for a round (`reviewed: -`).
 
 ## Outcomes
 
@@ -78,7 +100,7 @@ any is `fix`; else `clean` (no thread, or only issue threads, now triaged).
 
 ## Triage file
 
-Write the file named in the message with the Write tool. If it already exists, Read it first (Write refuses to
+Write `triage file (Write)` with the Write tool. If it already exists, Read it first (Write refuses to
 overwrite a file you haven't read). It is a JSON array, and `codex-triage.sh` validates it:
 
 ```
@@ -88,11 +110,13 @@ overwrite a file you haven't read). It is a JSON array, and `codex-triage.sh` va
 ```
 
 For the `issue` threads, plus a `resolve` entry per `replied` id not already resolved in step 3, run
-`codex-triage.sh <pr> <triage file>` once. It files the issues, replies and resolves, and rechecks the status
-itself. If it is denied or fails, put the thread ids and the file path under `denied:` for the orchestrator;
-don't try again another way.
+`codex-triage.sh <pr> <triage file (Bash)>` once. It files the issues, replies and resolves, and rechecks the
+status itself. It stops at the first failed call and prints `done:` (the threads finished) and `failed:` (the
+thread and step) on stderr. If it is denied or fails, don't try again another way: report what it printed (see
+**Report**), because a failed call may have done part of its work and the orchestrator must not replay the file
+as it is.
 
-## Report (12 lines or fewer)
+## Report (14 lines or fewer)
 
 ```
 outcome: clean | fix | stop | round-cap | stalled | timeout | error
@@ -100,6 +124,8 @@ round: <n>   reviewed: <sha the status named>   ci: pass | fail | pending
 fix: <thread id> <priority> <path:line> <title>     (one line per thread; omit if none)
 stop: <thread id> <priority> <path:line> <title>    (omit if none)
 triaged: <thread id> <issue url or resolved>        (omit if none)
-denied: <thread ids> <triage file path> <what was denied>   (omit if none)
+denied: <what was denied or failed, with the script's failed: line word for word>   (omit if none)
+done: <the thread ids the script printed under done:, or "none">   (with denied; omit otherwise)
+file: <triage file (Write) path>   (with denied; omit otherwise)
 stopped because: <reason, for stop, round-cap, stalled, timeout and error>
 ```
