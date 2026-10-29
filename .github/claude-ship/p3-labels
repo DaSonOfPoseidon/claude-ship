@@ -4,6 +4,7 @@
 hooks/*                  area:gate
 tests/gate-*             area:gate
 tests/p3-issue.sh        area:gate
+tests/explorer-bash.sh   area:skill
 skills/*                 area:skill
 agents/*                 area:skill
 action.yml               area:action
