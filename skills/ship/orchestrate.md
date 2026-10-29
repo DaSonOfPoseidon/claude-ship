@@ -51,6 +51,7 @@ Read only `AGENTS.md` › `## PR loop`, if the repo has it. A missing setting ta
 | checks | the check command in CLAUDE.md |
 | ready label | `status:ready` |
 | skip labels | none; also skip anything needing hardware, research or a design decision |
+| priority labels | none: oldest first |
 | merge | `no`: stop when a PR is ready and tell the user. `yes`: merge it yourself |
 
 ## State: GitHub, plus one plan file
@@ -60,7 +61,7 @@ Nothing about progress is kept locally. After `/clear` or compaction, work it ou
 | What | Where |
 |---|---|
 | plans | `$(git rev-parse --path-format=absolute --git-common-dir)/claude-ship/`: `loop.md` (a master plan from an objective) and `plan-<branch slug>.md` per unit. Shared by every worktree, outside the repo's files |
-| queue | the master plan's units without a merged PR on their branch; else the open issues with the ready label minus the skip labels, oldest first unless the master plan orders them |
+| queue | the master plan's units without a merged PR on their branch; else the open issues with the ready label minus the skip labels, by the priority labels in the order listed, then oldest first, unless the master plan orders them |
 | in flight | your open PRs whose head branch is a planned unit's (`gh pr list --author @me --json number,headRefName`) |
 | done | merged PRs on those branches |
 

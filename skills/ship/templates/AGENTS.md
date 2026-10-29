@@ -35,5 +35,6 @@ against them.
 - checks: `<the full check command>`
 - ready label: `status:ready`
 - skip labels: `<labels for work that needs hardware, research or a decision>`
+- priority labels: `<highest first, comma-separated>`
 - merge: no
 -->
