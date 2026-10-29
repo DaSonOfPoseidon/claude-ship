@@ -114,3 +114,8 @@ review finds a new class.
 - **A doc of an allowlist can read backwards.** `docs/gate.md` said options "outside the allowed list" block and then
   listed the allowed ones (claude-ship #29). Say which side the list is ("only these pass; any other blocks") and
   check each list against the code it describes.
+- **A checker that stops at `--` misses options after it.** `--` is the end of options only when it is an option,
+  not an option's argument: in `git grep -e -- --open-files-in-pager=/tmp/helper`, the first `--` is `-e`'s pattern,
+  so git still parses the pager option and runs the helper (claude-ship #68, `hooks/explorer-bash.sh`). Check every
+  word, before and after any `--`, and accept refusing a pathspec that looks like a denied option. The same goes
+  for any word a checker skips: option values (`-e`, `-f`, `--jq`) can look like anything.

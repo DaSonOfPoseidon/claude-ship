@@ -64,7 +64,8 @@ git)
 	esac
 	for a in "$@"; do
 		case $a in
-		--) break ;;
+		# A bare -- is not trusted to end the options (it can be -e's pattern), so every word after it is checked too.
+		--) ;;
 		--*) hit "$a" --output --ext-diff --textconv --no-index --open-files-in-pager && deny "git option $a" ;;
 		# A cluster of short options: -o and -O write a file or open a pager, and may be bundled (-nO).
 		-*[oO]*) deny "git option $a" ;;

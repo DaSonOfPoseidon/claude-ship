@@ -52,6 +52,18 @@ expect 2 'git grep -O less foo'
 expect 2 'git grep -nOless foo'
 expect 2 'git grep --open-files-in-pager=less foo'
 expect 2 'git log -o x'
+# Denied: a `--` is no terminator to trust. It can be an option's argument (-e's pattern), so words after it are
+# checked like any other, and a pathspec that looks like a denied option is refused too.
+expect 2 'git grep -e -- --open-files-in-pager=/tmp/helper'
+expect 2 'git grep -e -- --output=x'
+expect 2 'git log -- --output=x'
+expect 2 'git diff -- --ext-diff'
+expect 2 'git log -- -o x'
+expect 2 'gh api x -- -X POST'
+expect 2 'gh api x -- --method PATCH'
+expect 2 'gh pr view 1 -- --web'
+expect 0 'git log --oneline -- hooks/review-gate.sh'
+expect 0 'git diff HEAD -- README.md docs'
 # Denied: options before the subcommand.
 expect 2 'git -c core.pager=sh log'
 expect 2 'git -C /tmp log'

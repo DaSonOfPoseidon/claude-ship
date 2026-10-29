@@ -124,7 +124,9 @@ there, and no `settings.json` entry is needed.
 - **Options that write or run something.** git: `--output`, `--ext-diff`, `--textconv`, `--no-index`,
   `--open-files-in-pager`, and `-o` / `-O`. git accepts any unambiguous abbreviation of a long option and bundled
   short options (`-nO`), so a long option denies when it abbreviates or extends one of these, and a short cluster
-  denies when it holds `o` or `O` (so `-Sfoo` is refused too). gh: `-f`, `-F`, `--field`, `--raw-field`, `-X`,
+  denies when it holds `o` or `O` (so `-Sfoo` is refused too). Every word is checked, including those after a
+  `--`, which can be an option's argument rather than the end of options (`git grep -e -- --open-files-in-pager=x`),
+  so a pathspec that looks like one of these is refused. gh: `-f`, `-F`, `--field`, `--raw-field`, `-X`,
   `--method`, `--input` (the short ones also bundled: `-XPOST`) and any `mutation`, in any case; `--web` / `-w`
   for `view` and `diff`. gh's long options can't be abbreviated, so those match exactly.
 - **Left out.** `ls`, `cat`, `wc`, `head`, `tail`: the explorer has Read, Grep and Glob, and the prose never
