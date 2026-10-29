@@ -109,6 +109,10 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      only these.
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
      flow** below.
+   - `codex: error` with `ship-codex` having ended early (its error says the wait was still running or was
+     denied a `sleep`/`cat`, so no round was lost): the review is still going. Use the **fallback flow**'s wait
+     yourself, and don't start another `ship-codex` or request again. (Its wait is meant to end its turn and
+     wait for the completion notification, #142.)
 5. **Fallback flow (the implementer couldn't start `ship-codex`).** It requested round 1 and stopped. Then:
    - Run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command (nothing chained after it),
      with the exit codes as in the ship skill's step 3.4. Since your own checkout isn't on the PR's branch,

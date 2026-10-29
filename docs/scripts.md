@@ -241,6 +241,10 @@ hook decides, not what Claude Code does with it.
   `gh pr view|checks <pr> ...`. `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
   with no part starting with `-`, no part that is `.`, and no `..` anywhere, a sha is 40 lowercase hex characters. Nothing else may precede or follow: any other variable
   (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, and `CODEX_WAIT_SECS` only before the wait.
+- **A poll is denied with a hint.** The agent runs `codex-wait.sh` in the background and ends its turn until the
+  completion notification arrives. A command that starts with `sleep`, `cat`, `tail` or `head` (polling the
+  wait's output) still denies like any other, but the reason adds "don't poll: end your turn and wait for
+  codex-wait.sh's completion notification" (claude-ship #142). It allows nothing new.
 - **gh.** Only `pr view` and `pr checks`, after a PR number. `--web`, and any short option cluster holding `w`,
   deny, as does the same word after a `--` (which can be an option's argument), so every word is checked.
 - **The triage file** lives in a fixed directory, `~/.claude/state/claude-ship/`, named

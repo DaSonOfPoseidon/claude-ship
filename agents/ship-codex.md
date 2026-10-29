@@ -33,7 +33,8 @@ implementer already replied to), `mode: resolve-only` (see **Resolve only**) or 
   quotes, redirects, `$(...)`, and no `cd`):
   - `~/.claude/skills/ship/codex-round.sh <pr> <slug>`
   - `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>`
-  - `CODEX_WAIT_SECS=<n> ~/.claude/skills/ship/codex-wait.sh <pr>` (the only environment variable allowed)
+  - `~/.claude/skills/ship/codex-wait.sh <pr>`, optionally with `CODEX_WAIT_SECS=<n>` before it (the only
+    environment variable allowed; the round doesn't need it)
   - `~/.claude/skills/ship/codex-findings.sh <pr>`
   - `~/.claude/skills/ship/codex-triage.sh <pr> <triage file (Bash)>`
   - `gh pr view <pr> ...` and `gh pr checks <pr> ...` (add `-R <slug>`), without `--web`
@@ -59,10 +60,25 @@ With `mode: resolve-only` or `mode: triage-only`, skip to **Resolve only** or **
    the wait would return at once. Write the triage file (see **Triage file**) with one
    `{"thread": "<id>", "outcome": "resolve"}` entry per id, and run `codex-triage.sh`. If that is denied or
    fails, report `outcome: error` with the `denied:` and `done:` lines (see **Report**) and stop.
-4. Wait: `CODEX_WAIT_SECS=570 codex-wait.sh <pr>` with Bash timeout 600000. Read its exit code:
+4. Wait: `~/.claude/skills/ship/codex-wait.sh <pr>`, one call with its default cap of 1200 s, run on purpose in
+   the background (`run_in_background: true`), alone, nothing chained after it. Then **end your turn without
+   any report text** and wait for its completion notification. The wait takes up to 20 minutes and the
+   notification is what tells you it is done, so:
+   - Never poll: no `sleep`, `cat`, `tail` or `head`, and no rereading the output file, while it runs (the hook
+     denies them, and a denial is not a failure of the round).
+   - Never report before the notification arrives. A report you send early is the round's result as far as the
+     implementer is concerned, and it ends your run: an `outcome: error` sent because the wait "hadn't
+     finished" was wrong on PR #141 (claude-ship #142).
+   - When the notification arrives, Read the output file it names (the Read tool is allowed once the job has
+     ended) for the status line, and take the exit code from the notification.
+   - If the call returns directly, with its output and exit code and no background task, use them as they are
+     and don't wait for a notification.
+   - Send exactly one final report per run, after this step's result is in.
+
+   Read its exit code:
    - 0: it printed the status line. Check that it ends with `(<sha>)`; if it names another commit, the PR moved:
      `outcome: error`, `stopped because: the PR head is now <that sha>`.
-   - 1: still pending. Run it once more (so about 19 minutes in all), then `outcome: timeout`.
+   - 1: still pending after the cap: `outcome: timeout`.
    - 2: `outcome: error` with the message.
    - 3: a stall, a request Codex never acknowledged, or a completion nobody asked for, so only a new request
      clears it. Once per head: go back to
