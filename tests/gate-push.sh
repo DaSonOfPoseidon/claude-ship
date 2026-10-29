@@ -292,6 +292,47 @@ expect_budget REVIEW_GATE_MIN_SECS=3000 2 none none 'ran out of time'
 # A budget that isn't a number blocks rather than reading as zero or as no limit.
 expect_budget REVIEW_GATE_BUDGET=abc 2 none none 'REVIEW_GATE_BUDGET'
 expect_budget REVIEW_GATE_BUDGET=0100 2 none none 'REVIEW_GATE_BUDGET'
+
+# A gate that can't read the tool call blocks it instead of reading it as nothing (claude-ship #103): with no jq at
+# all (nojq holds only what the script runs before it looks for jq), with a jq that fails, and with input jq rejects.
+mkdir -p "$tmp/nojq" "$tmp/jbin"
+for t in cat dirname date; do
+	ln -s "$(command -v "$t")" "$tmp/nojq/$t"
+done
+printf '#!/bin/sh\nexit 127\n' >"$tmp/jbin/jq"
+chmod +x "$tmp/jbin/jq"
+
+# expect_input <exit code> <stderr text> <bin dir, or - for the usual PATH> <input JSON>
+expect_input() {
+	if [ "$3" = - ]; then
+		printf '%s' "$4" | PATH=$tmp/rbin:$PATH /bin/sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	else
+		printf '%s' "$4" | PATH=$3 /bin/sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	fi
+	rc=$?
+	if [ "$rc" != "$1" ] || { [ -n "$2" ] && ! grep -q "$2" "$tmp/err"; }; then
+		echo "FAIL (exit $rc, want $1; stderr wants '$2', bin $3): $4"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+bash_call=$(jq -nc --arg d "$repo" '{tool_name: "Bash", tool_input: {command: "ls"}, cwd: $d}')
+write_call=$(jq -nc '{tool_name: "Write", tool_input: {file_path: "/tmp/x", content: "x"}}')
+mcp_call=$(jq -nc '{tool_name: "mcp__x__y", tool_input: {}}')
+for call in "$bash_call" "$write_call" "$mcp_call"; do
+	expect_input 2 'needs jq' "$tmp/nojq" "$call"
+	expect_input 2 "couldn't read" "$tmp/jbin:$tmp/rbin:$PATH" "$call"
+done
+expect_input 2 "couldn't read" - 'not json'
+expect_input 2 "couldn't read" - ''
+expect_input 2 "couldn't read" - '{}'
+# Valid JSON that jq reads but not as a tool call of that shape is as unreadable.
+expect_input 2 "couldn't read" - '{"tool_name":"Bash","tool_input":"git push origin HEAD"}'
+expect_input 2 "couldn't read" - '{"tool_name":"Write","tool_input":{"file_path":"/p/.claude/settings.json","edits":5}}'
+expect_input 2 "couldn't read" - '{"tool_name":"mcp__x__push_files","tool_input":"x"}'
+# A tool the gate doesn't look at still passes, and so does a Bash call that isn't a push.
+expect_input 0 '' - '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}'
+expect_input 0 '' - "$bash_call"
 # Nothing is pushed, so a dirty tree is no reason to block a data-only command, but it still blocks a push.
 : >"$repo/dirty"
 expect_review 0 'gh pr comment 7 --body "git push origin HEAD"' none

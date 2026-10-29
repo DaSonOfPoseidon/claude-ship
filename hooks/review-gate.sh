@@ -55,8 +55,21 @@ autonomous() {
 	esac
 }
 
+# Without jq the gate can't tell what it's looking at, and a hook that fails is not a hook that said no (Claude Code
+# lets the call through unless the registration has "onFailure": "block"; README › Install). So it blocks every
+# call it sees, and so it does for any call jq can't read: an empty result would pass as "not a push".
+command -v jq >/dev/null 2>&1 || {
+	echo "Blocked: the review gate needs jq (https://jqlang.org), and it isn't installed, so it can't tell what this call does. Install jq and retry." >&2
+	exit 2
+}
+unreadable() {
+	echo "Blocked: the review gate couldn't read this tool call ($1), so it can't tell whether it pushes. Retry; if it keeps failing, tell the user." >&2
+	exit 2
+}
+
 input=$(cat)
-tool=$(printf '%s' "$input" | jq -r '.tool_name // ""')
+tool=$(printf '%s' "$input" | jq -r '.tool_name // ""') || unreadable "tool name"
+[ -n "$tool" ] || unreadable "no tool name"
 
 case $tool in
 # GitHub MCP tools that write code or PRs, matched by tool name so any server name works. A call that names
@@ -64,7 +77,7 @@ case $tool in
 mcp__*__push_files | mcp__*__create_or_update_file | mcp__*__delete_file | mcp__*__create_branch | \
 	mcp__*__create_pull_request | mcp__*__update_pull_request | mcp__*__update_pull_request_branch | \
 	mcp__*__merge_pull_request)
-	slug=$(printf '%s' "$input" | jq -r '"\(.tool_input.owner // "")/\(.tool_input.repo // "")"')
+	slug=$(printf '%s' "$input" | jq -r '"\(.tool_input.owner // "")/\(.tool_input.repo // "")"') || unreadable "MCP owner and repo"
 	[ "$slug" != / ] || exit 0
 	if ! flag=$(autonomous "$slug"); then
 		echo "Blocked: couldn't read CLAUDE_AUTONOMOUS for $slug, so the review gate can't tell whether it guards it. Use \`git push\` and \`gh pr create\` instead." >&2
@@ -77,13 +90,16 @@ mcp__*__push_files | mcp__*__create_or_update_file | mcp__*__delete_file | mcp__
 	exit 0
 	;;
 Write | Edit | MultiEdit | NotebookEdit)
-	path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""')
+	path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""') || unreadable "file path"
 	# Protected: the installed gate, prompts, skill and ship agents, the gate's state and the settings that register
-	# it. A project's own settings may change, but not to turn hooks off.
+	# it. A project's own settings may change, but not to turn hooks off. The new text is read on its own, since a
+	# pipeline's status is grep's, and a jq failure would read as "no disableAllHooks".
+	written=
+	if printf '%s' "$path" | grep -Eq '\.claude/settings'; then
+		written=$(printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")') || unreadable "text written"
+	fi
 	if printf '%s' "$path" | grep -Eq "^$HOME/\.claude/(hooks/|settings|skills/ship/|agents/ship-)|\.git/review-gate(/|$)" ||
-		{ printf '%s' "$path" | grep -Eq '\.claude/settings' &&
-			printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")' |
-			grep -q disableAllHooks; }; then
+		printf '%s' "$written" | grep -q disableAllHooks; then
 		echo "Blocked: the review gate's script, prompts, settings and state are the user's to change." >&2
 		exit 2
 	fi
@@ -93,7 +109,7 @@ Bash) ;;
 *) exit 0 ;;
 esac
 
-cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
+cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""') || unreadable "command"
 
 # `git push` (also with global options, anywhere in a chain) and `gh pr create`. `/` counts as a boundary before
 # git and gh (`/usr/bin/git`); `.`, `_` and `-` don't (`.git/`, `my-gh`). push_scope allows only `-C`.
@@ -122,7 +138,7 @@ def dquoted:
 	elif startswith("\\") then (.[1:] as $c | if $c == "\n" or $c == "" then "" else ($c | enc(false)) end)
 	else . end)
 | join("")'
-words=$(printf '%s' "$input" | jq -r ".tool_input.command // \"\" | $shell_words")
+words=$(printf '%s' "$input" | jq -r ".tool_input.command // \"\" | $shell_words") || unreadable "command words"
 
 # Turns the markers on stdin back into the characters they stand for.
 unmark() {
@@ -374,7 +390,7 @@ fi
 
 # Where the command runs: the session's directory, then a `cd <dir>`, then `git -C <dir>`. More than one `cd`,
 # or one this can't follow, blocks rather than guessing which branch is pushed.
-where=$(printf '%s' "$input" | jq -r '.cwd // ""')
+where=$(printf '%s' "$input" | jq -r '.cwd // ""') || unreadable "working directory"
 [ -n "$where" ] || where=$PWD
 start=$where
 # `cd`s are counted in both forms (`c''d`); the target is read from the raw command, so one only the words show
