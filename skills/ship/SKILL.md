@@ -46,7 +46,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    finds a new class." AGENTS.md's Known pitfalls section links to it, and the gate shows it to reviewers.
 5. Create the label `review:p3` (`gh label create review:p3 --color c5def5 --description "Minor finding from an AI review"`).
    If the repo's issue conventions need more labels on auto-filed P3s, write the per-file label map
-   `.github/claude-ship/p3-labels` (format in claude-ship's README) and ask the user to set the variables:
+   `.github/claude-ship/p3-labels` (format in claude-ship's README; give every path an area and a `*` rule
+   for priority and status, since the PR loop only picks up labeled issues) and ask the user to set the variables:
    `! gh variable set CLAUDE_P3_LABELS --body "review:p3,<more>"`, and optionally `CLAUDE_P3_TYPE_LABEL`
    (e.g. `bug`) and `CLAUDE_P3_MILESTONE` (`auto`).
 6. Show the user the invariants you wrote, then ship the branch with the steps below.

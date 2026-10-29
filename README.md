@@ -89,8 +89,10 @@ scripts/*       area:ci
 ```
 
 If no label is a type (`bug`, `documentation`, `enhancement`, `type:*`), `CLAUDE_P3_TYPE_LABEL` is added.
-Labels the repo doesn't have are skipped. With `CLAUDE_P3_MILESTONE=auto`, the issue goes in the milestone of
-the branch's open PR, else of the one milestone its commits' `fixes #N` issues share, else none.
+Labels the repo doesn't have are skipped. Give every path its triage labels (an area per path, and a `*` rule
+for priority and status), because the PR loop only picks up labeled issues. With `CLAUDE_P3_MILESTONE=auto`, the
+issue goes in the milestone of the branch's open PR, else of the one milestone its commits' `fixes #N` issues
+share, else none.
 
 The repo then needs `AGENTS.md` › `## Code Review Rules` (the skill's bootstrap writes it). Codex reads the
 same section.

@@ -134,6 +134,42 @@ unset V_CLAUDE_P3_TYPE_LABEL
 	exit "$fail"
 ) || fail=1
 
+# This repo's own map, as the default branch's, gives every tracked path an area, a priority and a status (#93).
+(
+	unset V_CLAUDE_P3_TYPE_LABEL V_CLAUDE_P3_MILESTONE
+	export V_CLAUDE_P3_LABELS=review:p3
+	printf '%s\n' review:p3 bug documentation area:gate area:action area:skill area:install area:docs \
+		priority:high priority:medium priority:low status:ready status:needs-decision >"$tmp/labels"
+	real=$tmp/real
+	git init -q -b main "$real"
+	mkdir -p "$real/.github/claude-ship"
+	cp "$root/.github/claude-ship/p3-labels" "$real/.github/claude-ship/p3-labels"
+	git -C "$real" add -A
+	git -C "$real" -c user.name=t -c user.email=t@t commit -q -m map
+	git -C "$real" remote add origin https://github.com/acme/app.git
+	git -C "$real" push -q -f "$tmp/origin.git" HEAD:refs/heads/main
+	git -C "$root" ls-files >"$tmp/paths"
+	while IFS= read -r path; do
+		jq -n --arg f "$path" '{file: $f, title: "t", body: "b"}' >"$tmp/finding.json"
+		if ! (cd "$real" && PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json") >"$tmp/out" 2>"$tmp/err"; then
+			echo "FAIL: $path wasn't filed"
+			fail=1
+			continue
+		fi
+		got=$(grep -A1 -x -- --label "$tmp/args" | grep -vx -e --label -e --)
+		for kind in area priority status; do
+			printf '%s\n' "$got" | grep -q "^$kind:" || {
+				echo "FAIL: $path gets no $kind: label from p3-labels, only: $(printf '%s' "$got" | paste -sd, -)"
+				fail=1
+			}
+		done
+	done <"$tmp/paths"
+	# Put the first repo's map back as origin's main for the milestone tests below.
+	git -C "$repo" push -q -f "$tmp/origin.git" main:refs/heads/main
+	exit "$fail"
+) || fail=1
+printf '%s\n' review:p3 milestone:later area:core area:transport area:docs area:ci status:ready bug documentation >"$tmp/labels"
+
 # Milestones only with CLAUDE_P3_MILESTONE=auto: the PR's, else the fixed issue's (#3), else none.
 PR_MS=X MS_3=Y expect src/x.c review:p3,milestone:later,status:ready ''
 export V_CLAUDE_P3_MILESTONE=auto
