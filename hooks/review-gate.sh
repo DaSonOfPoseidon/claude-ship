@@ -694,6 +694,12 @@ for push_cmd in "$cmd" "$words"; do
 	fi
 done
 
+# A data-only command pushes nothing (its quoted words are data), so there is nothing to review or to block on (#91).
+# `gh pr create` is the exception: it is gated like a push, since the PR would cover an unreviewed HEAD.
+if [ -n "$data_only" ] && ! printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+pr[[:space:]]+create[[:space:]]'; then
+	exit 0
+fi
+
 if [ -n "$(git status --porcelain)" ]; then
 	echo "Blocked: the working tree has uncommitted changes. Commit or stash them first; the review covers HEAD, which is what gets pushed." >&2
 	exit 2
