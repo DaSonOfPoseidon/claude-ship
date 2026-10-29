@@ -35,11 +35,11 @@ jobs:
         github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
         github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
-    # One run per PR at a time, never cancelled: a cancelled run shows as a red check, and two runs writing one
-    # status at once could let a stale read overwrite a newer result. GitHub keeps only the newest queued run, and
-    # the last run to start reads the latest state; a queued run replaced before it starts shows as cancelled
-    # (cosmetic, the status stays right). This is on the job, after the filter, so other people's comments
-    # can't queue a check.
+    # One run per PR at a time. A running run is never cancelled (that showed as a red check), and two runs
+    # writing one status at once could let a stale read overwrite a newer result. GitHub keeps only the newest
+    # queued run, and the last run to start reads the latest state. A queued run replaced before it starts still
+    # shows as cancelled, but the `codex-review` status that branch protection reads comes from the newer run,
+    # so it stays right. This is on the job, after the filter, so other people's comments can't queue a check.
     concurrency:
       group: codex-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
       cancel-in-progress: false
