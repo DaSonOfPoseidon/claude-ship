@@ -124,13 +124,15 @@ right-hand column.
 - When a finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in the same push.
 
 **Apply the outcomes in one call.** Write the triage to a JSON file in your scratchpad with the Write tool:
-`[{"thread": "<id>", "outcome": "not-valid" | "issue" | "fixed", "reply": "<text>", "issue": {"file": "<path>",
-"title": "<path>: <summary>", "body": "<finding>"}}]` (`issue` only for that outcome; thread ids as
-`codex-findings.sh` prints them). Then run `~/.claude/skills/ship/codex-triage.sh <pr> <that file>` from the PR's
-checkout. For each entry it files the issue (adding its link to the reply), posts the reply and resolves the
-thread. Include a fixed thread only once its fix is committed, so the reply can name the commit. It validates
-the whole file before any call and stops at the first failure, naming the threads done: check that thread for a
-half-applied reply before rerunning without the done ones.
+`[{"thread": "<id>", "outcome": "not-valid" | "issue" | "fixed" | "resolve", "reply": "<text>", "issue":
+{"file": "<path>", "title": "<path>: <summary>", "body": "<finding>"}}]` (`issue` only for that outcome; `reply`
+is not needed for `resolve`; thread ids as `codex-findings.sh` prints them). Then run
+`~/.claude/skills/ship/codex-triage.sh <pr> <that file>` from the PR's checkout. For each entry it files the
+issue (adding its link to the reply), posts the reply and resolves the thread; a `resolve` entry only resolves
+the thread, for one that already has its reply (an implementer replied to it). Include a fixed thread only once
+its fix is committed, so the reply can name the commit. It validates the whole file before any call and stops
+at the first failure, naming the threads done: check that thread for a half-applied reply before rerunning
+without the done ones.
 
 Then:
 - **Something was fixed:** go back to step 2 (the gate reviews only the new commits) and request the next

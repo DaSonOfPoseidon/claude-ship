@@ -4,9 +4,12 @@
 # triages: in orchestrated mode that is the orchestrator, since subagents can't resolve threads (#100).
 # Usage: codex-triage.sh <pr> <triage.json> [owner/repo]   (repo defaults to the current checkout's)
 # triage.json is a non-empty array of
-#   {"thread": "<id from codex-findings.sh>", "outcome": "not-valid" | "issue" | "fixed", "reply": "<text>",
-#    "issue": {"file": "<path>", "title": "<title>", "body": "<finding>"}}   (issue only for "issue")
+#   {"thread": "<id from codex-findings.sh>", "outcome": "not-valid" | "issue" | "fixed" | "resolve",
+#    "reply": "<text>", "issue": {"file": "<path>", "title": "<title>", "body": "<finding>"}}
+# reply is required except for "resolve" (a thread already replied to: only resolved, any reply is ignored);
+# issue is for "issue" only.
 # When no entry is "fixed" (no new push will recheck the status), it ends by running the codex-review workflow.
+# A "resolve" entry's push is already done, and it ran while the thread was open.
 # Exits 2 on bad arguments or an invalid file, before any call; 1 at the first failed call.
 set -eu
 if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
@@ -20,11 +23,12 @@ file=$2
 if ! jq -e '
 	def nonempty: type == "string" and length > 0;
 	type == "array" and length > 0 and all(.[];
-		type == "object" and (.thread | nonempty) and (.reply | nonempty)
-		and (.outcome | IN("not-valid", "issue", "fixed"))
+		type == "object" and (.thread | nonempty)
+		and (.outcome | IN("not-valid", "issue", "fixed", "resolve"))
+		and (if .outcome == "resolve" then (.reply == null or (.reply | type == "string")) else (.reply | nonempty) end)
 		and ((.outcome == "issue") == (.issue != null))
 		and (.issue == null or (.issue | type == "object" and all(.file, .title, .body; nonempty))))' "$file" >/dev/null 2>&1; then
-	echo "codex-triage: $file must be a non-empty array of {thread, outcome (not-valid|issue|fixed), reply, issue (only for outcome issue: file, title, body)}" >&2
+	echo "codex-triage: $file must be a non-empty array of {thread, outcome (not-valid|issue|fixed|resolve), reply (not needed for resolve), issue (only for outcome issue: file, title, body)}" >&2
 	exit 2
 fi
 slug=${3:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
@@ -50,20 +54,24 @@ i=0
 while [ "$i" -lt "$n" ]; do
 	id=$(jq -j ".[$i].thread" "$file")
 	outcome=$(jq -j ".[$i].outcome" "$file")
-	reply=$(jq -j ".[$i].reply" "$file")
+	reply=$(jq -j ".[$i].reply // empty" "$file")
 	url=
 	if [ "$outcome" = issue ]; then
 		jq ".[$i].issue" "$file" >"$tmp/issue.json"
 		url=$(sh "$p3" "$slug" "$tmp/issue.json") || stop "$id" issue
 		reply=$reply$(printf '\n\n%s' "$url")
 	fi
+	# A fixed thread's push is still to come and rechecks the status. A resolve entry's push already ran, with the
+	# thread open, so it doesn't count: the status needs the recheck below.
 	[ "$outcome" != fixed ] || fixed=1
-	# The reply goes in a variable (-f is a raw string; -F would read a body starting with @ as a file).
-	# shellcheck disable=SC2016 # GraphQL variables, not shell ones
-	gh api graphql -f id="$id" -f body="$reply" -f query='
-		mutation($id: ID!, $body: String!) {
-			addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } }
-		}' >/dev/null || stop "$id" reply
+	if [ "$outcome" != resolve ]; then
+		# The reply goes in a variable (-f is a raw string; -F would read a body starting with @ as a file).
+		# shellcheck disable=SC2016 # GraphQL variables, not shell ones
+		gh api graphql -f id="$id" -f body="$reply" -f query='
+			mutation($id: ID!, $body: String!) {
+				addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } }
+			}' >/dev/null || stop "$id" reply
+	fi
 	# shellcheck disable=SC2016 # GraphQL variables, not shell ones
 	gh api graphql -f id="$id" -f query='
 		mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }' >/dev/null || stop "$id" resolve

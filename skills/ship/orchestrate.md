@@ -100,17 +100,18 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    - **Not valid / file an issue:** do it yourself, in one call: write the entries to a JSON file with the
      Write tool and run `~/.claude/skills/ship/codex-triage.sh <pr> <file>` (format in the ship skill's step 4).
      It files the issues, replies and resolves. It is yours to run, not the implementer's: subagents can't
-     resolve threads (#100). When the round also sends fixes, leave those threads out of the file (the
-     implementer replies to them and you resolve them below); the status recheck the script then ends with is
-     harmless, because the fix's push triggers the next one.
+     resolve threads (#100). When the round also sends fixes, hold these entries and run the file once after
+     the implementer's report, with its replied threads added as `resolve` entries (see the **Fix** bullet).
    - **Fix:** send the findings, with thread ids and what each fix should be, to the same implementer
      (`SendMessage` to its id), adding "request the next round" only when `codex-round.sh <pr>` is below 3.
      If its id is gone (after `/clear`), replace it
      (see **Replacing an implementer**), and give the new one the plan file and the findings.
      The implementer only replies to its threads; it doesn't resolve them (auto mode denies subagents that
-     call, #100). So after its report, resolve each thread its `replied:` lines list (`resolveReviewThread`,
-     with the thread id) before the next wait or recheck. A round where it stopped early resolves only the
-     threads its `replied:` lines list, and threads it never replied to stay open.
+     call, #100). So after its report, add each thread its `replied:` lines list to the round's triage file
+     as a `{"thread": "<id>", "outcome": "resolve"}` entry (one `codex-triage.sh` call for the whole round),
+     before the next wait or recheck. A round where it stopped early resolves only the threads its `replied:`
+     lines list, and threads it never replied to stay open. The script then ends with the status recheck, since
+     the implementer's push ran while those threads were still open.
    - **Nothing to fix:** the script has already rechecked the status (`gh workflow run codex-review.yml`).
 
    Then back to 4. Rounds are capped at 3 as in the ship skill.
