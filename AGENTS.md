@@ -54,4 +54,8 @@ Classes of bug past reviews caught here are in [`docs/pitfalls.md`](docs/pitfall
 
 ## PR loop
 
+- checks: `shellcheck --shell=sh --severity=warning install.sh hooks/*.sh scripts/*.sh skills/ship/*.sh tests/*.sh && for t in tests/*.sh; do sh "$t" || exit 1; done && docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7`
+- ready label: `status:ready`
+- skip labels: `status:needs-decision`
+- priority labels: `priority:high`, `priority:medium`, `priority:low`
 - merge: yes
