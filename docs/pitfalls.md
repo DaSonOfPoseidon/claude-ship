@@ -65,7 +65,7 @@ review finds a new class.
   push: a leading `cd <dir> &&`, harmless redirects (`2>&1`, `/dev/null`) and trailing pipes into read-only
   filters (`tail`, `head`, `cat`, `grep`). Run everything else in its own command first. A push that only the raw command shows
   (`sh -c "…; git push"`, `eval`) is quoted text to a word scanner but still runs, so it gets the same check;
-  only the ship skill's own `gh pr/issue create/edit/comment` is exempt.
+  only the ship skill's own `gh pr/issue create/edit/comment/close` is exempt.
 - **A permission that looks like it belongs to one step may serve others.** Dropping `actions/checkout` took
   `contents: read` with it, but the status script's activity lookup needed it too (claude-ship #18). Before
   removing a permission, list every API call that runs under the token, and keep each permission they need.
