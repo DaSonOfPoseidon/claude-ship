@@ -22,6 +22,11 @@ done
 case "\$*" in
 *'graphql'*) exit 0 ;;
 *'/activity'*) f=activity ;;
+*'/issues/comments/'*'/reactions'*)
+	# Only asked for when a request is old and nothing else shows Codex started: a missing file is a test failure.
+	[ -f "$tmp/reactions.json" ] || { echo "unexpected reactions call: \$*" >&2; exit 1; }
+	f=reactions
+	;;
 *'/pulls/1/reviews'*) f=reviews ;;
 *'/pulls/1'*) f=pr ;;
 *'/issues/1/comments'*) f=comments ;;
@@ -64,8 +69,9 @@ expect() {
 	# ROW replaces the row, for a review still running.
 	row=${ROW:-$row}
 	{
-		printf '%s\n' "$6" | jq -Rn '[inputs | split(" ") | select(length == 2)
-			| {user:{login:"u",type:"User"},author_association:.[1],created_at:.[0],body:"@codex review"}]'
+		# EYES is the 👀 count on every request (the list shows counts, not who reacted).
+		printf '%s\n' "$6" | jq -Rn --argjson eyes "${EYES:-0}" '[inputs | split(" ") | select(length == 2)
+			| {id:777,user:{login:"u",type:"User"},author_association:.[1],created_at:.[0],body:"@codex review",reactions:{eyes:$eyes}}]'
 		printf '%s\n' "$7" | jq -Rn '[inputs | split(" ") | select(.[0] == "receipt")
 			| {user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},author_association:"NONE",created_at:.[1],
 			body:"<!-- codex-review-receipt:v1 -->"}]'
@@ -204,5 +210,54 @@ stall running 960 "$running" with_msg 'Waiting for Codex' expect pending 'runnin
 STATE_SHA=$sha
 stall running 960 "$running" with_msg 'stalled' expect pending 'running state of the head' '`7ca1cc3`' $p $c "$r1" ''
 STATE_SHA=
+
+# claude-ship #133: a request Codex never picked up. The latest trusted request, after the head's push, is
+# CODEX_ACK_SECS (default 300) old and Codex has shown nothing since: no bot 👀 on it, no summary edit, receipt or
+# review after it. The row names another commit, so the head has no review; the summary is 2 h old.
+ago() { jq -rn --argjson s "$1" 'now - $s | todate'; }
+pushed=$(ago 3600)
+other='`0b996f7`'
+AGE=7200
+with_msg 'acknowledged' expect pending 'unacknowledged at 6 min' "$other" "$pushed" $c "$(ago 360) OWNER" ''
+with_msg 'Waiting for Codex' expect pending 'not yet unacknowledged at 4 min' "$other" "$pushed" $c "$(ago 240) OWNER" ''
+# CODEX_ACK_SECS moves the line.
+CODEX_ACK_SECS=600
+export CODEX_ACK_SECS
+with_msg 'Waiting for Codex' expect pending 'ack secs raised' "$other" "$pushed" $c "$(ago 360) OWNER" ''
+unset CODEX_ACK_SECS
+# The bot's 👀 now is a sign of life (checked through the reactions list); anyone else's is not.
+echo '[{"content":"eyes","user":{"login":"chatgpt-codex-connector[bot]"}}]' >"$tmp/reactions.json"
+EYES=1
+with_msg 'Waiting for Codex' expect pending 'bot eyes' "$other" "$pushed" $c "$(ago 360) OWNER" ''
+echo '[{"content":"eyes","user":{"login":"u"}},{"content":"+1","user":{"login":"chatgpt-codex-connector[bot]"}}]' >"$tmp/reactions.json"
+with_msg 'acknowledged' expect pending 'user eyes only' "$other" "$pushed" $c "$(ago 360) OWNER" ''
+EYES=0
+rm -f "$tmp/reactions.json"
+# A review, a receipt or a summary edit after the request is a sign of life; before it, none.
+with_msg 'Waiting for Codex' expect pending 'review after the request' "$other" "$pushed" $c "$(ago 360) OWNER" "review $(ago 100)"
+with_msg 'Waiting for Codex' expect pending 'receipt after the request' "$other" "$pushed" $c "$(ago 360) OWNER" "receipt $(ago 100)"
+with_msg 'acknowledged' expect pending 'review before the request' "$other" "$pushed" $c "$(ago 360) OWNER" "review $(ago 1000)"
+AGE=60
+with_msg 'Waiting for Codex' expect pending 'summary edited after the request' "$other" "$pushed" $c "$(ago 360) OWNER" ''
+AGE=7200
+# A request from before the push was for an earlier head, and an outsider's request proves nothing.
+with_msg 'Waiting for Codex' expect pending 'request before push' "$other" "$(ago 200)" $c "$(ago 360) OWNER" ''
+with_msg 'Waiting for Codex' expect pending 'untrusted request' "$other" "$pushed" $c "$(ago 360) NONE" ''
+# Only the latest request counts: an old unacknowledged one followed by a young one is waiting...
+with_msg 'Waiting for Codex' expect pending 'older unacked, newer young' "$other" "$pushed" $c "$(ago 900) OWNER
+$(ago 100) OWNER" ''
+# ...and followed by an acknowledged one too.
+with_msg 'Waiting for Codex' expect pending 'older unacked, newer acked' "$other" "$pushed" $c "$(ago 900) OWNER
+$(ago 360) OWNER" "review $(ago 100)"
+AGE=0
+# #139: a running review whose request is 16 min old but whose summary was edited a minute ago is not stalled and
+# was acknowledged, so it is plain pending (and codex-request.sh doesn't replace it).
+stall running 60 "$running" with_msg 'Waiting for Codex' expect pending 'old request, fresh summary' '`7ca1cc3`' "$pushed" $c "$(ago 960) OWNER" ''
+# A stall keeps its message when the request is unacknowledged too.
+stall running 2000 "$running" with_msg 'stalled' expect pending 'stalled outranks unacknowledged' '`7ca1cc3`' "$pushed" $c "$(ago 960) OWNER" ''
+# A finished review wins over everything.
+AGE=7200
+expect success 'finished beats unacknowledged' '`7ca1cc3`' "$pushed" "$(ago 100)" "$(ago 360) OWNER" ''
+AGE=0
 
 exit $fail
