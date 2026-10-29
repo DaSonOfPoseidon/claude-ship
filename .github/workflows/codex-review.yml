@@ -35,13 +35,14 @@ jobs:
         github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
         github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
-    # The newest check of a PR supersedes older ones, but a push check and a Codex comment or review check use
-    # separate groups: a Codex comment must not cancel the push check (a cancelled run shows as a red check), and
-    # the status script recomputes from the current state, so whichever writes last is right. This is on the job,
-    # after the filter, so other people's comments can't cancel a check.
+    # One run per PR at a time, never cancelled: a cancelled run shows as a red check, and two runs writing one
+    # status at once could let a stale read overwrite a newer result. GitHub keeps only the newest queued run, and
+    # the last run to start reads the latest state; a queued run replaced before it starts shows as cancelled
+    # (cosmetic, the status stays right). This is on the job, after the filter, so other people's comments
+    # can't queue a check.
     concurrency:
-      group: codex-review-${{ github.event_name == 'pull_request' && 'push' || 'comment' }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
-      cancel-in-progress: true
+      group: codex-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       # claude-ship's v1 tag decides, not this repo's files; it moves (owner only) on release. Changing this ref
