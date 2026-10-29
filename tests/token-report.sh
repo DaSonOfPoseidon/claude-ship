@@ -526,7 +526,7 @@ role model requests input output cache read cache write cost
 gate finder sonnet 1 - - - - \$0.30
 gate verifier haiku 1 - - - - \$0.02
 total 2 0 0 0 0 \$0.32"
-[ "$(wc -l <"$tmp/err")" = 1 ] && grep -q '^token-report.sh: 2 unreadable lines in .*costs.jsonl' "$tmp/err" ||
+[ "$(wc -l <"$tmp/err")" = 1 ] && grep -q '^token-report.sh: skipped 2 unreadable line(s) in .*costs.jsonl' "$tmp/err" ||
 	{ echo 'FAIL: want one warning counting the 2 unreadable log lines'; cat "$tmp/err"; fail=1; }
 # A PR's rows are the same asked alone.
 run 90
@@ -549,7 +549,7 @@ total 3 0 0 0 0 ?'
 
 # A log with nothing for the PR, or an empty one, reads like no log at all.
 : >"$tmp/costs.jsonl"
-gate 2026-10-01T10:10:00Z acme/app nothere finder sonnet 5
+gate 2026-10-05T10:10:00Z acme/app nothere finder sonnet 5
 run 93
 check 'log without rows for the PR' 0 'PR #93 n (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
 no usage found'

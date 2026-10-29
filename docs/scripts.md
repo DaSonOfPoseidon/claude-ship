@@ -143,7 +143,7 @@ of the status script ends the wait with its error.
 
 ## `skills/ship/token-report.sh`
 
-Reads only this repo's transcripts, keeps no state and calls no model.
+Reads only this repo's transcripts, the gate's cost log and `gh`, keeps no state and calls no model.
 
 **Attribution.** A main-session request belongs to the PR whose window holds its timestamp. A PR's own window
 runs from the earlier of its creation and its first commit, to the merge, else to the close of a PR closed
@@ -164,6 +164,19 @@ the window back to the session's start. A whole subagent transcript belongs to t
 request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
 printed. A session started in a worktree logs under that directory's own slug, so neither it nor its subagents
 are counted.
+
+**Gate runs** (#110). The gate's reviewers leave no transcript, but `hooks/review-gate.sh` appends one row per run
+to `~/.claude/state/review-costs.jsonl` (`$CLAUDE_REVIEW_COSTS` overrides the path, for tests). Each PR gets `gate
+<stage>` rows (grouped by stage and model; the token columns show `-`, the cost is the sum of `cost_usd`), counted
+in the total's requests and cost. A run with `cost_usd: null` makes its row and the total `?`, and a run that
+failed (`rc` not 0) still counts. A row is the PR's when its repo is this one and either its `head` is one of the
+PR's commits (from the `gh pr view` call that reads the window, no extra call) or its head is no commit of any PR
+read (the asked ones and the author's others) and its `date` is in the PR's own window (the widening doesn't
+apply: the gate runs at a push), which catches heads since rewritten by an amend or rebase. Where own windows
+overlap the latest-started takes it, as for requests, and a head that is another PR's commit never counts by
+window. A missing log means no gate rows. A line that isn't JSON or lacks `repo`, `head`, `stage` or `date` is
+skipped with one stderr warning giving the count, so a corrupt log isn't read as cheap; a log that exists but can't
+be read is an error.
 
 **Prices.** USD per MTok, from the claude-api skill's `shared/models.md` (cached 2026-10-06). `w5` and `w1` are
 the 5-minute and 1-hour cache writes; `big` replaces `std` when a request's prompt (input + cache read + cache
