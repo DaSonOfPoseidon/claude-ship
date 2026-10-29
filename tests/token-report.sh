@@ -16,6 +16,11 @@ case "$1 $2" in
 	[ "$4 $5" = "-R acme/app" ] || { echo "gh pr view without -R acme/app: $*" >&2; exit 1; }
 	cat "$GH_DIR/pr-$3.json"
 	;;
+"pr list")
+	[ -f "$GH_DIR/list.json" ] || { echo "pr list failed" >&2; exit 1; }
+	[ "$3 $4 $5 $6 $7 $8" = "-R acme/app --author me --state all" ] || { echo "gh pr list with wrong arguments: $*" >&2; exit 1; }
+	cat "$GH_DIR/list.json"
+	;;
 *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
 EOF
@@ -33,17 +38,25 @@ export GH_DIR
 P=$tmp/projects
 D=$P/$slug
 
-# fresh: empties the fixtures and the transcript dir.
+# fresh: empties the fixtures and the transcript dir; the author has no PR besides the ones given to plist.
 fresh() {
 	rm -rf "$GH_DIR" "$P"
 	mkdir -p "$GH_DIR" "$D"
+	echo '[]' >"$GH_DIR/list.json"
+}
+
+# plist <n|created|merged|closed>...: what `gh pr list` returns for the author (an empty field is null).
+plist() {
+	printf '%s\n' "$@" | jq -R -s -c 'split("\n") | map(select(. != "") | split("|") as $f
+		| {number: ($f[0] | tonumber), createdAt: $f[1], mergedAt: (if $f[2] == "" then null else $f[2] end),
+		closedAt: (if $f[3] == "" then null else $f[3] end)})' >"$GH_DIR/list.json"
 }
 
 # pr <n> <title> <created> <merged or empty> [<first commit authored> [<closed at>]]
 # With <closed at> and no <merged>, the PR is closed without merging; with neither it is open.
 pr() {
 	jq -n --arg t "$2" --arg c "$3" --arg m "$4" --arg a "${5:-}" --arg x "${6:-}" \
-		'{title:$t,createdAt:$c,mergedAt:(if $m == "" then null else $m end),
+		'{title:$t,author:{login:"me"},createdAt:$c,mergedAt:(if $m == "" then null else $m end),
 		state:(if $m != "" then "MERGED" elif $x != "" then "CLOSED" else "OPEN" end),
 		closedAt:(if $m != "" then $m elif $x != "" then $x else null end),
 		commits:(if $a == "" then [] else [{authoredDate:$a}] end)}' >"$GH_DIR/pr-$1.json"
@@ -113,8 +126,9 @@ S=$D/sess1
 line "$S.jsonl" req_a 2026-10-01T10:30:00.100Z claude-opus-5-5 100000 10000 1000000 200000 200000 0
 line "$S.jsonl" req_a 2026-10-01T10:30:00.200Z claude-opus-5-5 100000 50000 1000000 200000 200000 0
 line "$S.jsonl" req_a 2026-10-01T10:30:00.300Z claude-opus-5-5 100000 20000 1000000 200000 200000 0
-# 1 s before the window starts and 1 s after it ends: not counted.
-line "$S.jsonl" req_early 2026-10-01T09:29:59.900Z claude-opus-5-5 9000000 0 0 0
+# 1 s before the window starts (in an older session, which the window doesn't widen to) and 1 s after it
+# ends: not counted.
+line "$D/old.jsonl" req_early 2026-10-01T09:29:59.900Z claude-opus-5-5 9000000 0 0 0
 line "$S.jsonl" req_late 2026-10-01T12:00:01.000Z claude-opus-5-5 9000000 0 0 0
 # Within the end second (mergedAt carries no milliseconds): counted. 250000 in + 100000 cache write with no
 # cache_creation split (priced as 5m): 1.00 + 0.50 = $1.50.
@@ -176,7 +190,7 @@ main claude-opus-5-5 1 250000 0 0 0 $1.00
 total 1 250000 0 0 0 $1.00
 peak main context: 250000 tokens
 
-PR #21 two (2026-10-01T11:00:00 → 2026-10-01T13:00:00)
+PR #21 two (2026-10-01T10:30:00 → 2026-10-01T13:00:00)
 role model requests input output cache read cache write cost
 main claude-opus-5-5 2 750000 0 0 0 $3.00
 ship-implementer claude-sonnet-5-5 2 1000000 0 0 0 $2.00
@@ -230,6 +244,7 @@ no usage found'
 fresh
 pr 50 'abandoned' 2026-10-01T10:00:00Z '' '' 2026-10-01T12:00:00Z
 pr 51 'later' 2026-10-20T09:00:00Z 2026-10-20T11:00:00Z
+plist '50|2026-10-01T10:00:00Z||2026-10-01T12:00:00Z'
 S=$D/s
 line "$S.jsonl" c1 2026-10-01T11:00:00.000Z claude-opus-5-5 250000 0 0 0
 line "$S.jsonl" c2 2026-10-20T10:00:00.000Z claude-opus-5-5 500000 0 0 0
@@ -241,14 +256,14 @@ main claude-opus-5-5 1 250000 0 0 0 $1.00
 total 1 250000 0 0 0 $1.00
 peak main context: 250000 tokens
 
-PR #51 later (2026-10-20T09:00:00 → 2026-10-20T11:00:00)
+PR #51 later (2026-10-01T12:00:00 → 2026-10-20T11:00:00)
 role model requests input output cache read cache write cost
 main claude-opus-5-5 1 500000 0 0 0 $2.00
 total 1 500000 0 0 0 $2.00
 peak main context: 500000 tokens'
 
 # A closed PR with no closedAt is an error, not an open one that runs to now.
-printf '%s\n' '{"title":"odd","state":"CLOSED","createdAt":"2026-10-01T10:00:00Z","mergedAt":null,"closedAt":null,"commits":[]}' >"$GH_DIR/pr-52.json"
+printf '%s\n' '{"title":"odd","author":{"login":"me"},"state":"CLOSED","createdAt":"2026-10-01T10:00:00Z","mergedAt":null,"closedAt":null,"commits":[]}' >"$GH_DIR/pr-52.json"
 run 52
 if [ "$rc" = 0 ] || [ -s "$tmp/out" ]; then
 	echo "FAIL: closed PR without closedAt (exit $rc)"
@@ -257,7 +272,194 @@ if [ "$rc" = 0 ] || [ -s "$tmp/out" ]; then
 fi
 grep -q 'PR #52' "$tmp/err" || { echo 'FAIL: no message for the closed PR without closedAt'; cat "$tmp/err"; fail=1; }
 
+# --- main-session work before a PR's first commit counts (#80): the window starts at the end of the author's
+# previous PR or the start of the session, whichever is later, and never after its own start.
+# PR 60: created 11:00, first commit 10:30; the session's first request, a planning one, is 10:00 (30 minutes
+# before the first commit). An older session's request at 09:59 is not counted.
+fresh
+pr 60 'planned' 2026-10-01T11:00:00Z 2026-10-01T12:00:00Z 2026-10-01T10:30:00Z
+line "$D/old.jsonl" o1 2026-10-01T09:59:00.000Z claude-opus-5-5 9000000 0 0 0
+line "$D/s.jsonl" p1 2026-10-01T10:00:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" p2 2026-10-01T11:30:00.000Z claude-opus-5-5 250000 0 0 0
+run 60
+check 'planning before the first commit' 0 'PR #60 planned (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 500000 0 0 0 $2.00
+total 2 500000 0 0 0 $2.00
+peak main context: 250000 tokens'
+
+# PR 61 merged at 12:00 and PR 62 (first commit 13:00) in one session: the 12:30 request is PR 62's, the
+# 11:00 one PR 61's, and the one after PR 62's merge is nobody's.
+fresh
+pr 61 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 62 'b' 2026-10-01T13:00:00Z 2026-10-01T14:00:00Z
+plist '61|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '62|2026-10-01T13:00:00Z|2026-10-01T14:00:00Z|2026-10-01T14:00:00Z' '63|2026-10-02T00:00:00Z||'
+pr 63 'o' 2026-10-02T00:00:00Z ''
+S=$D/s
+line "$S.jsonl" q1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$S.jsonl" q2 2026-10-01T11:00:00.000Z claude-opus-5-5 250000 0 0 0
+line "$S.jsonl" q3 2026-10-01T12:30:00.000Z claude-opus-5-5 500000 0 0 0
+line "$S.jsonl" q4 2026-10-01T13:30:00.000Z claude-opus-5-5 500000 0 0 0
+line "$S.jsonl" q5 2026-10-01T14:30:00.000Z claude-opus-5-5 9000000 0 0 0
+run 61 62
+check 'two PRs in one session' 0 'PR #61 a (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 500000 0 0 0 $2.00
+total 2 500000 0 0 0 $2.00
+peak main context: 250000 tokens
+
+PR #62 b (2026-10-01T12:00:00 → 2026-10-01T14:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 1000000 0 0 0 $4.00
+total 2 1000000 0 0 0 $4.00
+peak main context: 500000 tokens'
+
+# An earlier PR that merged before this session began: the session's first request bounds the window, so an
+# unrelated older session's request (10-04) after that merge isn't counted.
+fresh
+pr 64 'later' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
+plist '63|2026-10-03T10:00:00Z|2026-10-03T12:00:00Z|2026-10-03T12:00:00Z'
+pr 63 'e' 2026-10-03T10:00:00Z 2026-10-03T12:00:00Z
+line "$D/old.jsonl" o2 2026-10-04T09:00:00.000Z claude-opus-5-5 9000000 0 0 0
+line "$D/s.jsonl" b1 2026-10-05T09:00:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" b2 2026-10-05T10:30:00.000Z claude-opus-5-5 250000 0 0 0
+run 64
+check 'session start bounds the window' 0 'PR #64 later (2026-10-05T09:00:00 → 2026-10-05T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 500000 0 0 0 $2.00
+total 2 500000 0 0 0 $2.00
+peak main context: 250000 tokens'
+
+# A session that began before an earlier merge doesn't pull that PR's work in: the merge bounds the window.
+fresh
+pr 65 'x' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
+plist '66|2026-10-05T07:30:00Z|2026-10-05T08:00:00Z|2026-10-05T08:00:00Z'
+pr 66 'f' 2026-10-05T07:30:00Z 2026-10-05T08:00:00Z
+line "$D/s.jsonl" c1 2026-10-05T07:00:00.000Z claude-opus-5-5 9000000 0 0 0
+line "$D/s.jsonl" c2 2026-10-05T10:30:00.000Z claude-opus-5-5 250000 0 0 0
+run 65
+check 'earlier merge bounds the window' 0 'PR #65 x (2026-10-05T08:00:00 → 2026-10-05T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+
+# The numbers don't depend on which PRs are asked for: PR 70 (10:00..12:00) and PR 71 (11:00..13:00) in one
+# session with requests at 09:40 (inside PR 70's own window, which starts at its 09:30 first commit, not its
+# creation), 10:15 (also PR 70's) and 12:15 (inside PR 71's only). Asking for PR 71 alone drops the first two
+# (PR 70's, though not asked for) rather than giving them to PR 71's widened window.
+fresh
+pr 70 'p' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z 2026-10-01T09:30:00Z
+pr 71 'q' 2026-10-01T11:00:00Z 2026-10-01T13:00:00Z
+plist '70|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '71|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z'
+line "$D/s.jsonl" w0 2026-10-01T09:40:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" w1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" w2 2026-10-01T12:15:00.000Z claude-opus-5-5 500000 0 0 0
+run 71
+check 'asking for the later PR alone' 0 'PR #71 q (2026-10-01T09:40:00 → 2026-10-01T13:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+total 1 500000 0 0 0 $2.00
+peak main context: 500000 tokens'
+run 70 71
+check 'asking for both' 0 'PR #70 p (2026-10-01T09:30:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 500000 0 0 0 $2.00
+total 2 500000 0 0 0 $2.00
+peak main context: 250000 tokens
+
+PR #71 q (2026-10-01T09:40:00 → 2026-10-01T13:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+total 1 500000 0 0 0 $2.00
+peak main context: 500000 tokens'
+# An open PR the author has (not asked for) owns its window up to now.
+plist '70|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '71|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z' '72|2026-10-01T12:10:00Z||'
+pr 72 'r' 2026-10-01T12:10:00Z ''
+run 71
+check 'an open PR not asked for owns its window' 0 'PR #71 q (2026-10-01T09:40:00 → 2026-10-01T13:00:00)
+no usage found'
+
+# Failing to read one of the author's other PRs is an error too, not a PR that owns nothing.
+plist '71|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z' '99|2026-10-01T09:00:00Z|2026-10-01T10:00:00Z|2026-10-01T10:00:00Z'
+run 71
+check 'another PR unreadable' 1 ''
+grep -q 'gh pr view 99 failed' "$tmp/err" || { echo 'FAIL: no message for the unreadable other PR'; cat "$tmp/err"; fail=1; }
+
+# --- a PR's section is the same whichever other PRs are asked for (every PR the author has competes for every
+# request, and only the asked PRs are printed). same <a> <b> compares each one's section alone and together.
+section() { awk -v want="#$1" '$1 == "PR" { p = ($2 == want) } p && NF' "$tmp/out"; }
+same() {
+	run "$1" "$2"
+	[ "$rc" = 0 ] || { echo "FAIL (exit $rc): same $1 $2 together"; cat "$tmp/err"; fail=1; return; }
+	section "$1" >"$tmp/both.$1"
+	section "$2" >"$tmp/both.$2"
+	for n in "$1" "$2"; do
+		run "$n"
+		[ "$rc" = 0 ] || { echo "FAIL (exit $rc): same $n alone"; cat "$tmp/err"; fail=1; continue; }
+		section "$n" >"$tmp/alone.$n"
+		if [ ! -s "$tmp/alone.$n" ] || ! cmp -s "$tmp/alone.$n" "$tmp/both.$n"; then
+			echo "FAIL: PR #$n differs alone and with the other"
+			echo '--- alone'
+			cat "$tmp/alone.$n"
+			echo '--- together'
+			cat "$tmp/both.$n"
+			fail=1
+		fi
+	done
+}
+
+# PR 70/71 above (requests at 09:40, 10:15, 12:15).
+fresh
+pr 70 'p' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z 2026-10-01T09:30:00Z
+pr 71 'q' 2026-10-01T11:00:00Z 2026-10-01T13:00:00Z
+plist '70|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '71|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z'
+line "$D/s.jsonl" w0 2026-10-01T09:40:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" w1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" w2 2026-10-01T12:15:00.000Z claude-opus-5-5 500000 0 0 0
+same 70 71
+
+# PR 80 (10:00..12:00) and 81 (11:00..13:00) with a planning request at 09:00 ($4) before both, then 10:15 ($1)
+# and 12:15 ($1): both PRs' windows reach back to 09:00 and the later-started one (81) takes it, however many
+# of the two are asked for.
+fresh
+pr 80 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 81 'b' 2026-10-01T11:00:00Z 2026-10-01T13:00:00Z
+plist '80|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z' '81|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z'
+line "$D/s.jsonl" v0 2026-10-01T09:00:00.000Z claude-opus-5-5 1000000 0 0 0
+line "$D/s.jsonl" v1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" v2 2026-10-01T12:15:00.000Z claude-opus-5-5 250000 0 0 0
+run 80
+check 'the earlier PR alone' 0 'PR #80 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+same 80 81
+
+# `gh pr list` failing exits 1 with its message and prints no table (it is not read as "no earlier PRs").
+fresh
+pr 67 'y' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
+rm "$GH_DIR/list.json"
+run 67
+check 'gh pr list fails' 1 ''
+grep -q 'gh pr list' "$tmp/err" || { echo 'FAIL: no message for the failed pr list'; cat "$tmp/err"; fail=1; }
+
+# `gh pr list` returning something that isn't a list fails the same way.
+echo '{"message":"oops"}' >"$GH_DIR/list.json"
+run 67
+check 'gh pr list returns an object' 1 ''
+grep -q 'gh pr list' "$tmp/err" || { echo 'FAIL: no message for the odd pr list'; cat "$tmp/err"; fail=1; }
+
+# A PR without an author (a deleted account) can't be matched against the list: an error, not "no earlier PRs".
+printf '%s\n' '{"title":"ghost","author":null,"state":"MERGED","createdAt":"2026-10-01T10:00:00Z","mergedAt":"2026-10-01T12:00:00Z","closedAt":"2026-10-01T12:00:00Z","commits":[]}' >"$GH_DIR/pr-68.json"
+run 68
+check 'pr without an author' 1 ''
+grep -q 'PR #68' "$tmp/err" || { echo 'FAIL: no message for the PR without an author'; cat "$tmp/err"; fail=1; }
+
 # --- gh failing on one PR exits 1 with its message and prints no table at all.
+fresh
+pr 50 'abandoned' 2026-10-01T10:00:00Z '' '' 2026-10-01T12:00:00Z
 run 50 999
 check 'gh pr view fails' 1 ''
 grep -q 'no pull request found for 999' "$tmp/err" || { echo 'FAIL: gh error not shown'; cat "$tmp/err"; fail=1; }
