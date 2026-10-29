@@ -51,7 +51,10 @@ review finds a new class.
 - **A status computed from events goes stale when its inputs change some other way.** `codex-review` reruns on
   pushes, reviews and comments, but not when a thread is unresolved, so allowing `unresolveReviewThread` left a
   green status over an open finding (claude-ship #9). Every write a check allows must either trigger it or be
-  unable to change what it counts.
+  unable to change what it counts. Two writers of one status must also be serialized: splitting the workflow's
+  concurrency group so comment runs stop cancelling the push run let a reopened PR's push run read 0 threads and
+  write `success` over a comment run's `failure` (claude-ship #75). Keep one group per PR with
+  `cancel-in-progress: false`, so the last run to start reads the latest state.
 - **A hook sees the whole command at once, but each step runs in the state of its own moment.** The gate
   resolved `{owner}/{repo}` in the directory after a trailing `cd`, while the `gh api` before it ran in the
   first one (claude-ship #9). Check each state a step could run in. State the gate reads up front (git config,
