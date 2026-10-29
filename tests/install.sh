@@ -132,6 +132,7 @@ has() {
 }
 sh_bin=$(command -v sh)
 case_path=$PATH
+# shellcheck disable=SC2088 # the literal text README.md registers
 cmd='~/.claude/hooks/review-gate.sh'
 expected_matcher=$(printf '%s' "$gate" | jq -r '.hooks.PreToolUse[0].matcher')
 gate_with() { printf '%s' "$both" | jq "$@" >"$start"; }
@@ -194,8 +195,10 @@ expect no-hint-warning 0 1
 # Without jq the registration can't be read, so the check fails (the gate needs jq too).
 nojq="$tmp/nojq-bin"
 mkdir -p "$nojq"
+unset -f git
 for t in git tar mktemp mkdir cp rm cat dirname awk sed grep tr head cmp env sort sh cut; do
-	p=$(command -v "$t") && ln -s "$p" "$nojq/$t"
+	p=$(command -v "$t")
+	case $p in /*) ln -s "$p" "$nojq/$t" ;; esac
 done
 printf '%s\n' "$both" >"$start"
 case_path=$nojq

@@ -129,6 +129,9 @@ times out, crashes or exits with anything but 0 or 2, so a slow review would pus
 must stay above the gate's reviewer budget (2200 s by default, `REVIEW_GATE_BUDGET`); the gate also needs `jq`
 and blocks every call without it.
 
+`./install.sh` checks this entry after deploying and prints what to change (the entry above, plus a warning for each
+value that differs); it never edits `settings.json`.
+
 For orchestrated mode, also register the hint hook:
 
 ```json
