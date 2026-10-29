@@ -558,8 +558,8 @@ push_scope() (
 	# into read-only filters: the checks below read git config and refs first, so anything else could change what the
 	# push sends after they passed (docs/gate.md › Push shape). Redirects are taken out first, then every simple
 	# command (split at `;&|()` and newlines) must be one of those.
-	bare=$(printf '%s' "$push_cmd" | sed -E 's/&>>?[[:space:]]*\/dev\/(null|stdout|stderr)/ /g;
-		s/[0-9]*>>?[[:space:]]*\/dev\/(null|stdout|stderr)([^[:alnum:]_.\/-]|$)/ \2/g; s/[0-9]*>&([0-9]+|-)([^[:alnum:]_]|$)/ \2/g')
+	bare=$(printf '%s' "$push_cmd" | sed -E 's/&>>?[[:space:]]*\/dev\/(null|stdout|stderr)([^[:alnum:]_.\/-]|$)/ \2/g;
+		s/[0-9]*>>?[[:space:]]*\/dev\/(null|stdout|stderr)([^[:alnum:]_.\/-]|$)/ \2/g; s/[0-9]*>&([0-9]+|-)([[:space:];&|)]|$)/ \2/g')
 	extra=$(
 		seen=
 		first=1
