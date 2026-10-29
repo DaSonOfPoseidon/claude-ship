@@ -272,6 +272,14 @@ Only `origin/main` is deployed, so what runs has passed review. That holds for t
 fetching, it runs main's copy of itself, so a checkout behind main still deploys what main's installer knows to
 (#20). The gate's hook entry lives in `~/.claude/settings.json` (see the README).
 
+After deploying, it reads that file (never writes it; only the user edits the settings that register the gate) and
+compares the gate's entry with the README snippet from `origin/main`, so the expected values have one source. A
+`matcher`, `timeout` below the README's or `onFailure` other than `"block"` that differs gets a warning (exit 0)
+and the README's entry to paste. It exits 1 when the gate isn't registered at all (no file, invalid JSON, no
+`PreToolUse` hook running `~/.claude/hooks/review-gate.sh` or the absolute path in the target directory) or when
+it can't check (no `jq`; a README without the snippets, which would be a bug here). The orchestrate hint hook is
+optional: a missing one only prints an info line.
+
 ## `action.yml` and the workflows
 
 The status script is the action's own copy, at the ref the caller names (`@v1`, a tag moved on release), so
