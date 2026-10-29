@@ -27,4 +27,15 @@ expect 3 'finished more than once' 'pending: Codex finished more than once since
 expect 3 'not acknowledged' "pending: Codex hasn't acknowledged the request for abc in 5 min; ask again with @codex review (abc)"
 expect 1 'still waiting' 'pending: Waiting for Codex to review abc (abc)'
 expect 2 'status error' 'boom' 1
+
+# A pending status is shown when the cap is hit (exit 1): the foreground agent reads it to decide to call again
+# (claude-ship #147).
+printf '#!/bin/sh\necho "pending: Waiting for Codex to review abc (abc)"\n' >"$tmp/codex-status.sh"
+chmod +x "$tmp/codex-status.sh"
+CODEX_WAIT_SECS=1 sh "$tmp/codex-wait.sh" 1 >"$tmp/out" 2>&1
+got=$?
+if [ "$got" != 1 ] || ! grep -q 'Timed out: pending: Waiting for Codex to review abc' "$tmp/out"; then
+	echo "FAIL (want exit 1 and the pending status in the output, got exit $got): pending cap shows its status"
+	fail=1
+fi
 exit $fail
