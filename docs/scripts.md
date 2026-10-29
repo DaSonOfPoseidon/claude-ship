@@ -51,7 +51,7 @@ commit or that isn't JSON.
 
 **Not acknowledged.** Sometimes Codex never picks a request up at all (#133): no 👀, no summary edit, nothing.
 Without a rule the wait ran its full 20 minutes and the user had to step in. The status is `pending` and says
-so when the latest trusted request came after the head's push, is `CODEX_ACK_SECS` (default 300) old, and
+so when the latest trusted request came after the head's push (or in the same second, as `codex-request.sh` counts it), is `CODEX_ACK_SECS` (default 300) old, and
 Codex has shown no sign of it since: no summary edit, no 👀 of its own on the request, no receipt and no review
 after it. Codex removes its 👀 when a review finishes, and where it puts the 👀 while a review runs isn't
 verified, so any bot activity after the request counts and the 👀 only adds to it. A tie in the second counts

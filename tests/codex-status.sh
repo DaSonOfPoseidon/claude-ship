@@ -243,6 +243,9 @@ AGE=7200
 # A request from before the push was for an earlier head, and an outsider's request proves nothing.
 with_msg 'Waiting for Codex' expect pending 'request before push' "$other" "$(ago 200)" $c "$(ago 360) OWNER" ''
 with_msg 'Waiting for Codex' expect pending 'untrusted request' "$other" "$pushed" $c "$(ago 360) NONE" ''
+# A request in the push's own second belongs to this head (codex-request.sh counts it too), so it can be retried.
+tie=$(ago 360)
+with_msg 'acknowledged' expect pending 'request tied with the push' "$other" "$tie" $c "$tie OWNER" ''
 # Only the latest request counts: an old unacknowledged one followed by a young one is waiting...
 with_msg 'Waiting for Codex' expect pending 'older unacked, newer young' "$other" "$pushed" $c "$(ago 900) OWNER
 $(ago 100) OWNER" ''

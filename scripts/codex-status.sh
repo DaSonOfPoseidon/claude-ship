@@ -129,7 +129,9 @@ after_push() {
 ack_secs=${CODEX_ACK_SECS:-300}
 unacked=
 req=$(echo "$latest_request" | cut -c1-19)
-if later "$req" "$pushed_at"; then
+# A request in the push's own second belongs to this head, as codex-request.sh counts it (>=); otherwise a
+# request tied with the push could never be retried.
+if [ -n "$req" ] && [ -n "$pushed_at" ] && { [ "$req" = "$pushed_at" ] || later "$req" "$pushed_at"; }; then
 	req_epoch=$(jq -rn --arg t "${req}Z" '$t | fromdateiso8601')
 	if [ $(($(date +%s) - req_epoch)) -ge "$ack_secs" ]; then
 		# Not before the request: a tie counts as a sign of life (times compare as text, to the second).
