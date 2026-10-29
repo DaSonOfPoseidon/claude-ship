@@ -21,4 +21,27 @@ cp "$tmp"/hooks/* "$dest/hooks/"
 rm -rf "$dest/skills/ship"
 cp -R "$tmp/skills/ship" "$dest/skills/ship"
 cp "$tmp/scripts/codex-status.sh" "$dest/skills/ship/codex-status.sh"
+# agents/ and hooks/ are shared with the user, so files main stops shipping (a rename, a dropped agent) would
+# stay behind as stale rules. Remember what this install deployed and remove only those files next time; the
+# skill is replaced wholesale above, so it needs no manifest entries.
+manifest=$dest/state/claude-ship-manifest
+mkdir -p "$dest/state"
+: >"$tmp/deployed"
+for f in "$tmp"/agents/ship-*.md; do
+	if [ -f "$f" ]; then printf 'agents/%s\n' "${f##*/}"; fi
+done >>"$tmp/deployed"
+for f in "$tmp"/hooks/*; do
+	if [ -f "$f" ]; then printf 'hooks/%s\n' "${f##*/}"; fi
+done >>"$tmp/deployed"
+if [ -f "$manifest" ]; then
+	while IFS= read -r rel; do
+		case $rel in
+		agents/ship-*.md | hooks/*) ;;
+		*) continue ;;
+		esac
+		grep -Fqx "$rel" "$tmp/deployed" || rm -f "$dest/$rel"
+	done <"$manifest"
+fi
+cp "$tmp/deployed" "$manifest.tmp"
+mv "$manifest.tmp" "$manifest"
 echo "Deployed claude-ship $(git -C "$repo" rev-parse --short origin/main) to $dest."

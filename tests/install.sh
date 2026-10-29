@@ -52,5 +52,26 @@ grep -q "Deployed claude-ship $(git -C "$tmp/src" rev-parse --short HEAD)" "$tmp
 	fail=1
 }
 
+# A hook main renames is removed on the next install; without the deployed-files manifest the old name would stay
+# behind as a stale, still-registered hook (#108). Files the user owns stay either way.
+git -C "$tmp/src" mv hooks/review-verify-prompt.md hooks/review-verifier.md
+git -C "$tmp/src" commit -qm rename
+git -C "$tmp/src" push -q "$tmp/origin.git" main
+if ! CLAUDE_HOME="$tmp/dest" sh "$tmp/checkout/install.sh" >"$tmp/out2" 2>&1; then
+	echo "FAIL: the reinstall after the rename exited non-zero"
+	sed 's/^/  /' "$tmp/out2"
+	fail=1
+fi
+if [ -e "$tmp/dest/hooks/review-verify-prompt.md" ]; then
+	echo "FAIL: the renamed-away hooks/review-verify-prompt.md was left behind"
+	fail=1
+fi
+for f in hooks/review-verifier.md agents/mine.md hooks/review-gate.sh; do
+	[ -e "$tmp/dest/$f" ] || {
+		echo "FAIL: $f wasn't kept"
+		fail=1
+	}
+done
+
 [ "$fail" = 0 ] && echo "install: ok"
 exit "$fail"
