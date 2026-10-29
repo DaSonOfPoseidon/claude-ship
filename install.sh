@@ -1,9 +1,8 @@
 #!/bin/sh
-# Deploys claude-ship's main branch into ~/.claude: the review gate, its prompts and the orchestrate hint into
-# hooks/, the ship agents into agents/, and the ship skill into skills/ship/, with the action's codex-status.sh for local DRY_RUN checks. Only origin/main is
-# deployed, so what runs has passed review; a branch's changes never go live. That holds for this script too:
-# after fetching, it runs main's copy of itself, so a checkout behind main still deploys what main's installer
-# knows to (claude-ship #20). The gate's hook entry lives in ~/.claude/settings.json (see README.md).
+# Deploys claude-ship's origin/main into ~/.claude: the gate, its prompts and the orchestrate hint (hooks/), the
+# ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh for local DRY_RUN
+# checks). Only main is deployed, so a branch's changes never go live; after fetching, this script runs main's
+# copy of itself (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md).
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}

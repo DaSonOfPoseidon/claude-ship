@@ -1,15 +1,10 @@
 name: Codex review
 
-# Sets the `codex-review` status that branch protection requires before merging, with the
-# claude-ship action (its scripts/codex-status.sh). It re-checks when the PR gets a new commit,
-# when Codex posts a review, and when Codex edits its summary comment, which is how it reports a
-# finished review. GitHub runs issue_comment workflows from the default branch.
-# Resolving a thread doesn't trigger workflows, so after resolving run it by hand:
-#   gh workflow run codex-review.yml -f pr=<number>
-# A repo's first PR (the one that adds this file) can't rely on the status: Codex reports a clean
-# review by editing a comment, which runs the default branch's workflow, and that branch doesn't
-# have it yet. Require `codex-review` in branch protection only after that PR merges, or it can't
-# merge without an admin override.
+# Sets the `codex-review` status that branch protection requires, via the claude-ship action. It re-checks on
+# a new commit, a Codex review, or an edit to Codex's summary comment (how it reports a finished review).
+# Resolving a thread triggers nothing, so run it by hand: gh workflow run codex-review.yml -f pr=<number>
+# This file's own PR can't get the status (issue_comment runs the default branch's copy, which lacks it yet):
+# require `codex-review` in branch protection only after that PR merges.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -40,16 +35,15 @@ jobs:
         github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
         github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
-    # The newest check of a PR supersedes older ones, since each reads the current state. This
-    # is on the job, after the filter above, so other people's comments can't cancel a check.
+    # The newest check of a PR supersedes older ones. This is on the job, after the filter, so other people's
+    # comments can't cancel a check.
     concurrency:
       group: codex-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
-      # claude-ship's v1 tag decides, not this repo's files. v1 moves (owner only) when claude-ship
-      # releases, which changes this check here without a PR in this repo. (A PR that changes this ref
-      # needs write access; fork PRs get a read-only token, which can't set statuses.)
+      # claude-ship's v1 tag decides, not this repo's files; it moves (owner only) on release. Changing this ref
+      # needs write access; fork PRs get a read-only token, which can't set statuses.
       - uses: DaSonOfPoseidon/claude-ship@v1
         with:
           pr: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}

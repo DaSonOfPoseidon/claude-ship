@@ -1,7 +1,6 @@
 #!/bin/sh
 # Tests codex-round.sh: a trusted request whose review stalled (Codex's own 👀 still on it after 15 min,
-# openai/codex#55890, claude-ship #61) doesn't use a round. The fake gh below serves fixtures and applies
-# the script's own --jq filters with real jq, so the filters are tested too.
+# claude-ship #61) doesn't use a round. The fake gh serves fixtures and applies the script's own --jq filters.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)

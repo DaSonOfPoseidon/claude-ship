@@ -1,14 +1,9 @@
 #!/bin/sh
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
-# UserPromptSubmit hook: in plan mode, in a GitHub repo where both CLAUDE_AUTONOMOUS and CLAUDE_ORCHESTRATE are
-# `true`, it tells Claude to plan and run the work as the `ship` skill's orchestrated PR loop
-# (skills/ship/orchestrate.md), so the user doesn't have to ask for it (claude-ship #66).
-#   gh variable set CLAUDE_ORCHESTRATE --body true -R <owner/repo>
-# It hints once per session and repo, and looks the variables up only until then.
-#
-# It's a convenience, not a protection: on any error it adds nothing and lets the prompt through. The review
-# gate still reviews every push.
+# UserPromptSubmit hook: in plan mode, in a GitHub repo where CLAUDE_AUTONOMOUS and CLAUDE_ORCHESTRATE are both
+# `true`, it points Claude to the `ship` skill's orchestrated PR loop (skills/ship/orchestrate.md), once per
+# session and repo (claude-ship #66; docs/scripts.md). On any error it adds nothing and lets the prompt through.
 set -u
 
 input=$(cat)

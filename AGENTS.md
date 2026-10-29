@@ -52,7 +52,8 @@ or anything CI already checks (shellcheck, actionlint).
 
 Classes of bug past reviews caught here are in [`docs/pitfalls.md`](docs/pitfalls.md).
 
-Why the gate's checks are shaped as they are: [`docs/gate.md`](docs/gate.md).
+Why the gate's checks are shaped as they are: [`docs/gate.md`](docs/gate.md). The same for the other scripts, the
+action and the workflow: [`docs/scripts.md`](docs/scripts.md).
 
 ## PR loop
 

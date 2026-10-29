@@ -2,20 +2,13 @@
 # Prints each PR's Claude Code usage and API-price cost, split by role (the main session, then each
 # subagent type) and model, plus the main session's peak context. Run it from a checkout of the repo: it reads
 # only this repo's transcripts (~/.claude/projects/<slug>, or $CLAUDE_PROJECTS_DIR/<slug>) and `gh`, keeps no
-# state, and calls no model. A session started in a worktree logs under that directory's own slug, so neither
-# it nor its subagents are counted.
-#
-# A request is attributed by time, with no state file. A main-session request belongs to the PR whose window
-# (the earlier of its creation and its first commit, up to merge or close, or now while open) holds its timestamp; the
-# latest-started window wins an overlap. A whole subagent transcript belongs to the PR whose window holds its
-# last request: implementers start before their first commit but end after a push or a fix round. Anything
-# else is not printed.
+# state, and calls no model. How requests are attributed to PRs: docs/scripts.md.
 # Usage: token-report.sh <pr> [<pr>...]
 set -eu
 
-# USD per MTok, from the claude-api skill's shared/models.md (cached 2026-10-06). w5 and w1 are the 5-minute
-# and 1-hour cache writes; `big` replaces `std` when a request's prompt (input + cache read + cache write)
-# is over 100k tokens. Note the issue (#70) says Sonnet cache reads cost $0.10; the skill docs say $0.20.
+# USD per MTok (the claude-api skill's shared/models.md, cached 2026-10-06). w5 and w1 are the 5-minute and
+# 1-hour cache writes; `big` replaces `std` when a request's prompt (input + cache read + cache write) is over
+# 100k tokens. Issue #70 says Sonnet cache reads cost $0.10; the skill docs say $0.20.
 prices='{
 	"claude-opus-5-5":   {"std": {"i": 4.00, "o": 20.00, "cr": 0.20, "w5": 5.00,  "w1": 8.00}},
 	"claude-sonnet-5-5": {"std": {"i": 2.00, "o": 10.00, "cr": 0.20, "w5": 2.50,  "w1": 4.00}},
@@ -62,9 +55,8 @@ for pr in "$@"; do
 		echo "token-report.sh: gh pr view $pr failed" >&2
 		exit 1
 	}
-	# The window ends at the merge, else at the close of a PR closed unmerged, else now (open). A closed PR
-	# must not run to now: it would swallow every later request. Any other state is an error, not a guess.
-	# Times are compared as text, cut to YYYY-MM-DDTHH:MM:SS (transcripts carry milliseconds).
+	# The window ends at the merge, else at the close of a PR closed unmerged, else now (open); any other state is
+	# an error. Times are cut to YYYY-MM-DDTHH:MM:SS (transcripts carry milliseconds).
 	printf '%s\n' "$info" | jq -c --argjson pr "$pr" --arg now "$now" '
 		(.mergedAt // "") as $m
 		| (.closedAt // "") as $x

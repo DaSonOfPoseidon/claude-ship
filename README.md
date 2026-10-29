@@ -48,7 +48,8 @@ Repos call it at `@v1`; the script is never copied into them:
 
 The triggers, the filter that only Codex's own comments count, and the permissions stay in the caller, since
 an action can't set them; copy the whole template. The script needs `contents`, `issues` and `pull-requests`
-read, and `statuses` write.
+read, and `statuses` write. How it decides, and why a repo's first PR can't get the status, is in
+[`docs/scripts.md`](docs/scripts.md).
 
 **Releasing.** Merging to main changes no repo's guard. To release a merged change, move the tag:
 

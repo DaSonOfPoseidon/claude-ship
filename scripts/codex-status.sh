@@ -1,14 +1,8 @@
 #!/bin/sh
-# Sets the `codex-review` commit status on a PR's head commit:
-#   success  Codex completed a review of the head commit after it was pushed, and every Codex review thread is
-#            resolved. When its summary names no commit, the latest trusted request must have come after the
-#            push and be followed by exactly one completion marker (a new request ends any earlier review).
-#   failure  a Codex thread is unresolved, or Codex's review failed
-#   pending  no completed review of the head commit yet, or Codex's review stalled (it says running but its
-#            summary hasn't changed in CODEX_STALL_SECS, default 900)
-# Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
-# This is the only copy: repos run it through this repo's action (action.yml, called @v1), and install.sh
-# deploys it into the ship skill for local checks.
+# Sets the `codex-review` commit status on a PR's head commit: success (Codex reviewed the head after it was
+# pushed and every Codex thread is resolved), failure (a thread is unresolved, or the review failed) or pending.
+# The rules and design notes are in docs/scripts.md. Repos run this one copy through the action (action.yml,
+# @v1); install.sh deploys it into the ship skill for local checks.
 # Usage: codex-status.sh <pr>. With DRY_RUN=1 it prints the status instead of setting it.
 # Needs `gh` (authenticated, or GH_TOKEN) and REPO (defaults to this repository).
 set -eu
@@ -30,26 +24,22 @@ short=$(echo "$head" | cut -c1-7)
 head_repo=$(gh api "repos/$repo/pulls/$pr" --jq .head.repo.full_name)
 head_ref=$(gh api "repos/$repo/pulls/$pr" --jq .head.ref)
 
-# Each GitHub call is its own assignment, so `set -e` stops on a failed call instead of reading
-# a pipeline's last exit status (an empty result would look like "no findings").
-# When this exact commit was last pushed to the PR's branch, from GitHub's own push records.
-# Codex's summary names commits by a 7-character SHA, which someone could forge a collision
-# for, so a review only counts if it finished after this push. A new branch's first push is
+# Each GitHub call is its own assignment, so `set -e` stops on a failed call.
+# When this exact commit was last pushed to the PR's branch: a review counts only if it finished after, since
+# Codex's summary names commits by a 7-character SHA that could be forged. A new branch's first push is
 # recorded as `branch_creation`, not `push`.
 ref=$(jq -rn --arg r "refs/heads/$head_ref" '$r | @uri')
 pushes=$(gh api --paginate "repos/$head_repo/activity?ref=$ref" \
 	--jq ".[] | select(.activity_type == \"push\" or .activity_type == \"force_push\" or .activity_type == \"branch_creation\") | select(.after == \"$head\") | .timestamp")
 pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 
-# Codex keeps one summary comment per PR and edits it as reviews run. Its Code Review row names
-# the commit it reviewed and the status.
+# Codex keeps one summary comment per PR; its Code Review row names the commit it reviewed and the status.
 summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
-# Codex sometimes leaves a review running forever: 👀 stays on the request, the summary says running and is
-# never edited again (openai/codex#55890, claude-ship #61). After CODEX_STALL_SECS with no summary edit, no
-# trusted request and no push, say so, so the review can be asked for again (a retry Codex hasn't picked up
-# yet isn't a stall). It stays pending. A state that names another commit, or that isn't JSON, isn't a stall.
+# Stalled: Codex says running, but the summary, the latest trusted request and the push are all older than
+# CODEX_STALL_SECS (openai/codex#55890, claude-ship #61). It stays pending, but says so. Another commit's state,
+# or one that isn't JSON, isn't a stall.
 summary_at=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .updated_at")
 latest_request=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
@@ -65,13 +55,8 @@ if [ "$review_state" = running ] && [ -n "$summary_at" ]; then
 		stalled=1
 	fi
 fi
-# A clean review's row can name no commit (`—`, #30). Nothing ties that completion to a request (neither
-# the summary's edit history nor Codex's reactions say which request it answers). A new request ends any
-# review still running on the PR (claude-ship #61: in all 14 overlaps across three repos, only one
-# completion followed), so only the latest trusted request counts. It must have come after this push, and
-# exactly one completion marker (the current one included) must follow it: none means it's still running,
-# and more than one means a completion nobody asked for (an automatic review, #49), so fail closed. A
-# marker at the same second as the request counts as before it.
+# A row naming no commit (`—`, #30) counts only if the latest trusted request came after the push and exactly
+# one completion marker follows it; more than one fails closed (docs/scripts.md).
 requested_at=
 ambiguous=
 if [ -z "$row" ]; then
@@ -79,13 +64,10 @@ if [ -z "$row" ]; then
 	completed=$(echo "$row" | grep -o 'datetime="[^"]*"' | head -1 | cut -d'"' -f2 | cut -c1-19)
 	row_ok=
 	if [ -n "$completed" ]; then
-		# Anyone can comment `@codex review`, so only the owner and collaborators count (an org member
-		# needn't have access to this repository).
+# Only the owner and collaborators can request a review.
 		requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
-		# Earlier completions leave a receipt comment (clean) or a pull request review (findings). Codex
-		# posts the receipt as a comment whose body starts `<!-- codex-review-receipt:v1 -->`, a few seconds
-		# before it edits the summary (seen on OBDCracker #145 and claude-ship #28).
+# Earlier completions leave a receipt comment (clean) or a pull request review (findings).
 		receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 			--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
 		reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \

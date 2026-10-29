@@ -1,12 +1,10 @@
 #!/bin/sh
-# Waits for Codex to finish reviewing a PR's head: runs codex-status.sh (install.sh deploys it next to this
-# script; in claude-ship's source it's scripts/codex-status.sh) with DRY_RUN=1 every 60s until it stops printing `pending`, and prints its last line. A review of an older commit
-# counts as pending, since the status only counts a review of the head.
-# Any failure of the status script ends the wait with its error rather than reading as "not done yet".
-# A pending status that only a new request clears ends it with exit 3: a stalled review (its summary
-# unchanged for CODEX_STALL_SECS, default 900), or a completion nobody asked for ("finished more than once").
-# Usage: codex-wait.sh <pr>   (from anywhere in the checkout; CODEX_WAIT_SECS caps the wait, default 1200,
-# so a stall shows before the cap)
+# Waits for Codex to finish reviewing a PR's head: runs codex-status.sh (next to this script once installed,
+# else scripts/codex-status.sh) with DRY_RUN=1 every 60s until it stops printing `pending`, then prints that
+# line. A review of an older commit counts as pending. Exits 1 on timeout, 2 on usage or if codex-status.sh
+# fails (its error is shown, not read as "not done yet"), and 3 on a pending status that only a new request
+# clears: a stalled review, or one that "finished more than once" (docs/scripts.md).
+# Usage: codex-wait.sh <pr>   (from anywhere in the checkout; CODEX_WAIT_SECS caps the wait, default 1200)
 set -eu
 # A missing PR number exits 2 (usage), so a caller never reads it as a result or a timeout.
 if [ -z "${1:-}" ]; then
