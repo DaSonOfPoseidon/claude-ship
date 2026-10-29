@@ -8,16 +8,21 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fail=0
-git init -q "$tmp/repo"
-mkdir "$tmp/other"
-common=$(git -C "$tmp/repo" rev-parse --path-format=absolute --git-common-dir)
+# The triage file does not depend on the checkout, which may be anywhere, a path with a space included.
+mkdir "$tmp/my repo" "$tmp/other" "$tmp/home"
+git init -q "$tmp/my repo"
+HOME=$tmp/home
+export HOME
 ship='~/.claude/skills/ship'
+# The triage file, as the Bash command names it (the shell expands the ~) and as Write names it (absolute).
+tf='~/.claude/state/claude-ship'
+st=$HOME/.claude/state/claude-ship
 sha=0123456789abcdef0123456789abcdef01234567
 allow='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
 
-# check <exit code> <hook input> [dir]: runs the hook on the input from the repo (or dir).
+# check <exit code> <hook input> [dir]: runs the hook on the input from a checkout whose path has a space (or dir).
 check() {
-	(cd "${3:-$tmp/repo}" && printf '%s' "$2" | sh "$root/hooks/codex-bash.sh" >"$tmp/out" 2>"$tmp/err")
+	(cd "${3:-$tmp/my repo}" &&printf '%s' "$2" | sh "$root/hooks/codex-bash.sh" >"$tmp/out" 2>"$tmp/err")
 	rc=$?
 	if [ "$rc" != "$1" ]; then
 		echo "FAIL (exit $rc, want $1): $2"
@@ -50,7 +55,9 @@ expect 0 "$ship/codex-request.sh 12 o/r $sha"
 expect 0 "$ship/codex-wait.sh 12"
 expect 0 "CODEX_WAIT_SECS=570 $ship/codex-wait.sh 12"
 expect 0 "$ship/codex-findings.sh 12"
-expect 0 "$ship/codex-triage.sh 12 $common/claude-ship/triage-12.json"
+expect 0 "$ship/codex-triage.sh 12 $tf/triage-o+r-12.json"
+expect 0 "$ship/codex-triage.sh 137 $tf/triage-DaSonOfPoseidon+claude-ship-137.json"
+expect 0 "$ship/codex-triage.sh 12 $tf/triage-o+x-12-12.json"
 # Allowed: read-only gh.
 expect 0 'gh pr view 12'
 expect 0 'gh pr view 12 --json headRefOid --jq .headRefOid'
@@ -59,8 +66,12 @@ expect 0 'gh pr checks 12'
 expect 0 'gh pr checks 12 --required'
 expect 0 'gh pr checks 12 -R o/r'
 # Allowed: the triage file, and only it, to write.
-write 0 "$common/claude-ship/triage-12.json"
-write 0 "$common/claude-ship/triage-1.json"
+write 0 "$st/triage-o+r-12.json"
+write 0 "$st/triage-DaSonOfPoseidon+claude-ship-137.json"
+write 0 "$st/triage-o+x-12-12.json"
+# Either works from outside any checkout, and from a path with no space.
+check 0 "$(jq -nc --arg p "$st/triage-o+r-12.json" '{tool_name: "Write", tool_input: {file_path: $p, content: "[]"}}')" "$tmp/other"
+check 0 "$(jq -nc --arg c "$ship/codex-triage.sh 12 $tf/triage-o+r-12.json" '{tool_name: "Bash", tool_input: {command: $c}}')" "$tmp/other"
 
 # Denied: more than one command, or anything the shell would rewrite.
 expect 2 "$ship/codex-round.sh 12; rm x"
@@ -108,17 +119,29 @@ expect 2 "$ship/codex-wait.sh 12 extra"
 expect 2 "$ship/codex-findings.sh"
 expect 2 "$ship/codex-findings.sh 12 o/r"
 expect 2 "$ship/codex-triage.sh 12"
-expect 2 "$ship/codex-triage.sh 12 $common/claude-ship/triage-12.json o/r"
-# Denied: the triage file must be the PR's own, under the repo's claude-ship directory.
-expect 2 "$ship/codex-triage.sh 12 triage-12.json"
-expect 2 "$ship/codex-triage.sh 12 $common/claude-ship/triage-13.json"
-expect 2 "$ship/codex-triage.sh 12 $common/claude-ship/plan-x.md"
-expect 2 "$ship/codex-triage.sh 12 $common/claude-ship/../triage-12.json"
-expect 2 "$ship/codex-triage.sh 12 $common/claude-ship/x/triage-12.json"
-expect 2 "$ship/codex-triage.sh 12 $tmp/other/claude-ship/triage-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o+r-12.json o/r"
+# Denied: the triage file must be the PR's own, in the one directory, named by a repository and the PR number.
+expect 2 "$ship/codex-triage.sh 12 triage-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o+r-13.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o-r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o+r+s-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o/r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o+-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage--o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o+..-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/triage-o+r-12.json.bak"
+expect 2 "$ship/codex-triage.sh 12 $tf/plan-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/../triage-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf/x/triage-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tf//triage-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 ~/.claude/state/triage-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 ~/.claude/hooks/triage-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 ~/.claude/settings.json"
+expect 2 "$ship/codex-triage.sh 12 $st/triage-o+r-12.json"
+expect 2 "$ship/codex-triage.sh 12 $tmp/other/triage-o+r-12.json"
 expect 2 "$ship/codex-triage.sh 12 /etc/passwd"
-expect 2 "$ship/codex-triage.sh 12 $common/claude-ship/triage-12.json.bak"
-expect 2 "$ship/codex-triage.sh 12 $common/triage-12.json"
 # Denied: environment before the script, other than the wait's own cap.
 expect 2 "PATH=/tmp/x $ship/codex-wait.sh 12"
 expect 2 "CODEX_WAIT_SECS=abc $ship/codex-wait.sh 12"
@@ -189,30 +212,49 @@ expect 2 'jq . x.json'
 expect 2 ''
 expect 2 ' '
 # Denied: a Write that isn't the triage file.
-write 2 "$common/claude-ship/triage-12.json.bak"
-write 2 "$common/claude-ship/triage-.json"
-write 2 "$common/claude-ship/triage-x.json"
-write 2 "$common/claude-ship/plan-feat-1.md"
-write 2 "$common/claude-ship/loop.md"
-write 2 "$common/claude-ship/../triage-12.json"
-write 2 "$common/claude-ship/x/../triage-12.json"
-write 2 "$common/claude-ship//triage-12.json"
-write 2 "$common/claude-ship/sub/triage-12.json"
-write 2 "$common/triage-12.json"
-write 2 "$tmp/other/claude-ship/triage-12.json"
-write 2 "$tmp/repo/triage-12.json"
-write 2 "$tmp/repo/claude-ship/triage-12.json"
-write 2 'triage-12.json'
-write 2 'claude-ship/triage-12.json'
-write 2 '/tmp/triage-12.json'
+write 2 "$st/triage-o+r-12.json.bak"
+write 2 "$st/triage-.json"
+write 2 "$st/triage-12.json"
+write 2 "$st/triage-o+r-x.json"
+write 2 "$st/triage-o+r-.json"
+write 2 "$st/triage-o+r.json"
+write 2 "$st/triage-o-r-12.json"
+write 2 "$st/triage-o+r+s-12.json"
+write 2 "$st/triage-o+-12.json"
+write 2 "$st/triage-+r-12.json"
+write 2 "$st/triage--o+r-12.json"
+write 2 "$st/triage-o+..-12.json"
+write 2 "$st/triage-o+r/../x-12.json"
+write 2 "$st/triage-o/r-12.json"
+write 2 "$st/triage-o+r-12-.json"
+write 2 "$st/plan-o+r-12.json"
+write 2 "$st/loop.md"
+write 2 "$st/../triage-o+r-12.json"
+write 2 "$st/x/../triage-o+r-12.json"
+write 2 "$st//triage-o+r-12.json"
+write 2 "$st/sub/triage-o+r-12.json"
+write 2 "$HOME/.claude/state/triage-o+r-12.json"
+write 2 "$HOME/.claude/hooks/triage-o+r-12.json"
+write 2 "$HOME/.claude/skills/ship/triage-o+r-12.json"
+write 2 "$HOME/.claude/agents/triage-o+r-12.json"
+write 2 "$tmp/other/triage-o+r-12.json"
+write 2 "$tmp/my repo/triage-o+r-12.json"
+write 2 "$tmp/my repo/.git/claude-ship/triage-12.json"
+write 2 '~/.claude/state/claude-ship/triage-o+r-12.json'
+write 2 'triage-o+r-12.json'
+write 2 'claude-ship/triage-o+r-12.json'
+write 2 '/tmp/triage-o+r-12.json'
 write 2 '/etc/passwd'
 write 2 "$HOME/.claude/settings.json"
 write 2 "$HOME/.claude/hooks/codex-bash.sh"
-write 2 "$tmp/repo/AGENTS.md"
+write 2 "$tmp/my repo/AGENTS.md"
 write 2 ''
-# A path outside a repository has no claude-ship directory to judge it by.
-check 2 "$(jq -nc --arg p "$common/claude-ship/triage-12.json" '{tool_name: "Write", tool_input: {file_path: $p, content: "[]"}}')" "$tmp/other"
-check 2 "$(jq -nc --arg c "$ship/codex-triage.sh 12 $common/claude-ship/triage-12.json" '{tool_name: "Bash", tool_input: {command: $c}}')" "$tmp/other"
+# Without a home directory there is no triage directory to judge a path by.
+printf '%s' "$(jq -nc --arg p "$st/triage-o+r-12.json" '{tool_name: "Write", tool_input: {file_path: $p, content: "[]"}}')" | HOME='' sh "$root/hooks/codex-bash.sh" >/dev/null 2>&1
+[ $? = 2 ] || {
+	echo "FAIL: a Write with no HOME wasn't denied"
+	fail=1
+}
 # Malformed or unexpected input denies (fail closed).
 check 2 ''
 check 2 'not json'
