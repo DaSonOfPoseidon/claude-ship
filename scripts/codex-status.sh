@@ -43,9 +43,9 @@ row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || 
 summary_at=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .updated_at")
 # One line per trusted request: `<created_at> <id> <👀 count>`. The latest one counts.
-requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+request_lines=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 	--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | "\(.created_at) \(.id) \(.reactions.eyes // 0)"')
-latest=$(printf '%s\n' "$requests" | grep . | sort | tail -1)
+latest=$(printf '%s\n' "$request_lines" | grep . | sort | tail -1)
 latest_request=${latest%% *}
 latest_rest=${latest#* }
 latest_id=${latest_rest%% *}
