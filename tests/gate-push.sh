@@ -362,7 +362,12 @@ expect_review 2 'declare -n ref='\''a[$(git push)]'\''; ref=1' none
 expect_review 2 'echo "git push"; declare -nr ref=x' none
 expect_review 2 'echo "git push"; typeset -n ref=x' none
 expect_review 2 'echo "git push"; f(){ local -n r=x; }' none
-expect_review 0 'echo "git push"; declare -r ref=x; declare -x other=y' none
+expect_review 2 'echo "git push"; declare "-n" ref=x' none
+expect_review 2 'echo "git push"; declare '\''-i'\'' ref=x' none
+expect_review 2 'echo "git push"; declare $f ref=x' none
+expect_review 2 'echo "git push"; declare -$f ref=x' none
+expect_review 2 'echo "git push"; export "$v"' none
+expect_review 0 'echo "git push"; declare -r ref=x; declare -x other=y; export plain' none
 # A path named like a listed tool or wrapper is a script, not that tool.
 expect_review 2 'printf '\''git push'\'' > ./cat; chmod +x ./cat; ./cat' none
 expect_review 2 '/tmp/ls "git push"' none

@@ -336,7 +336,7 @@ def ggcalls:
 	end;
 # Nodes that run text without being a command, or change what a name runs (an assignment to PATH): an indirect or prompt
 # expansion (`${!x}`, `${x@P}`), arithmetic, which
-# evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`, `[[ a -eq b ]]`, `declare -i`, a nameref, `declare -n`),
+# evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`, `[[ a -eq b ]]`, `declare -i`, a nameref, `declare -n`, any declaration flag that is quoted or expanded),
 # and an array subscript. Plain numbers are fine.
 def ggnum: ([.. | objects | select(.Type == "Lit") | .Value] | all(test("^([0-9]+|0[xX][0-9a-fA-F]+)$")))
 	and (any(.. | objects; .Type == "ParamExp") | not);
@@ -346,7 +346,7 @@ def ggnode:
 	elif (.Type == "ArithmExp" or .Type == "ArithmCmd" or .Type == "LetClause" or .Type == "CStyleLoop") then (if ggnum then empty else {k: "ggdyn"} end)
 	elif .Type == "BinaryTest" and ((.Op | tostring) | test("^-(eq|ne|lt|le|gt|ge)$")) then {k: "ggdyn"}
 	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
-	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*[in]"))) then {k: "ggdyn"}
+	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and (([.Value.Parts[]? | .Type] | any(. != "Lit")) or ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*[in]")))) then {k: "ggdyn"}
 	elif has("Index") and .Index != null then {k: "ggdyn"}
 	elif (.Name? | type) == "object" and (.Name.Value? // "" | ggenvname) then {k: "ggdyn"}
 	else empty end;
