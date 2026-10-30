@@ -9,7 +9,8 @@
 #   state: diverged     no PR; local and origin each have commits the other lacks
 #   state: none         no branch anywhere, or one with no commits of its own
 #   ahead: <n>          commits of the branch (its furthest tip) over origin's default branch
-#   unpushed: <n>       local commits origin's copy of the branch lacks
+#   unpushed: <n>       local commits origin's copy of the branch lacks; for a merged PR, the local commits
+#                       missing from the PR's last head (refs/pull/<n>/head), since the branch is usually deleted
 #   origin-only: <n>    origin commits the local branch lacks (with unpushed: diverged)
 #   diverged: yes       diverged, and a PR exists, so the state line is the PR's
 #   worktree: <path>    the worktree that has the branch checked out
@@ -114,13 +115,17 @@ pick=$(jq -r 'if type == "array" and all(.[]; .isCrossRepository | type == "bool
 	else error("not a list of PRs with isCrossRepository") end' "$tmp/prs" 2>/dev/null) ||
 	die "gh pr list printed no JSON list of PRs with isCrossRepository"
 state=
+mergedpr=
 if [ -n "$pick" ]; then
 	prnum=${pick#* }
 	# Only digits come out of this: the number is printed, and the orchestrator passes it to gh.
 	case $prnum in '' | *[!0-9]*) die "gh pr list gave a PR number that isn't a number" ;; esac
 	case ${pick%% *} in
 	OPEN) state="pr-open $prnum" ;;
-	MERGED) state="merged $prnum" ;;
+	MERGED)
+		state="merged $prnum"
+		mergedpr=$prnum
+		;;
 	CLOSED) state="pr-closed $prnum" ;;
 	*) die "gh pr list gave a PR state it doesn't know" ;;
 	esac
@@ -132,6 +137,17 @@ elif [ -n "$originsha" ]; then
 	state=pushed
 else
 	state="local $ahead"
+fi
+
+# A merged PR usually has no branch on origin any more (--delete-branch), so origin's copy can't say what the PR
+# held. GitHub keeps the PR's last head at refs/pull/<n>/head: local commits it lacks never reached the PR, even
+# after a squash merge. This replaces the origin-based count.
+if [ -n "$mergedpr" ] && [ -n "$localsha" ]; then
+	git fetch -q origin "refs/pull/$mergedpr/head" 2>"$tmp/err" ||
+		die "git fetch origin refs/pull/$mergedpr/head failed: $(head -n 3 "$tmp/err")"
+	prhead=$(git rev-parse --verify -q "FETCH_HEAD^{commit}") || die "no commit for PR $mergedpr after the fetch"
+	unpushed=$(count "$prhead" "$localsha")
+	[ "$unpushed" -gt 0 ] || unpushed=
 fi
 
 echo "state: $state"

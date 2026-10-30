@@ -177,6 +177,11 @@ git -C "$work" switch -q -c feat/pr main
 commit "$work" 1
 git -C "$work" push -q origin feat/pr
 git -C "$work" switch -q main
+# GitHub keeps a PR's last head at refs/pull/<n>/head, also after the merge and the branch's deletion.
+prsha=$(git -C "$work" rev-parse feat/pr)
+git -C "$origin" update-ref refs/pull/14/head "$prsha"
+git -C "$origin" update-ref refs/pull/12/head "$prsha"
+git -C "$origin" update-ref refs/pull/15/head "$prsha"
 printf '[{"number":12,"state":"OPEN","isCrossRepository":false}]\n' >"$tmp/pr.feat_pr.json"
 run feat/pr
 want 'open PR' 0 'state: pr-open 12
@@ -241,6 +246,8 @@ rm "$tmp/pr.feat_fork.json"
 git -C "$work" switch -q -c feat/late main
 commit "$work" 1
 git -C "$work" push -q origin feat/late
+git -C "$work" rev-parse feat/late >"$tmp/late.sha"
+git -C "$origin" update-ref refs/pull/40/head "$(cat "$tmp/late.sha")"
 commit "$work" 1
 git -C "$work" switch -q main
 printf '[{"number":40,"state":"MERGED","isCrossRepository":false}]\n' >"$tmp/pr.feat_late.json"
@@ -248,6 +255,27 @@ run feat/late
 want 'merged with an unpushed commit' 0 'state: merged 40
 ahead: 2
 unpushed: 1'
+# The same after a squash merge deleted the branch on origin: origin's copy is gone, but the PR's head says
+# what the PR held.
+git -C "$origin" update-ref -d refs/heads/feat/late
+run feat/late
+want 'merged, branch deleted, unpushed commit' 0 'state: merged 40
+ahead: 2
+unpushed: 1'
+# Nothing after the PR's head: done.
+git -C "$work" branch -f feat/late "$(cat "$tmp/late.sha")"
+run feat/late
+want 'merged, nothing after the PR head' 0 'state: merged 40
+ahead: 1'
+# A merged PR whose head ref GitHub no longer serves can't be compared: an error, not "done".
+git -C "$origin" update-ref -d refs/pull/40/head
+run feat/late
+want 'merged, PR head unavailable' 1 ''
+grep -q 'refs/pull/40/head' "$tmp/stderr" || { echo "FAIL: the missing PR head wasn't named"; fail=1; }
+# A merged PR with no local branch has nothing to compare.
+git -C "$work" branch -D -q feat/late
+run feat/late
+want 'merged, no local branch' 0 'state: merged 40'
 
 # A PR number that isn't a number is not a result.
 printf '[{"number":"1;id","state":"OPEN","isCrossRepository":false}]\n' >"$tmp/pr.feat_div.json"
