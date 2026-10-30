@@ -170,6 +170,19 @@ expect 2 'f() { rm ~/.claude/hooks/x; }; f'
 expect 2 'diff <(rm ~/.claude/hooks/x) /dev/null'
 expect 2 'true && { rm ~/.claude/hooks/x; }'
 expect 2 '(cd /tmp; rm ~/.claude/hooks/x)'
+# A writing tool behind a wrapper the gate doesn't list, or a `>` in one word with a protected path in another (an awk
+# program next to its file), is read by the text check, as before (the gate's own review of this change, #135).
+expect 2 'flock /tmp/l rm ~/.claude/hooks/x'
+expect 2 'watch rm ~/.claude/hooks/x'
+expect 2 'ionice -c3 rm ~/.claude/hooks/x'
+expect 2 'busybox rm ~/.claude/hooks/x'
+expect 2 'taskset 1 cp /tmp/x ~/.claude/hooks/x'
+expect 2 'strace -o /tmp/t sed -i s/a/b/ ~/.claude/hooks/x'
+expect 0 'ionice -c3 ls ~/.claude/hooks'
+expect 0 'flock /tmp/l ls ~/.claude/hooks'
+expect 2 "awk '{ print > \"out\" }' ~/.claude/hooks/x"
+expect 2 "awk '{ print > \"/tmp/o\" }' ~/.claude/settings.json"
+expect 0 "awk '{ print }' ~/.claude/settings.json"
 # A wrapper option the gate doesn't know, a script on stdin and a pipe into a writing tool fall back to the text.
 expect 2 'sudo -i rm ~/.claude/hooks/x'
 expect 2 'timeout --bogus 5 rm ~/.claude/hooks/x'

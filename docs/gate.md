@@ -229,6 +229,9 @@ read, so a quoted `>` counts. It runs when:
 - a word of a simple command or a write redirect's target is dynamic;
 - a wrapper can't be unwrapped, or `xargs` or `find -exec` hands arguments the command line doesn't show to a
   writing tool (with no protected word among its words) or to a shell or `eval`;
+- a writing tool's name (or `sed`, `python`, `perl`) is a later word of a command, behind a wrapper the gate doesn't
+  list (`flock`, `ionice`, `watch`, `busybox`), with a protected word among the words;
+- one word of a command holds a `>` and another names a protected path (`awk '{ print > "out" }' ~/.claude/hooks/x`);
 - a `cd` or `pushd` target is protected (what follows is relative to it);
 - a shell runs without `-c` (a script, stdin, `bash <<EOF`, a pipe into `sh`), `source` or `.` runs a file, or
   `python` or `perl` runs without a protected word among its words: their scripts and stdin can write;

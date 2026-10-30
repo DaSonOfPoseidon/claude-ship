@@ -280,11 +280,18 @@ def redirs: (.Redirs? // [])[]
 	| if $t == null then {k: "dyn"}
 	elif .Op == ">&" and ($t | test("^([0-9]+-?|-)$")) then empty
 	else {k: "wr", t: $t, op: .Op} end;
+# Shapes the tree can not read as a write but the text check blocked, so they fall back to it: a writing tool named
+# after the command word (behind a wrapper the gate does not list: flock, ionice, watch, busybox...) with a protected
+# word among the words, and a `>` in one word (an awk program) with a protected path in another.
+def odd($w; $effs):
+	any($effs[]; any(.w[1:][]; bn | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed|python[0-9.]*|perl)$"))) and any($w[]; isprot)
+	or any(range(0; $w | length); . as $i | ($w[$i] | contains(">")) and any(range(0; $w | length); . as $j | $j != $i and ($w[$j] | isprot)));
 def calls:
 	(.Args? // []) as $args | [$args[] | wv] as $w
 	| if ($w | length) == 0 then empty
 	elif any($w[]; . == null) then {k: "dyn"}
 	else
+		(eff($w; false) as $e0 | if $e0 != null and odd($w; $e0) then {k: "dyn"} else empty end),
 		($w[] | select(isprot) | {k: "lw", t: .}),
 		($w[] | select(test(">+[|&]?\\s*[\"\u0027]?[^\\s;&|\"\u0027]*(" + $prot + ")")) | {k: "block", p: ., w: ">"}),
 		(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w)) end)
