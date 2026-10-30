@@ -39,7 +39,7 @@ the `orchestrate-hint.sh` hook (a `UserPromptSubmit` hook) points Claude to it o
 repo. In other opted-in repos, ask for "the PR loop". The hook adds nothing on any error; it's a convenience,
 and the gate still reviews every push.
 
-**Local mode** (claude-ship #82) gives a workspace that isn't a GitHub repo, such as a local project or data
+**Local mode** (claude-ship #82) gives a workspace without git or GitHub, such as a local project or data
 archive, the same cost model without the PR half: Opus plans, Haiku explores, Sonnet implements, one unit at a
 time, and nothing is committed, pushed or reviewed. A unit is done when its checks pass and, if the plan asks
 for it, you have checked it by hand. Opt in with `- mode: local` in the `## PR loop` section of the workspace's

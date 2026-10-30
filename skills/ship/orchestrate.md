@@ -1,7 +1,7 @@
 # Orchestrated mode: Opus plans, Sonnet implements, one PR at a time
 
-This file covers the GitHub loop. A workspace without git or GitHub gets the same cost model without the PR
-half: see **Local mode** at the end.
+This file covers the GitHub loop. A workspace that opts in to local mode (or whose user asks for it) gets the
+same cost model without the PR half: see **Local mode** at the end.
 
 You (the main session) plan, triage and decide. Agents explore and implement, and the ship scripts do the
 mechanics. Work gets done one PR at a time. This keeps each PR cheap, and keeps your context small enough to
