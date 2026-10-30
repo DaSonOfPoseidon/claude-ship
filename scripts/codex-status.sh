@@ -1,6 +1,8 @@
 #!/bin/sh
 # Sets the `codex-review` commit status on a PR's head commit: success (Codex reviewed the head after it was
 # pushed and every Codex thread is resolved), failure (a thread is unresolved, or the review failed) or pending.
+# On a fork PR, which Codex can't review (openai/codex#47577), the repo owner can also approve the head by commenting
+# one of the phrases below after it was pushed.
 # The rules and design notes are in docs/scripts.md. Repos run this one copy through the action (action.yml,
 # @v1); install.sh deploys it into the ship skill for local checks.
 # Usage: codex-status.sh <pr>. With DRY_RUN=1 it prints the status instead of setting it.
@@ -17,11 +19,22 @@ repo=${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
 bot='chatgpt-codex-connector[bot]'
 owner=${repo%/*}
 name=${repo#*/}
+# The owner's approval of a fork PR: a comment that is, after trimming whitespace and one trailing . or !, and
+# ignoring case, exactly one of these (jq string literals, lower case). Whole-comment only, so conversation
+# doesn't trigger it. approval_hint is the one the failure message names.
+approval_phrases='"okay to merge", "approved for merge", "ready for prod", "owner approved"'
+approval_hint='Okay to merge'
 
 # HEAD_SHA checks another commit instead, for testing against past reviews with DRY_RUN=1.
 head=${HEAD_SHA:-$(gh api "repos/$repo/pulls/$pr" --jq .head.sha)}
 short=$(echo "$head" | cut -c1-7)
 head_repo=$(gh api "repos/$repo/pulls/$pr" --jq .head.repo.full_name)
+# A fork PR has another head repository; a deleted fork has none (null, or empty from another tool's output).
+fork=
+case $head_repo in
+'' | null) fork=1 ;;
+*) [ "$(echo "$head_repo" | tr A-Z a-z)" = "$(echo "$repo" | tr A-Z a-z)" ] || fork=1 ;;
+esac
 head_ref=$(gh api "repos/$repo/pulls/$pr" --jq .head.ref)
 
 # Each GitHub call is its own assignment, so `set -e` stops on a failed call.
@@ -29,8 +42,15 @@ head_ref=$(gh api "repos/$repo/pulls/$pr" --jq .head.ref)
 # Codex's summary names commits by a 7-character SHA that could be forged. A new branch's first push is
 # recorded as `branch_creation`, not `push`.
 ref=$(jq -rn --arg r "refs/heads/$head_ref" '$r | @uri')
-pushes=$(gh api --paginate "repos/$head_repo/activity?ref=$ref" \
-	--jq ".[] | select(.activity_type == \"push\" or .activity_type == \"force_push\" or .activity_type == \"branch_creation\") | select(.after == \"$head\") | .timestamp")
+# A deleted fork has no activity to read, so nothing counts as after the push.
+pushes=
+case $head_repo in
+'' | null) ;;
+*)
+	pushes=$(gh api --paginate "repos/$head_repo/activity?ref=$ref" \
+		--jq ".[] | select(.activity_type == \"push\" or .activity_type == \"force_push\" or .activity_type == \"branch_creation\") | select(.after == \"$head\") | .timestamp")
+	;;
+esac
 pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 
 # Codex keeps one summary comment per PR; its Code Review row names the commit it reviewed and the status.
@@ -122,6 +142,21 @@ after_push() {
 		{ [ -z "$requested_at" ] || { later "$requested_at" "$pushed_at" && later "$completed_at" "$requested_at"; }; }
 }
 
+# Owner approval of a fork PR (#126): only the repo owner counts (not a bot with the owner's association), and only
+# a comment created after the head's push, so an approval of an older head doesn't carry over. Same-repo PRs never
+# read the comments for it. created_at, not updated_at: an edit doesn't move an approval past a push.
+approved=
+if [ -n "$fork" ]; then
+	approvals=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+		--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER")
+			| select(.body | gsub("^\\s+|\\s+$"; "") | sub("[.!]$"; "") | gsub("\\s+$"; "") | ascii_downcase | IN('"$approval_phrases"'))
+			| .created_at')
+	approved_at=$(printf '%s\n' "$approvals" | grep . | cut -c1-19 | sort | tail -1)
+	if later "$approved_at" "$pushed_at"; then
+		approved=1
+	fi
+fi
+
 # Not acknowledged (#133): the latest trusted request, made after the head's push, is CODEX_ACK_SECS old and Codex
 # has shown no sign of it: no summary edit, no 👀 of its own on the request, no receipt or review after it. Codex
 # removes its 👀 when a review finishes, so any bot activity after the request counts, not the 👀 alone. The
@@ -163,9 +198,15 @@ fi
 if [ "$findings" -gt 0 ]; then
 	state=failure
 	description="$findings unresolved Codex thread(s); fix or answer each, then resolve it"
+elif [ -n "$approved" ]; then
+	state=success
+	description="Owner approved $short for merge (fork PR)"
 elif echo "$row" | grep -q 'Completed' && after_push; then
 	state=success
 	description="Codex reviewed $short with no findings"
+elif echo "$row" | grep -qiE 'Failed|Error' && [ -n "$fork" ]; then
+	state=failure
+	description="Codex can't review fork PRs (openai/codex#47577); owner: comment '$approval_hint' to approve $short"
 elif echo "$row" | grep -qiE 'Failed|Error'; then
 	state=failure
 	description="Codex's review of $short failed; ask for another with @codex review"

@@ -73,6 +73,12 @@ script needs `contents`, `issues` and `pull-requests` read, and `statuses` write
 How the script decides, and why a repo's first PR can't get the status, is in
 [`docs/scripts.md`](docs/scripts.md).
 
+**Fork PRs.** Codex can't review them (openai/codex#47577) and their `pull_request` run has a read-only token, so
+the workflow skips it and a failed review says a retry won't help. The repo owner approves a fork PR's head by
+commenting `Okay to merge`, `Approved for merge`, `Ready for prod` or `Owner approved` (the whole comment, any case,
+one trailing `.` or `!`) after the head's push. Nobody else's comment counts, a new push needs a new approval, and
+unresolved Codex threads still fail it. Same-repo PRs are unaffected.
+
 **Releasing.** Merging to main changes no repo's guard. To release a merged change, move the tag:
 
 ```sh
