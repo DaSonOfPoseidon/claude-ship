@@ -148,6 +148,23 @@ expect current 0
 	fail=1
 }
 says current 'current'
+# A current file without its execute bit gets it back (mode 755), with no download.
+d=$tmp/case3c
+mkdir -p "$d"
+cp "$tmp/good" "$d/shfmt"
+chmod 644 "$d/shfmt"
+CURL_BODY=$tmp/evil run "$d/shfmt"
+expect current-no-exec 0
+mode=$(ls -l "$d/shfmt" | cut -c1-10)
+[ "$mode" = "-rwxr-xr-x" ] || {
+	echo "FAIL: current-no-exec: mode $mode, wanted -rwxr-xr-x"
+	fail=1
+}
+[ ! -s "$STUB_LOG" ] || {
+	echo "FAIL: current-no-exec: curl was called: $(cat "$STUB_LOG")"
+	fail=1
+}
+same current-no-exec "$d/shfmt" "$tmp/good"
 # An existing file with another hash is replaced.
 d=$tmp/case3b
 mkdir -p "$d"

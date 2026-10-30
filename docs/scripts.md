@@ -467,7 +467,8 @@ for the same path before its tests.
 - **Atomic.** The download goes to a temp file next to `<dest-file>`, so the final `mv` replaces it in one step,
   and the file is never piped into a shell. Only `https` is followed (`--proto`, `--proto-redir`).
 - **Already current.** A `<dest-file>` with the pinned hash is left alone and nothing is downloaded, so re-running
-  `install.sh` costs no network.
+  `install.sh` costs no network. It still sets the mode to 755 (a copy that lost its execute bit would otherwise
+  stay unusable), and fails if that chmod does.
 - **Exit codes.** 0 installed or current; 1 unsupported machine, no `sha256sum`/`shasum`, download failure or
   mismatch; 2 usage (no or extra arguments), since `set -u` would have said 1, which reads as a result.
 

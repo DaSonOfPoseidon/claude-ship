@@ -52,6 +52,11 @@ fi
 if [ -f "$dest" ]; then
 	have=$(hash_of "$dest") || have=
 	if [ "$have" = "$want" ]; then
+		# The bytes are right but the mode may not be (a copy without its execute bit): restore it.
+		chmod 755 "$dest" || {
+			echo "fetch-shfmt: couldn't make $dest executable." >&2
+			exit 1
+		}
 		echo "fetch-shfmt: $dest is current (shfmt $version)."
 		exit 0
 	fi
