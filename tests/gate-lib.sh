@@ -5,9 +5,11 @@
 # sends), the small rules lifted out of the gate behave as they did, and a gate that can't read its lib blocks.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tests/lib/shfmt.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/rbin" "$tmp/home"
+link_shfmt "$tmp/home"
 export HOME="$tmp/home"
 export GIT_AUTHOR_DATE="2020-01-01T00:00:00Z" GIT_COMMITTER_DATE="2020-01-01T00:00:00Z"
 cat >"$tmp/rbin/gh" <<'EOT'

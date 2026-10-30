@@ -4,9 +4,11 @@
 # finder. A rename counts by both paths, and a `git diff` that fails blocks the push.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tests/lib/shfmt.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/rbin" "$tmp/home"
+link_shfmt "$tmp/home"
 export HOME="$tmp/home"
 cat >"$tmp/rbin/gh" <<'EOT'
 #!/bin/sh

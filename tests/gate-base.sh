@@ -3,9 +3,11 @@
 # hardcoded main (claude-ship #51), fetched over whatever the local tracking ref says.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tests/lib/shfmt.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home"
+link_shfmt "$tmp/home"
 export HOME="$tmp/home"
 # The fake gh reports $DEFAULT as the default branch (and fails when it's empty); every repo opted in.
 cat >"$tmp/bin/gh" <<'EOF'

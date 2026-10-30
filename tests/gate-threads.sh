@@ -4,9 +4,11 @@
 # so does a `git log` or `git diff` that fails while the prompt is built. "No PR" and "no unresolved threads" pass.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tests/lib/shfmt.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/rbin" "$tmp/home"
+link_shfmt "$tmp/home"
 export HOME="$tmp/home"
 # PR_LIST: fail, empty, or a PR number. GQL: fail, empty, or thread (one thread line).
 cat >"$tmp/rbin/gh" <<'EOT'

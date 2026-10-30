@@ -31,7 +31,8 @@ review or a dying gate means an unreviewed push. The hook's `timeout` (2400 s) m
 snippet. The gate needs `jq`: without it, or when jq can't read the tool call, the gate blocks every call it sees
 (Bash, file writes, MCP) rather than reading the call as nothing, since it couldn't tell what the call was.
 That holds in every repo, opted in or not, because the jq check comes before any opt-in check. With jq working, a
-repo that isn't opted in, a directory that isn't a git repo and a repo with no GitHub remote still pass, as before.
+repo that isn't opted in, a directory that isn't a git repo and a repo with no GitHub remote still pass, as before,
+except that every Bash call also needs shfmt and a command it can parse (Tamper protection).
 
 The default branch comes from GitHub (`gh repo view`), not from a local `origin/HEAD`: that is state an agent
 can point at its own branch, which would leave nothing to review. When GitHub can't say, the gate blocks.
@@ -57,6 +58,10 @@ Inside double quotes `$` and backticks still expand, so they stay as they are. P
 forms, and every form that shows one must pass the checks. Checks that read text rather than structure see both
 the raw command and its unmarked words (`cmd_all`), so quoting (`CLAUDE_AUTONO''MOUS`, `c''d`) can't split a
 name apart.
+
+The tamper check (and, in later changes, the others) reads a third form: the syntax tree shfmt makes of the command,
+where a quoted string, a file name and a heredoc body are what they are instead of text that looks like a command
+(Tamper protection below). The command must parse, or the call blocks.
 
 A command that already holds a marker, quoting the scanner can't read, or a push whose own words have literal
 separators, quotes, `$` or newlines can't be checked word by word, so it blocks.
@@ -177,18 +182,65 @@ a `cd` moves to and a `git -C` one: the call may run before or after either.
 
 ## Tamper protection
 
-The installed gate, its prompts and lib (`hooks/`), the ship skill and agents, the gate's state (`.git/review-gate/`) and the
-settings that register it are the user's to change; claude-ship's source changes through reviewed PRs. `Write`,
+The installed gate, its prompts and lib (`hooks/`), the ship skill and agents, the gate's state (`.git/review-gate/`),
+the settings that register it and shfmt (`~/.claude/bin/`, which the gate reads every Bash command with, so replacing
+it would blind the gate) are the user's to change; claude-ship's source changes through reviewed PRs. `Write`,
 `Edit`, `MultiEdit` and `NotebookEdit` calls on those paths block. A project's own `.claude/settings` may change,
 but not to turn hooks off (`disableAllHooks`).
 
-For Bash, writing gate state or the installed gate would bypass the review; reading its reports is fine. A
-command that names a protected path writes when it:
+For Bash, writing gate state or the installed gate would bypass the review; reading its reports is fine. The check
+reads the command's syntax tree, not its text, so a protected path in a file name, a quoted string or a heredoc body
+isn't a write (#135, #40).
 
-- runs a writing tool (`rm`, `touch`, `cp`, `mv`, `ln`, `tee`, `install`, `truncate`, `dd`, `chmod`, `sed -i`,
-  `python`, `perl`), or
-- redirects output anywhere but another descriptor (`2>&1`, `>&2`) or `/dev/null`, `/dev/stdout`,
-  `/dev/stderr`. A quoted `>` counts too, since `sh -c "… > f"` and `awk` redirect inside quotes.
+**The parse fails closed.** Before any other check, `~/.claude/bin/shfmt -ln bash --to-json` reads the command.
+No shfmt (missing, or not executable), a command it can't parse (`echo "unterminated`) and output that isn't a
+syntax tree all block, with a message saying which. That holds for every Bash call in every repo, opted in or not,
+like the jq check. After a merge, run `./install.sh` (it fetches shfmt) before relying on the gate, or every Bash call
+blocks.
+
+**The rule.** `tamper_jq` turns the tree into events: every simple command anywhere in it (also those inside command
+and process substitutions, and inside an unquoted heredoc body, since those run) and every statement's redirects.
+A word is *literal* when all its parts are plain text or quoted text without expansions (escapes and quotes are
+resolved, a leading `~` stays text); a variable, a substitution, a glob, a brace list or `$'...'` makes it
+*dynamic*. The protected paths are `~` or `$HOME`, then `.claude/(hooks|settings|skills/ship|agents/ship-|bin/)`,
+plus `.git/review-gate`. The command blocks when:
+
+- a write redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, and `>&` when its word isn't a descriptor or `-`) has a
+  literal target that is protected, or
+- a command whose effective word is a writing tool (`rm`, `touch`, `cp`, `mv`, `ln`, `tee`, `install`, `truncate`,
+  `dd`, `chmod`, `sed` with `-i` or `--in-place`, `find … -delete`) has a protected literal word among its words
+  (a `cp` that only reads a protected source blocks too: stricter than needed, and what the text check did), or
+- a literal word holds a redirect to a protected path (`awk '{ print > "…/.git/review-gate/x" }'`), or
+- the command names a protected literal word and also writes a file other than `/dev/null`, `/dev/stdout` or
+  `/dev/stderr` by redirect (`cat ~/.claude/hooks/x >/tmp/y`), as the text check did, or
+- a string it runs as shell blocks by these rules: `sh|bash|dash|zsh|ksh|ash -c STRING` and `eval ARGS` are parsed
+  again, to a depth of 3.
+
+The *effective word* is the command after leading assignments and these wrappers with their own options: `env`,
+`command`, `builtin`, `exec`, `nohup`, `nice`, `time`, `timeout`, `stdbuf`, `sudo`, `doas`, `xargs`, `setsid`; for
+`find` it's each command after `-exec`, `-execdir`, `-ok` or `-okdir`. A wrapper option the gate doesn't know
+makes the command unreadable.
+
+**The fallback.** When the tree can't settle it, the gate runs the old text check unchanged (apart from adding
+`~/.claude/bin/`): a command that names a protected path writes when it runs a writing tool or redirects anywhere
+but another descriptor or `/dev/null`, `/dev/stdout`, `/dev/stderr`, with the raw text and the unmarked words both
+read, so a quoted `>` counts. It runs when:
+
+- a word of a simple command or a write redirect's target is dynamic;
+- a wrapper can't be unwrapped, or `xargs` or `find -exec` hands arguments the command line doesn't show to a
+  writing tool (with no protected word among its words) or to a shell or `eval`;
+- a `cd` or `pushd` target is protected (what follows is relative to it);
+- a shell runs without `-c` (a script, stdin, `bash <<EOF`, a pipe into `sh`), `source` or `.` runs a file, or
+  `python` or `perl` runs without a protected word among its words: their scripts and stdin can write;
+- a string run as shell doesn't parse or is nested deeper than 3;
+- `disableAllHooks` appears anywhere in the command text.
+
+What the tree check passes that the text check blocked, on purpose: a protected path inside a file name, a quoted
+argument (`gh issue create --body "… ~/.claude/skills/ship/x.sh <PR> …"`, `git commit -m`), a heredoc body, or a
+write command and a read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
+What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`. Not covered, as before: tools
+outside the writing-tool list (`curl -o`, `tar`, `rsync`, `awk system()`), since the list can't be complete; the gate
+catches Claude's slips and isn't a boundary.
 
 ## Waivers and opt-in flags
 
