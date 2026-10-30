@@ -243,8 +243,10 @@ read, so a quoted `>` counts. It runs when:
 - `disableAllHooks` appears anywhere in the command text.
 
 What the tree check passes that the text check blocked, on purpose: a protected path inside a file name, a quoted
-argument (`gh issue create --body "… ~/.claude/skills/ship/x.sh <PR> …"`, `git commit -m`), a heredoc body, or a
-write command and a read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
+argument when no `>` comes before the protected path inside it (`gh issue create --body "… ~/.claude/skills/ship/x.sh
+<PR> …"`, `git commit -m "fix: rm ~/.claude/hooks/x"`), a heredoc body, a read of a protected path piped into a
+writing tool whose own arguments aren't protected (`cat ~/.claude/hooks/x | tee /tmp/y`), or a write command and a
+read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
 What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`. What neither check covers:
 tools outside the writing-tool list (`curl -o`, `tar`, `rsync`), since the list can't be complete. What only the
 tree check misses: a string handed to a program that runs it where the tool isn't at the start of a command line

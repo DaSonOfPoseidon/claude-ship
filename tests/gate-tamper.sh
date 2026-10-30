@@ -87,6 +87,9 @@ expect 0 'cat <<EOF
 rm ~/.claude/hooks/x is what the old check read as a write
 EOF'
 expect 0 "git commit -m 'docs: cp of ~/.claude/hooks/x is read-only'"
+# Accepted by the owner (#135): the text check blocked both, the tree reads a message and a read as what they are.
+expect 0 'git commit -m "fix: rm ~/.claude/hooks/x"'
+expect 0 'cat ~/.claude/hooks/x | tee /tmp/y'
 # A command that names a protected path and writes a file elsewhere blocks, as it did before; /dev/null is no file.
 expect 2 'echo x >/tmp/y && cat ~/.claude/hooks/x | head -3'
 expect 0 'echo x >/dev/null && cat ~/.claude/hooks/x | head -3 2>&1'
