@@ -188,6 +188,38 @@ the 5m/1h split, with any remainder of the total priced as 5m. Costs are integer
 1000), so rounding to the cent is exact. Times are cut to `YYYY-MM-DDTHH:MM:SS` (transcripts carry milliseconds)
 and compared as text.
 
+## `skills/ship/gate-stats.sh`
+
+Shows whether the gate pays for itself (#117). `gate-stats.sh <pr>...`, or `--since YYYY-MM-DD` for the author's PRs
+created on or after that date (`gh pr list --author @me`, newest 200, oldest first printed; a full page of 200 warns
+that older PRs in the range may be missing). Run from a checkout of the repo. It is read-only: it reads the gate's
+local state, its cost log, `gh` and `jq`, and writes and calls nothing. A table row per PR, a `total` row and three
+rates:
+
+- **codex**: the PR's review threads whose first comment is Codex's, resolved or not (the query is
+  `codex-findings.sh`'s without the unresolved filter, since triage resolves them).
+- **caught / rejected / missed**: each Codex thread is *caught* if a gate finding that stands (not rejected by the
+  verifier, any severity) is in the same file within 10 lines of the thread's line (`line`, else `originalLine`);
+  *rejected* if only rejected findings are; else *missed*. A thread with no path or no line is missed, and so is a
+  finding whose line the report doesn't give as a number (it matches nothing).
+- **heads**: the PR's commits the gate saw: those with a report (`<head>.md`) or a waiver (`<head>.waived`) in
+  `$(git rev-parse --git-common-dir)/review-gate`. **waived**: heads with a waiver. **blocks**: heads that weren't
+  waived and whose report has a P0, P1 or P2 finding that isn't rejected, which is the rule `blocking_of` applies
+  (`hooks/review-lib.sh`). The gate keeps no verdict file, so the rule is read off the report's findings.
+- **cost**: the sum of `cost_usd` over the cost-log rows for this repo (compared without case) whose head is one of
+  the PR's commits. A row whose cost isn't a number makes the cost `?`; a line that isn't a row is skipped with one
+  warning, as in `token-report.sh`.
+- **Rates**: miss = missed / codex, waiver = waived / heads, block = blocks / heads, over the PRs with gate state
+  (`-` when the denominator is 0).
+
+**Limits.** The state is local: a PR reviewed from another clone, or before the gate, has no heads here. Its row shows
+`-` in the gate columns, a stderr note names it, and the total and the rates leave it out (its codex count is shown
+but not added). A head that an amend or rebase rewrote isn't in the PR's commits, so its report and cost aren't
+counted. The ±10-line match is a heuristic:
+it can call a thread caught because the gate flagged something else nearby, or missed because the code moved.
+A commit id from `gh` is used as a file name only when it is 40 to 64 hex digits. Reports are read by their
+`## <severity>[ (rejected by the verifier)]: <file>:<line>` headings (`hooks/review-gate.sh` writes them).
+
 ## `hooks/p3-issue.sh`
 
 Files a finding as an issue. The finding goes in a JSON file rather than on the command line because the gate

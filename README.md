@@ -177,3 +177,7 @@ To measure what a PR cost to build, run `~/.claude/skills/ship/token-report.sh <
 repo. It reads that repo's Claude Code transcripts, the cost log above and `gh`, and prints each PR's tokens and
 API-price cost by role (main session, then each subagent type, then the gate's reviewers) and model, plus the main
 session's peak context.
+
+To see whether the gate pays for itself, run `~/.claude/skills/ship/gate-stats.sh <pr>...` (or `--since YYYY-MM-DD`)
+from a checkout: per PR and in total, how many Codex findings the gate caught or missed, how often it blocked or was
+waived, and what it cost. How it matches them, and its limits, are in [`docs/scripts.md`](docs/scripts.md).
