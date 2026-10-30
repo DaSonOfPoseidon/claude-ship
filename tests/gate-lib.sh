@@ -228,5 +228,19 @@ if [ "$rc" != 2 ] || ! grep -q 'review-lib.sh' "$tmp/err"; then
 	fail=1
 fi
 
+# A gate whose prompt file is missing blocks too: build_prompt's status was its last echo's, so the reviewer would have
+# run without its instructions.
+cp "$root/hooks/review-lib.sh" "$tmp/hooks-copy/"
+rm -f "$tmp/hooks-copy/review-prompt.md"
+rm -rf "$repo/.git/review-gate"
+jq -nc --arg d "$repo" '{tool_name: "Bash", tool_input: {command: "git push origin HEAD"}, cwd: $d}' |
+	PATH=$tmp/rbin:$PATH sh "$tmp/hooks-copy/review-gate.sh" >/dev/null 2>"$tmp/err"
+rc=$?
+if [ "$rc" != 2 ] || ! grep -q "couldn't build the reviewer's prompt" "$tmp/err"; then
+	echo "FAIL (no-prompt): exit $rc (want 2) with a message about the prompt"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+fi
+
 [ "$fail" = 0 ] && echo "gate-lib: ok"
 exit "$fail"

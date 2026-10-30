@@ -934,7 +934,10 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 		echo "Blocked: couldn't read the diff of $range for the reviewer." >&2
 		exit 2
 	}
-	build_prompt "$prompt"
+	build_prompt "$prompt" || {
+		echo "Blocked: couldn't build the reviewer's prompt ($dir's prompt files must be readable). Run claude-ship's install.sh." >&2
+		exit 2
+	}
 
 	if [ "$kind" = docs ]; then
 		run_reviewer docs-check haiku "$prompt" "$findings_schema" "$out"
@@ -958,7 +961,10 @@ if [ "$kind" = code ] && [ "$(printf '%s' "$findings" | jq length)" -gt 0 ] &&
 		echo "Blocked: couldn't read the diff of $range for the verifier." >&2
 		exit 2
 	}
-	build_verify_prompt "$vprompt" "$findings" "$vdiff"
+	build_verify_prompt "$vprompt" "$findings" "$vdiff" || {
+		echo "Blocked: couldn't build the verifier's prompt ($dir's prompt files must be readable). Run claude-ship's install.sh." >&2
+		exit 2
+	}
 	run_reviewer verifier haiku "$vprompt" "$verify_schema" "$verified"
 fi
 

@@ -44,12 +44,16 @@ kind_of() {
 # file), $threads, $pr, $commits, $branch_stat, $main and $diff_text, and runs `git rev-parse` in the current
 # directory when $scoped is set.
 build_prompt() {
+	if [ "$kind" = docs ]; then
+		template=$dir/review-docs-prompt.md
+	else
+		template=$dir/review-prompt.md
+	fi
+	# The status of the group below is its last echo's, so a template that can't be read would leave a prompt without
+	# the reviewer's instructions and a status of 0. It fails the build instead.
+	[ -r "$template" ] || return 1
 	{
-		if [ "$kind" = docs ]; then
-			cat "$dir/review-docs-prompt.md"
-		else
-			cat "$dir/review-prompt.md"
-		fi
+		cat "$template" || return 1
 		echo
 		echo "## Project review rules (AGENTS.md › Code Review Rules)"
 		printf '%s\n' "$rules"
@@ -102,8 +106,9 @@ build_prompt() {
 
 # build_verify_prompt <out file> <findings JSON> <diff text>: writes the verifier's prompt. Reads $dir and $range.
 build_verify_prompt() {
+	[ -r "$dir/review-verify-prompt.md" ] || return 1
 	{
-		cat "$dir/review-verify-prompt.md"
+		cat "$dir/review-verify-prompt.md" || return 1
 		echo
 		echo "## Findings to verify (numbered from 0)"
 		printf '%s' "$2" | jq -r 'to_entries[] | "### \(.key): [\(.value.severity)] \(.value.file):\(.value.line)\n\(.value.summary)\n\nFailure scenario: \(.value.failure_scenario)\n"'
