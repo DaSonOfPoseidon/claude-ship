@@ -137,6 +137,14 @@ git init -q "$tmp/l-sub"
 hint local "local loop from a subdirectory of the repo" plan l14 "$tmp/l-sub/deeper"
 hint local "another workspace, same session" plan l14 "$tmp/l-agents"
 hint no "first workspace again, same session" plan l14 "$tmp/l-sub"
+# The shipped AGENTS.md template (its `## PR loop` block is commented out) doesn't opt a workspace in, and the
+# same text with the block uncommented and the line added does.
+mkdir -p "$tmp/l-tpl" "$tmp/l-tpl2"
+cp "$root/skills/ship/templates/AGENTS.md" "$tmp/l-tpl/AGENTS.md"
+hint no "the AGENTS.md template as shipped" plan l18 "$tmp/l-tpl"
+sed -e '/^<!-- Optional/d' -e '/^-->$/d' -e 's/^     //' "$root/skills/ship/templates/AGENTS.md" >"$tmp/l-tpl2/AGENTS.md"
+printf -- '- mode: local\n' >>"$tmp/l-tpl2/AGENTS.md"
+hint local "the AGENTS.md template uncommented, with the mode line" plan l19 "$tmp/l-tpl2"
 # A git repo without the marker keeps the GitHub behaviour, so with the variables off it stays silent.
 hint no "git repo, PR loop without a mode, variables off" plan l15 "$tmp/l-gitother"
 echo true >"$tmp/vars/CLAUDE_AUTONOMOUS"

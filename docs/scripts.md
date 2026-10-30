@@ -208,6 +208,13 @@ variables up only until it has an answer once per session and repo (claude-ship 
 is an answer. A lookup that fails otherwise (network, rate limit) isn't: it adds nothing, writes no mark, and the
 next prompt asks again (claude-ship #67).
 
+A workspace (the git toplevel, else the cwd) whose `AGENTS.md` or `CLAUDE.md` has `- mode: local` in its
+`## PR loop` section gets the local loop's hint instead, before any `gh` call or variable lookup (claude-ship #82).
+The section runs from its heading to the next `## `, and lines in HTML comments or code fences don't count, so the
+commented block in `templates/AGENTS.md` doesn't opt a repo in. The hook reads only those two files, never runs
+or quotes them (the hint holds just the directory, encoded by `jq`), and keeps the same mark, per session and
+workspace. Without the marker, a directory that isn't a git repo still gets nothing.
+
 ## `hooks/explorer-bash.sh`
 
 A PreToolUse hook in `agents/ship-explorer.md`'s frontmatter (claude-ship #68). The explorer reads issue and PR

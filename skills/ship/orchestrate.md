@@ -1,5 +1,8 @@
 # Orchestrated mode: Opus plans, Sonnet implements, one PR at a time
 
+This file covers the GitHub loop. A workspace without git or GitHub gets the same cost model without the PR
+half: see **Local mode** at the end.
+
 You (the main session) plan, triage and decide. Agents explore and implement, and the ship scripts do the
 mechanics. Work gets done one PR at a time. This keeps each PR cheap, and keeps your context small enough to
 plan well for a long time (claude-ship #66: over OBDCracker's first 5 PRs, the median cost per PR went from
@@ -12,6 +15,8 @@ $3.12 to $1.34).
 | `CLAUDE_AUTONOMOUS` and `CLAUDE_ORCHESTRATE` both `true` | plan mode, given an objective | automatically: the `orchestrate-hint.sh` hook points here |
 | `CLAUDE_AUTONOMOUS` `true`, `CLAUDE_ORCHESTRATE` not `true` | any | only when the user asks for it ("the PR loop", "work the ready issues one PR at a time") |
 | `CLAUDE_AUTONOMOUS` not `true` | any | never: the ship skill's step 0 stops before any commit |
+| none needed: the workspace's `AGENTS.md` or `CLAUDE.md` has `- mode: local` in its `## PR loop` section | plan mode, given an objective | automatically: the hook points to **Local mode** (below). The marker wins over the variables, so a git repo with it runs the local loop |
+| no marker | any | only when the user asks for "the local loop" (any workspace, git or not) |
 
 Only the user sets the variables (`! gh variable set CLAUDE_ORCHESTRATE --body true`). Without the loop, the
 ship skill's steps run as usual, for one PR at a time in your own context.
@@ -29,6 +34,7 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Answer the plan's questions about the code | `ship-explorer` agent | Haiku, medium |
 | A question the explorer marked "unsure" | `general-purpose` agent with `model: sonnet` | Sonnet |
 | Implement a **normal** or **high-risk** unit, fix its gate and Codex findings | `ship-implementer` agent | Sonnet, high |
+| Implement a unit in **Local mode** (no git, PR, gate or Codex), fix its failed checks and verification | `ship-local-implementer` agent | Sonnet, high |
 | Implement a **trivial** unit (docs or config, no logic, ~20 lines) | `ship-implementer` with `model: haiku` | Haiku, high |
 | Run a Codex round: request, wait, CI, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
 | The mechanics under it: wait, list, file issues | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`) | none |
@@ -196,3 +202,27 @@ Otherwise, keep going without asking.
      return `round-cap` without reading them
    - green: done
 3. Then take the queue.
+
+## Local mode
+
+For a workspace that isn't a GitHub repo (a local project, a data archive) or that opts out of the PR half. You
+plan, `ship-explorer` explores (it needs no git), and Sonnet implements, one unit at a time. There is no PR, gate,
+Codex, merge, label, issue or `CLAUDE_*` variable, and no commit: the changes stay in the working tree for the
+user. A unit is done when its checks pass and, if the plan has a **Verify** field, the user has checked it by hand
+(claude-ship #82). Only what the table below names changes; **Who does what**, **Your own context**, the
+explore-then-split steps of **Planning** and **Stop and ask the user** apply as written.
+
+| Topic | Local mode |
+|---|---|
+| Opt-in | `- mode: local` in the workspace's `AGENTS.md` or `CLAUDE.md`, inside `## PR loop` (backticks around `local` are fine), or the user asks for "the local loop". The workspace is the git toplevel if there is one, else the cwd |
+| Settings | only `- checks:` from `## PR loop`, else the check command in CLAUDE.md; the ready, skip and priority labels and `merge` are ignored |
+| State | `~/.claude/state/claude-ship/local/<slug>/`, where `<slug>` is the workspace's absolute path with `/` written `+` (`/srv/CodeServer/MBSReporter` is `+srv+CodeServer+MBSReporter`). It holds `loop.md` and one `plan-<unit slug>.md` per unit. Nothing is kept in the workspace |
+| `loop.md` | the master plan (the objective, then each unit's section in the shape of `templates/plan.md` with Branch, PR title and Commits left out and Issue(s) `none: from the objective`), then one status line per unit: `- [ ] unit N`, `- [~] unit N (implementing)`, `- [~] unit N (verifying)` or `- [x] unit N`. You edit the lines; the implementer never does |
+| Queue and progress | the status lines of `loop.md`, in order, and nothing else: there are no issues or labels. Without `loop.md` there is no queue: plan from the user's objective |
+| Planning | as above (one `ship-explorer` call, then split the objective into units small enough to implement and check in one go). Once the plan is approved, write `loop.md` with every unit `- [ ]` and one plan file per unit |
+| Implement | start a `ship-local-implementer` with the plan file's path and the workspace directory. Set the unit to `- [~] unit N (implementing)` first. Keep its agent id. Start the next unit's implementer only when this one is `- [x]`: there are no worktrees, so two units would edit the same files |
+| Done | read its report. `checks: pass` and no **Verify** field in the plan: set the unit `- [x]`. `checks: pass` and a **Verify** field: set `- [~] unit N (verifying)`, give the user the report's `verify:` steps, and stop until they answer. `checks: fail` or `stopped because:`: handle it as **Stop and ask the user** says, or send the failure to the same implementer |
+| Verification result | the user says it works: `- [x]`. It fails: set `- [~] unit N (implementing)` and `SendMessage` the failure to the same implementer as a fix round; its next report goes through **Done** again. If its id is gone, start a new `ship-local-implementer` with the same plan file and the failure |
+| After a unit | delete its plan file; after the last unit, delete `loop.md` and tell the user the changes are in the working tree, uncommitted. Then one line to the user, as in step 7 above |
+| Resuming ("continue the local loop") | read `loop.md`. `- [x]` is done. `- [ ]` is next, once nothing is `~`. `- [~] (implementing)`: check `ListAgents` for a live implementer on that unit and wait for it or `SendMessage` it; if none is live, start a new `ship-local-implementer` with the same plan file and say the working tree may hold partial work to continue from, not redo. `- [~] (verifying)`: give the user the unit's **Verify** steps again and wait |
+| Doesn't apply | the gate (no push), `ship-codex` and Codex rounds, PRs, merging, labels and issues, `ship-implementer`, worktrees, and **Replacing an implementer** |

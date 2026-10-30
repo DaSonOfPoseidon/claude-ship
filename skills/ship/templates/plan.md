@@ -1,7 +1,9 @@
 # Plan: <PR title>
 
 <!-- One PR's plan, for the ship-implementer agent. In a master plan, each unit is a `## Unit <n>` section
-     with these fields. Write facts from the explorer's report, not guesses. -->
+     with these fields. Write facts from the explorer's report, not guesses.
+     In local mode (orchestrate.md > Local mode) there is no branch, PR or commit: leave out Branch, PR title and
+     the Commits section, and add Verify if the user must check the result by hand. -->
 
 - **Issue(s):** #N (or "none: from the objective")
 - **Branch:** `fix/<N>-<slug>` / `feat/<slug>`
@@ -10,6 +12,7 @@
   - trivial: docs or config with no logic, about 20 lines or fewer
   - high-risk: concurrency, security or safety policy, protocol state, data migration
 - **Checks:** `<the repo's full check command>`
+- **Verify:** (optional, local mode) how the user checks this by hand, e.g. "run X in C5, expect Y"; omit it if the checks cover it
 
 ## Goal
 What changes for the user or caller, in two or three sentences.

@@ -22,6 +22,10 @@ Read `orchestrate.md` next to this file, and follow it, only when:
 It runs the steps below one PR at a time, with agents doing the exploring and implementing. Otherwise
 ignore it: the steps below are the whole process.
 
+A workspace that isn't a GitHub repo (or whose `AGENTS.md` / `CLAUDE.md` has `- mode: local` in `## PR loop`) gets
+the loop's **Local mode** instead: the same planning and implementing, one unit at a time, with none of the steps
+below (no commit, push, PR or Codex). The hook says so, or the user asks for "the local loop".
+
 ## 0. Is the repo opted in?
 
 `gh variable get CLAUDE_AUTONOMOUS` (once per session):

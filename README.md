@@ -26,6 +26,7 @@ the rest, one PR at a time (claude-ship #66):
 | Planning, Codex triage, merge decisions | the main session | Opus, the session's effort |
 | Questions about the code, for the plan (its Bash is held to read-only `git` and `gh` by `hooks/explorer-bash.sh`) | `agents/ship-explorer.md` | Haiku, medium |
 | Implementing a unit, fixing its gate and Codex findings, opening the PR | `agents/ship-implementer.md` | Sonnet, high; Haiku for trivial units |
+| Implementing a unit in local mode (no git, PR, gate or Codex; it never commits) | `agents/ship-local-implementer.md` | Sonnet, high |
 | Running each Codex round for the implementer: request, wait, CI, findings, the rule-decided issues and resolves (its Bash and Write are held to the ship scripts and one triage file by `hooks/codex-bash.sh`) | `agents/ship-codex.md` | Haiku, medium |
 | The mechanics under it: waiting, listing findings, filing issues | the ship scripts | none |
 
@@ -37,6 +38,13 @@ It starts by itself in plan mode, in repos where both `CLAUDE_AUTONOMOUS` and `C
 the `orchestrate-hint.sh` hook (a `UserPromptSubmit` hook) points Claude to it once per session in each
 repo. In other opted-in repos, ask for "the PR loop". The hook adds nothing on any error; it's a convenience,
 and the gate still reviews every push.
+
+**Local mode** (claude-ship #82) gives a workspace that isn't a GitHub repo, such as a local project or data
+archive, the same cost model without the PR half: Opus plans, Haiku explores, Sonnet implements, one unit at a
+time, and nothing is committed, pushed or reviewed. A unit is done when its checks pass and, if the plan asks
+for it, you have checked it by hand. Opt in with `- mode: local` in the `## PR loop` section of the workspace's
+`AGENTS.md` or `CLAUDE.md` (no repo variables needed; the hook then points to it in plan mode too), or ask for
+"the local loop". Its state is in `~/.claude/state/claude-ship/local/`.
 
 ## The codex-review action
 
