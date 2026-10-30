@@ -165,7 +165,15 @@ review finds a new class.
 - **An encoding that joins path parts must escape its own separator and escape character first.** Writing `/`
   as `+` gave `/srv/a+b/c` and `/srv/a/b+c` the same state directory, so one workspace's loop overwrote the
   other's (claude-ship #159). Escape the escape character (`%` to `%25`), then the new separator (`+` to `%2B`),
-  then substitute, and give the doc a pair of paths that used to collide.
+  then substitute, and give the doc a pair of paths that used to collide. The same slip came back for plan file
+  names (`/` as `-` gave `feat/a-b` and `feat-a/b` one file, claude-ship #120): reuse the written encoding, don't
+  invent a second, and have whatever opens the file check the name it holds.
+- **A filter by branch name also matches other repositories' branches of that name.** `gh pr list --head <branch>`
+  returns a fork's PR from a branch of the same name, so `unit-state.sh` could call an unfinished unit merged or
+  send the orchestrator into someone else's review (claude-ship #120). Ask for `isCrossRepository`, drop those, and
+  fail when the field is missing. A state read from a merged PR also says nothing about commits made after its last
+  push: check for unpushed work before treating the unit as done, against the PR's own last head
+  (`refs/pull/<n>/head`), since origin's branch is deleted by then and has nothing to compare with.
 - **A doc must not widen an opt-in beyond its marker.** `skills/ship/SKILL.md` said any workspace that isn't a
   GitHub repo gets the local loop, while the hook and `orchestrate.md` start it only on `- mode: local` or a user
   request (claude-ship #159). State each opt-in once, with its exact marker, and have other docs point to it.

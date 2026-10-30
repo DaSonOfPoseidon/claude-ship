@@ -25,6 +25,13 @@ finding costs a full extra round, so care here is cheaper than speed.
 
    If git says the branch is checked out in another worktree, stop and report that worktree's path.
 
+   When the prompt says **continue from** a state (`local <n>` or `pushed`, the latter possibly with "PR <n> is already open"), you replace an implementer that
+   ended without a report, and the branch already holds its commits. Start from them, with the rows above as
+   they are: read `git log origin/<default branch>..HEAD` and the diff against the plan, do only what the plan
+   still lacks (test-first), run the checks, then push and open the PR as the prompt says (when it says the PR is
+   already open, push and run the Codex rounds on it instead). Don't redo committed work, and never reset or
+   rebase the branch. Say in the report that you continued, and what the earlier commits already covered.
+
 ## Implement
 
 - Follow the plan's TDD order: write each failing test, see it fail, then write the code.
