@@ -36,8 +36,9 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Implement a **normal** or **high-risk** unit, fix its gate and Codex findings | `ship-implementer` agent | Sonnet, high |
 | Implement a unit in **Local mode** (no git, PR, gate or Codex), fix its failed checks and verification | `ship-local-implementer` agent | Sonnet, high |
 | Implement a **trivial** unit (docs or config, no logic, ~20 lines) | `ship-implementer` with `model: haiku` | Haiku, high |
-| Run a Codex round: request, wait, CI, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
-| The mechanics under it: wait, list, file issues | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`) | none |
+| Run a Codex round: wait for CI (a red head is reported, not reviewed), request, wait, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
+| Fix a red CI inside the PR: read the failing jobs' log tails, fix, push, up to 2 rounds | the `ship-implementer`, from `ship-codex`'s `ci-failures:` block | Sonnet, high |
+| The mechanics under it: wait, list, file issues, CI failures | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`, `ci-failures.sh`) | none |
 
 - A trivial unit whose Haiku implementer the gate blocked twice goes to a new Sonnet `ship-implementer`
   (see **Replacing an implementer**).
@@ -96,13 +97,19 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
 2. **Plan** it, if it has no plan file yet (above).
 3. **Implement:** start a `ship-implementer` with the plan file's path, the default branch, and "open the PR
    and run the Codex rounds", plus `model: haiku` for a trivial unit. Keep its agent id for this PR. The
-   implementer starts a `ship-codex` agent after each push, which requests the review, waits, reads CI and the
-   findings, and applies the rule-decided outcomes (the ship skill's step 4 table: P3, and P2 in round 3, are
-   filed as issues). The implementer reads each finding it is sent in full and judges it: it fixes the valid
+   implementer starts a `ship-codex` agent after each push, which first waits for CI (a red head goes back to the
+   implementer with the failing jobs' log tails, and Codex isn't requested), then requests the review, waits,
+   reads the findings, and applies the rule-decided outcomes (the ship skill's step 4 table: P3, and P2 in round 3,
+   are filed as issues). The implementer reads each finding it is sent in full and judges it: it fixes the valid
    ones, answers the invalid ones with evidence, pushes, and starts the next round, up to 3 rounds. You are not
    in that loop: you wait for its final report.
-4. **Read its report.** Its `codex:` line is the last round's outcome.
+4. **Read its report.** Its `codex:` line is the last round's outcome, and its `ci:` line is CI's.
    - `clean`, with CI green: go to 6.
+   - `ci: fail`, or `codex:` `ci-fail` or `ci-timeout`: the implementer already ran the CI fix rounds (up to 2) and
+     is reporting what is left. If it stopped, handle it per the stop table below ("CI fails for a reason outside
+     the PR"). Never read CI logs in the main session. In the fallback flow, run
+     `~/.claude/skills/ship/ci-failures.sh <pr>` from the implementer's worktree and send its output to the
+     implementer unread beyond the first lines; the fix round is the implementer's.
    - It stopped (`stopped because:`), or `codex:` is `stop`, `stalled`, `timeout`, `round-cap` or `error`:
      handle it as the stop table below says. A `stop:` line is a P0/P1 finding in round 3 or later: ask the
      user. `stalled` is Codex stalling (or never acknowledging a request) twice on one head: tell the user. `round-cap` and `timeout` need no new

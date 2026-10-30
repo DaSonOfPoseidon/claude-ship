@@ -82,9 +82,10 @@ if any check is pending, and `no failed checks` when none failed (also when the 
   control characters first, so none can add a line or an escape sequence. The fields are joined with the unit
   separator, not a tab: `read` drops a leading tab, so an external status's empty workflow would shift the name
   into its place.
-- **Who calls it.** `ship-codex` runs it before requesting Codex, when `gh pr checks --watch` reports a failure, and
-  hands the output to the implementer as a `ci-failures:` block (`agents/ship-codex.md`); the orchestrator runs it
-  only in the fallback flow. `hooks/codex-bash.sh` allows it with one PR number and an optional `owner/repo`.
+- **Who calls it.** `ship-codex` runs it once `gh pr checks --watch` has returned, before requesting Codex. Failed
+  checks in its output end the round as `outcome: ci-fail`, with the output as a `ci-failures:` block for the
+  implementer (`agents/ship-codex.md`); the implementer also runs it itself when a review is clean but CI is red.
+  The orchestrator runs it only in the fallback flow. `hooks/codex-bash.sh` allows it with one PR number and an optional `owner/repo`.
 
 ## `skills/ship/codex-round.sh`
 
