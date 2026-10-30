@@ -86,8 +86,9 @@ wait for the review yourself and the orchestrator sees only your final report.
    SendMessage ("send your final report"), wait for that result, and act only on a report with an `outcome:`.
    Text with no `outcome:` line is interim, not a result. If the resumed `ship-codex` again returns no
    `outcome:`, hand back with `codex: no final report (interim results only)` and never request a review yourself.
-   Report `codex requested: unknown`, since that round may have ended in its CI wait, before any request: the
-   orchestrator checks for a request and makes one if none is out.
+   Report `codex requested: unknown`, since that round may have ended in its CI wait, before any request, and
+   list the thread ids you replied to as `replied:`. The orchestrator picks the PR up again as its Resuming
+   step says, with a fresh `ship-codex`.
    Never start a second `ship-codex` for this PR while one is running. Don't request or wait for Codex any
    other way, and never post `@codex review` by hand.
 3. Act on the outcome:
