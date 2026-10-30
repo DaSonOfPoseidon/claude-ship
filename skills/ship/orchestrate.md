@@ -72,6 +72,10 @@ Nothing about progress is kept locally. After `/clear` or compaction, work it ou
 | in flight | your open PRs whose head branch is a planned unit's (`gh pr list --author @me --json number,headRefName`) |
 | done | merged PRs on those branches |
 
+The loop is built to keep going across automatic compaction, not only across `/clear`. After a summary, re-derive
+the state as **Resuming** says before acting, including `ListAgents` for a live implementer or `ship-codex` agent,
+and don't start a duplicate.
+
 Delete a unit's plan file after its PR merges, and `loop.md` after the last unit.
 
 ## Planning (plan mode, from an objective)
@@ -151,8 +155,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      3. Move the issues it unblocked to the ready label, delete its plan file, and pull the default branch.
    - With `merge: no`: tell the user it's ready, then go on to the next unit only if it doesn't depend on
      this one.
-7. **Tell the user in one line** what merged or is waiting, and that it's a good moment to `/clear` (resume
-   with "continue the PR loop"). Then go to 1.
+7. **Tell the user in one line** what merged or is waiting, then go to 1. Don't suggest `/clear`: the harness
+   compacts the context by itself, and the loop carries on across it (see **State**).
 
 ## Replacing an implementer
 
