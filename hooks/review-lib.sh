@@ -3,7 +3,7 @@
 #
 # The review gate's reviewer pieces, shared by hooks/review-gate.sh and the eval runner (tests/evals/run.sh), so the
 # runner measures the prompts and flags the gate really uses. Sourced, never run: it defines functions and two
-# schemas and does nothing else. Design notes: docs/gate.md › Reviewer pipeline, and › Evals.
+# schemas and does nothing else. Design notes: docs/gate.md › Reviewer pipeline, and › Changing prompts or models.
 #
 # The functions read the caller's variables, named in each header. They never exit the shell: a failure is a
 # non-zero status (or an empty result) for the caller to turn into a block, an error or a skipped case.

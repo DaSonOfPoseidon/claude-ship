@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs the gate's reviewers on seeded-bug cases and scores what they find (claude-ship #113). Run it by hand: it
 # calls real `claude` sessions and costs tokens, so it is not in the checks or CI. Design notes and how to add a case:
-# docs/gate.md › Evals.
+# docs/gate.md › Changing prompts or models.
 #
 # usage: tests/evals/run.sh [--case <name>]... [--model-finder <m>] [--model-verifier <m>] [--model-docs <m>]
 #                           [--prompt-dir <dir>] [--cases-dir <dir>] [--repo <dir>] [--timeout <s>] [--json] [--check]

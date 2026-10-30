@@ -5,7 +5,9 @@ The review → push → Codex process Claude Code follows in every opted-in repo
 - `hooks/review-gate.sh`: a PreToolUse hook that blocks `git push` and `gh pr create` until a headless
   review passes. A Sonnet finder reports P0–P3 findings and a Haiku verifier checks them; confirmed P0–P2
   block, and confirmed P3s are filed as issues. Docs-only changes get a Haiku claims check. Prompts are the
-  `hooks/review-*.md` files.
+  `hooks/review-*.md` files, built by `hooks/review-lib.sh`. A change to a prompt, model or flag comes with a
+  before/after `tests/evals/run.sh` result (seeded-bug cases; it costs tokens, so it runs by hand, not in CI;
+  [`docs/gate.md`](docs/gate.md#changing-prompts-or-models)).
 - `skills/ship/`: the `ship` skill (bootstrap a repo, request Codex reviews, triage by the outcome table,
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
 - `skills/ship/orchestrate.md`, `agents/`, `hooks/orchestrate-hint.sh`, `hooks/explorer-bash.sh` and
