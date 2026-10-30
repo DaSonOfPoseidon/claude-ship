@@ -270,7 +270,12 @@ run_case() (
 	changed=$(git diff --name-only --no-renames "$range") || broken "couldn't list the changed files"
 	kind=$(kind_of "$changed")
 	[ "$kind" = "$declared" ] || broken "case.json says kind $declared but the change is $kind to the gate"
-	rules=$(rules_of "$upstream")
+	if rules=$(rules_of "$upstream"); then
+		rules_rc=0
+	else
+		rules_rc=$?
+	fi
+	[ "$rules_rc" != 2 ] || broken "couldn't read AGENTS.md at $case_base"
 	[ -n "$rules" ] || broken "no ## Code Review Rules in AGENTS.md at $case_base"
 	checklist=
 	pitfalls=

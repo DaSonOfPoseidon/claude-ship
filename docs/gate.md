@@ -222,7 +222,9 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   for the same class of bug across the branch. A commit that was already reviewed keeps its findings, so
   re-pushing it re-blocks without a new review.
 - The project's review rules come from the default branch's `AGENTS.md` (a branch can't weaken its own review),
-  else from the branch's own, which is how the bootstrap PR that adds them gets reviewed.
+  else from the branch's own, which is how the bootstrap PR that adds them gets reviewed. The fallback is for a
+  default branch with no `AGENTS.md` or no `## Code Review Rules` section only: an `AGENTS.md` that exists but
+  can't be read blocks, on either ref (#152), as the context files below do.
 - The rest of the reviewer's context comes the same way: the checklist (the `## Reviews` section of
   `docs/CONTRIBUTING.md`, else `CONTRIBUTING.md`) and `docs/pitfalls.md` are read from the default branch, and from
   the branch only when the default branch has none of that file (the bootstrap PR). A branch that edits them could
