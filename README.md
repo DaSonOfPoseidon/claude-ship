@@ -33,8 +33,8 @@ the rest, one PR at a time (claude-ship #66):
 | The mechanics under it: waiting, listing findings, filing issues | the ship scripts | none |
 
 Progress lives on GitHub (PRs and labels), with the plans kept in `.git/claude-ship/` outside the repo's
-files, so the loop resumes after `/clear` with "continue the PR loop". The full process is in
-`skills/ship/orchestrate.md`. Without a master plan, ready issues are taken by the repo's priority labels (highest first), then oldest first.
+files, so the loop keeps going across automatic compaction, and resumes after a `/clear` with "continue the PR
+loop". The full process is in `skills/ship/orchestrate.md`. Without a master plan, ready issues are taken by the repo's priority labels (highest first), then oldest first.
 
 It starts by itself in plan mode, in repos where both `CLAUDE_AUTONOMOUS` and `CLAUDE_ORCHESTRATE` are `true`:
 the `orchestrate-hint.sh` hook (a `UserPromptSubmit` hook) points Claude to it once per session in each
