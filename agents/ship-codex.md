@@ -54,17 +54,21 @@ With `mode: resolve-only` or `mode: triage-only`, skip to **Resolve only** or **
 no request, so they don't wait for CI).
 
 0. **CI first.** Codex is requested only once CI is green, so a round isn't spent on a head that is red anyway.
-   a. `gh pr checks <pr> -R <slug> --watch --interval 30` (Bash `timeout: 600000`, no `run_in_background`), alone.
+   a. `gh pr view <pr> -R <slug> --json headRefOid --jq .headRefOid` must print `<sha>`. For a minute or so after a
+      push GitHub can still report the old head, and `gh pr checks` would then read that head's checks. If it
+      prints anything else, skip the rest of step 0 and go to step 1, which waits until `<sha>` is the head; step 5
+      reads CI after the review, and the implementer acts on a `fail` there.
+   b. `gh pr checks <pr> -R <slug> --watch --interval 30` (Bash `timeout: 600000`, no `run_in_background`), alone.
       It returns when no check is pending. Its exit code isn't the result (0 all passed, 1 a failure, 8 pending):
-      step b decides. If the call hits the Bash timeout, call it once more (20 minutes in all). The same rule as
+      step c decides. If the call hits the Bash timeout, call it once more (20 minutes in all). The same rule as
       step 4 holds: never end your turn or send report text before a call has returned. If the second call times
       out too: `outcome: ci-timeout`, `stopped because: checks still pending after 20 minutes`.
-   b. `ci-failures.sh <pr> <slug>`. A non-zero exit: `outcome: error` with its message. Output without any failed
+   c. `ci-failures.sh <pr> <slug>`. A non-zero exit: `outcome: error` with its message. Output without any failed
       check (`no failed checks`, with or without a `pending:` line): go on to step 1. Otherwise (the output has
       check blocks): `outcome: ci-fail`. Copy its output word for word under `ci-failures:` in the report, request
       nothing, and stop. No request was made, so no Codex round was used.
    Checks are not registered for the first moments after a push, so a watch that finds none returns at once and
-   step b says `no failed checks`; step 5 reads CI again after the review for that reason.
+   step c says `no failed checks`; step 5 reads CI again after the review for that reason.
 1. `codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). It waits until GitHub shows `<sha>` as the PR's
    head, then posts `@codex review`, unless a request for this head is already out (it says so and posts
    nothing), or the PR has already used 3 rounds and none is pending (exit 4, nothing posted). Exit 0: a request

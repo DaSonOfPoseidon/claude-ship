@@ -26,7 +26,8 @@ review finds a new class.
 - **A command interrupted midway may have done part of its work.** Check what exists (issues, commits)
   before redoing it.
 - **GitHub's PR API lags a push.** For a minute or so after a push, a PR can still report the old head, and
-  a review requested then covers the old commit (claude-ship #4). Wait until `headRefOid` is HEAD.
+  a review requested then covers the old commit (claude-ship #4), and `gh pr checks` reads the old head's CI
+  (claude-ship #118). Wait until `headRefOid` is HEAD before acting on either.
 - **A wait loop that reads every failure as "not done yet" hides a broken command.** A relative script path
   run from the wrong directory spun for 30 minutes after the review had finished. Use absolute paths, and
   stop on any error.

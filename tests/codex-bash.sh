@@ -67,6 +67,7 @@ expect 0 "$ship/codex-triage.sh 12 $tf/triage-o+x-12-12.json"
 expect 0 'gh pr view 12'
 expect 0 'gh pr view 12 --json headRefOid --jq .headRefOid'
 expect 0 'gh pr view 12 --comments'
+expect 0 'gh pr view 12 -R o/r --json headRefOid --jq .headRefOid'
 expect 0 'gh pr checks 12'
 expect 0 'gh pr checks 12 --required'
 expect 0 'gh pr checks 12 -R o/r'
