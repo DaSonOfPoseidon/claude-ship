@@ -80,6 +80,8 @@ can't hide a push. Also unknown:
 
 - a word that is a path ending in the name of a listed tool, a wrapper or a shell (`./cat`, `/tmp/env`, `/bin/cat`): a
   script of that name may be anything (only `git` and `gh` by path count as themselves);
+- an assignment to `PATH`, `LD_*`, `BASH_ENV` or `ENV`, in the command, behind `env` or `sudo`, or by `export`: the
+  name of a listed tool may then run a script the command wrote;
 - a dynamic command word (`$x push`, `$(echo git) push`, `$'…'`); a dynamic argument is fine only for a listed tool
   (`cat "$f"`);
 - a wrapper it can't unwrap, a shell run without `-c` (stdin, a script, `bash -s`, `bash <<EOF`), `source`, `.`, and an

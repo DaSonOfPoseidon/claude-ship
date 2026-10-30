@@ -17,6 +17,10 @@ review finds a new class.
   old check (docs/gate.md › Tamper protection). The push, PR and `gh api` checks sit behind the same tree: a command
   that runs no git or gh skips them (docs/gate.md › Command reading), and "runs no git" means every command in the
   tree is on a list of tools known not to run their arguments, not that the tree names no git.
+- **A command's name is not the program it runs.** The runs-git filter trusted a listed name (`cat`, `echo`) by its
+  last path part, so `./cat` and `/tmp/ls` passed as the tools, and by the bare word, so `PATH=. cat` ran a script the
+  same command wrote (claude-ship #135). Trust a name only when it is a bare word and nothing in the command
+  (a `PATH`, `LD_*`, `BASH_ENV` or `ENV` assignment, a function of that name) can change what it resolves to.
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
   `>&2` as a descriptor duplication when any non-alphanumeric followed, so `>&2.txt` (bash: a write to the file
   `2.txt`) and `>&1/x` passed; so did `&>/dev/null.log` (no terminator at all) and `>/dev/null,x` (the `/dev/…`

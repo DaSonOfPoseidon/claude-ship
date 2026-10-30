@@ -331,6 +331,14 @@ expect_review 2 '(( n=1 )); echo "git push"' none
 expect_review 0 'echo ${x:1:2} "git push"; (( 1+1 )); echo $((0x1f + 2))' none
 expect_review 2 'a[$(git push)]=1' none
 expect_review 2 'echo "git push" ; ./run.sh' none
+# A variable that changes which program a listed name runs makes the name unknown too.
+expect_review 2 'echo "git push"; PATH=. cat x' none
+expect_review 2 'echo "git push"; env PATH=. cat x' none
+expect_review 2 'export PATH=.:$PATH; echo "git push"; cat x' none
+expect_review 2 'PATH=. ; echo "git push"; cat x' none
+expect_review 2 'echo "git push"; sudo PATH=. cat x' none
+expect_review 2 'echo "git push"; LD_PRELOAD=./x.so cat x' none
+expect_review 0 'echo "git push"; FOO=1 cat x; PATHX=1 cat x' none
 # A path named like a listed tool or wrapper is a script, not that tool.
 expect_review 2 'printf '\''git push'\'' > ./cat; chmod +x ./cat; ./cat' none
 expect_review 2 '/tmp/ls "git push"' none

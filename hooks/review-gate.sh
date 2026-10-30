@@ -320,15 +320,19 @@ def ggev($e):
 # A path that ends in the name of a wrapper, a shell or a listed tool (./cat, /tmp/env) is a script that may be anything,
 # not that tool, so it is unknown. git and gh by path stay git and gh (ggev).
 def ggpath: test("^[^[:space:]]*/[^/[:space:]]+$") and (bn | test("^(env|command|builtin|exec|nohup|nice|time|timeout|stdbuf|setsid|sudo|doas|xargs|find|sh|bash|dash|zsh|ksh|ash|eval)$") or ggsafe);
+# A variable that changes which program a listed name runs (`PATH=. cat`, `env PATH=x cat`, `export PATH=...`).
+def ggenvname: test("^(PATH|LD_[A-Z_]+|BASH_ENV|ENV)$");
+def ggenv: test("^(PATH|LD_[A-Z_]+|BASH_ENV|ENV)=");
 def ggcalls:
 	(.Args? // []) as $args | [$args[] | wv] as $w
 	| if ($w | length) == 0 then empty
 	elif $w[0] == null then {k: "ggdyn"}
-	elif any($w[]; . != null and ggpath) then {k: "ggdyn"}
+	elif any($w[]; . != null and (ggpath or ggenv)) then {k: "ggdyn"}
 	elif any($w[]; . == null) then (if ($w[0] | bn) as $c | ($c | ggsafe) and ($c | test("^(printf|rg|sort)$") | not) then empty else {k: "ggdyn"} end)
 	else (eff($w; false) as $effs | if $effs == null then {k: "ggdyn"} else ($effs[] | ggev(.)) end)
 	end;
-# Nodes that run text without being a command: an indirect or prompt expansion (`${!x}`, `${x@P}`), arithmetic, which
+# Nodes that run text without being a command, or change what a name runs (an assignment to PATH): an indirect or prompt
+# expansion (`${!x}`, `${x@P}`), arithmetic, which
 # evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`, `[[ a -eq b ]]`, `declare -i`),
 # and an array subscript. Plain numbers are fine.
 def ggnum: ([.. | objects | select(.Type == "Lit") | .Value] | all(test("^([0-9]+|0[xX][0-9a-fA-F]+)$")))
@@ -341,6 +345,7 @@ def ggnode:
 	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
 	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*i"))) then {k: "ggdyn"}
 	elif has("Index") and .Index != null then {k: "ggdyn"}
+	elif (.Name? | type) == "object" and (.Name.Value? // "" | ggenvname) then {k: "ggdyn"}
 	else empty end;
 if .Type != "File" then "bad"
 else
