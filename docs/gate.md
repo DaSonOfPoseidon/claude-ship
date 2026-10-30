@@ -73,8 +73,8 @@ checks the gate exits 0 without the rest: a heredoc body, a quoted argument or a
 everything runs exactly as before, text checks included, so a real `gh issue comment … <<EOF` keeps its quoting check.
 
 What is `ggdyn`: the filter lists what is known *not* to run its arguments (`ggsafe`: `cat`, `echo`, `printf`, `grep`,
-`rg`, `wc`, `head`, `tail`, `sort`, `tee`, `ls`, `jq`, `mkdir`, `cp`, `mv`, `rm`, `cd`, …; not `sed` or `awk`, which can
-run commands) and treats every other effective command as unknown, so a wrapper the gate doesn't list (`flock`, `watch`,
+`wc`, `head`, `tail`, `sort`, `tee`, `ls`, `jq`, `mkdir`, `cp`, `mv`, `rm`, `cd`, …; not `sed`, `awk` or `rg`, which can
+run commands: `rg --pre`, `--hostname-bin`) and treats every other effective command as unknown, so a wrapper the gate doesn't list (`flock`, `watch`,
 `ssh`, `busybox`), an interpreter (`python3 -c`, `node`), a script (`./run.sh`, `make`) or a shell function that calls one
 can't hide a push. Also unknown:
 
@@ -84,11 +84,13 @@ can't hide a push. Also unknown:
   name of a listed tool may then run a script the command wrote;
 - a dynamic command word (`$x push`, `$(echo git) push`, `$'…'`); a dynamic argument is fine only for a listed tool
   (`cat "$f"`);
-- a wrapper it can't unwrap, a shell run without `-c` (stdin, a script, `bash -s`, `bash <<EOF`), `source`, `.`, and an
-  `sh -c` or `eval` string that is dynamic, doesn't parse or nests deeper than 3;
+- a wrapper it can't unwrap, a shell run without `-c` (stdin, a script, `bash -s`, `bash <<EOF`), a shell that reads startup code
+  (`zsh`, or `--rcfile`, `--init-file`, `--login`, `-i`, `-l`, which run before the `-c` string), `source`, `.`, and an
+  `sh -c` or `eval` string that is dynamic, doesn't parse or nests deeper than 3; `xargs` or a wrapper behind it that
+  is left with nothing to run (`xargs env`), since the input supplies the command;
 - text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `let`, `[[ a -eq b ]]`,
-  `[[ -v x ]]`), an array subscript, and the options that make a listed tool run something (`printf -v`, `rg --pre`,
-  `sort --compress-program`).
+  `[[ -v x ]]`), an array subscript, and the options that make a listed tool run something (`printf -v`,
+  `sort --compress-program` and its abbreviations).
 
 Function bodies, `$(…)` and backticks, process substitutions and the `$(…)` in an unquoted heredoc are all in the tree,
 so `f(){ git push; }; f` and `cat <<EOF` with `$(git push)` are `gg`; a quoted heredoc body is data. A pipe or a

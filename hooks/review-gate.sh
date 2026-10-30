@@ -303,23 +303,24 @@ def calls:
 # runs_gitgh (docs/gate.md › Command reading): does the command run git or gh? Only commands that run neither skip the
 # text checks that follow. The list is of what is known not to run its arguments, so a command that is not on it
 # (an unlisted wrapper, an interpreter, `ssh`, a script) counts as unknown, like a word it can not read.
-def ggsafe: test("^(cat|echo|printf|grep|egrep|fgrep|rg|wc|head|tail|sort|uniq|cut|tr|tee|ls|stat|diff|cmp|jq|mkdir|mktemp|touch|cp|mv|rm|ln|chmod|pwd|cd|pushd|popd|true|false|:|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|xxd|od|uname|whoami|id|hostname)$");
-# Tools on that list with an option that runs a program or names a variable, as in printf -v with a subscript.
+def ggsafe: test("^(cat|echo|printf|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|tee|ls|stat|diff|cmp|jq|mkdir|mktemp|touch|cp|mv|rm|ln|chmod|pwd|cd|pushd|popd|true|false|:|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|xxd|od|uname|whoami|id|hostname)$");
+# Tools on that list with an option that runs a program (sort --compress-program, which getopt lets one abbreviate)
+# or names a variable (printf -v with a subscript). rg is not listed: its --pre and --hostname-bin run programs.
 def ggbad($c; $a):
 	($c == "printf" and any($a[]; test("^-v")))
-	or (($c == "rg" or $c == "sort") and any($a[]; test("^--(pre|pre-glob|compress-program)(=|$)")));
+	or ($c == "sort" and any($a[]; test("^--co")));
 # One command after its wrappers: gg when it is git or gh, ggdyn when it may run one, nothing when it can not. The
 # strings that sh -c and eval run are events of `calls` (str), parsed again by the caller.
 def ggev($e):
 	($e.w[0] | bn) as $c | $e.w[1:] as $a
 	| if ($c | test("^(git|gh)$")) then {k: "gg"}
-	elif ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x then {k: "ggdyn"} else (shellstr($a) | select(.k == "dyn") | {k: "ggdyn"}) end)
+	elif ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x or $c == "zsh" or ($a | any(test("^(--(rcfile|init-file|login|interactive)(=.*)?|-[a-zA-Z]*[il][a-zA-Z]*)$"))) then {k: "ggdyn"} else (shellstr($a) | select(.k == "dyn") | {k: "ggdyn"}) end)
 	elif $c == "eval" then (if $e.x then {k: "ggdyn"} else empty end)
 	elif ($c | ggsafe) and (ggbad($c; $a) | not) then empty
 	else {k: "ggdyn"} end;
 # A path that ends in the name of a wrapper, a shell or a listed tool (./cat, /tmp/env) is a script that may be anything,
 # not that tool, so it is unknown. git and gh by path stay git and gh (ggev).
-def ggpath: test("^[^[:space:]]*/[^/[:space:]]+$") and (bn | test("^(env|command|builtin|exec|nohup|nice|time|timeout|stdbuf|setsid|sudo|doas|xargs|find|sh|bash|dash|zsh|ksh|ash|eval)$") or ggsafe);
+def ggpath: contains("/") and (bn | test("^(env|command|builtin|exec|nohup|nice|time|timeout|stdbuf|setsid|sudo|doas|xargs|find|sh|bash|dash|zsh|ksh|ash|eval)$") or ggsafe);
 # A variable that changes which program a listed name runs (`PATH=. cat`, `env PATH=x cat`, `export PATH=...`).
 def ggenvname: test("^(PATH|LD_[A-Z_]+|BASH_ENV|ENV)$");
 def ggenv: test("^(PATH|LD_[A-Z_]+|BASH_ENV|ENV)=");
@@ -328,8 +329,9 @@ def ggcalls:
 	| if ($w | length) == 0 then empty
 	elif $w[0] == null then {k: "ggdyn"}
 	elif any($w[]; . != null and (ggpath or ggenv)) then {k: "ggdyn"}
-	elif any($w[]; . == null) then (if ($w[0] | bn) as $c | ($c | ggsafe) and ($c | test("^(printf|rg|sort)$") | not) then empty else {k: "ggdyn"} end)
-	else (eff($w; false) as $effs | if $effs == null then {k: "ggdyn"} else ($effs[] | ggev(.)) end)
+	elif any($w[]; . == null) then (if ($w[0] | bn) as $c | ($c | ggsafe) and ($c | test("^(printf|sort)$") | not) then empty else {k: "ggdyn"} end)
+	else (eff($w; false) as $effs
+		| if $effs == null or ($effs == [] and any($w[]; bn == "xargs")) then {k: "ggdyn"} else ($effs[] | ggev(.)) end)
 	end;
 # Nodes that run text without being a command, or change what a name runs (an assignment to PATH): an indirect or prompt
 # expansion (`${!x}`, `${x@P}`), arithmetic, which

@@ -249,7 +249,8 @@ expect_review 0 'echo "run git push later"' none
 expect_review 0 'grep -n "gh api" hooks/review-gate.sh' none
 expect_review 0 "printf '%s\\n' 'gh pr create' >/tmp/y" none
 expect_review 0 'echo "gh api -X DELETE repos/a/b"' none
-expect_review 0 'rg -v "git push" f' none
+expect_review 0 'sort -u f; echo "git push"' none
+expect_review 0 'echo "git push"; bash -c '\''true'\''; bash -ec '\''true'\''; printf "%s\n" "git push" | xargs echo' none
 expect_review 0 'echo $((1+2)) "git push"; echo $x' none
 expect_review 0 'cat <<EOF | tee /tmp/y
 git push origin HEAD, $HOME `date`
@@ -339,6 +340,19 @@ expect_review 2 'PATH=. ; echo "git push"; cat x' none
 expect_review 2 'echo "git push"; sudo PATH=. cat x' none
 expect_review 2 'echo "git push"; LD_PRELOAD=./x.so cat x' none
 expect_review 0 'echo "git push"; FOO=1 cat x; PATHX=1 cat x' none
+# Options that make a tool run a program, shells that read startup code, and wrappers that run what they are handed
+# (codex round 1 of #191).
+expect_review 2 'printf "#!/bin/sh\n git push\n" > /tmp/h; chmod +x /tmp/h; rg --hostname-bin=/tmp/h --hyperlink-format=default x f' none
+expect_review 2 'echo "git push"; rg -v x f' none
+expect_review 2 'printf "git push\n" > /tmp/rc; bash --rcfile /tmp/rc -ic true' none
+expect_review 2 'echo "git push"; bash -lc true' none
+expect_review 2 'echo "git push"; bash --login -c true' none
+expect_review 2 'echo "git push"; zsh -c true' none
+expect_review 2 "mkdir -p '/tmp/review dir'; printf '#!/bin/sh\\n git push\\n' > '/tmp/review dir/cat'; chmod +x '/tmp/review dir/cat'; '/tmp/review dir/cat'" none
+expect_review 2 'printf "git push\n" | xargs env' none
+expect_review 2 'printf "git push\n" | xargs sudo' none
+expect_review 2 'printf "git push\n" | xargs env FOO=1' none
+expect_review 2 'echo "git push"; sort --compress-prog=/tmp/x f' none
 # A path named like a listed tool or wrapper is a script, not that tool.
 expect_review 2 'printf '\''git push'\'' > ./cat; chmod +x ./cat; ./cat' none
 expect_review 2 '/tmp/ls "git push"' none
