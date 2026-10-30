@@ -128,7 +128,7 @@ same section.
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh)
+./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), and fetches shfmt into ~/.claude/bin
 ```
 
 Register the hook once in `~/.claude/settings.json`:
@@ -163,6 +163,10 @@ report as its result (claude-ship #160). Other users of the gate don't need it.
 ```
 
 `./install.sh` prints an info line when the setting is missing.
+
+`./install.sh` also installs shfmt v3.14.1 into `~/.claude/bin`, checked against a sha256 pinned in the repo
+(`scripts/fetch-shfmt.sh`). The review gate's Bash parsing will need it, and install.sh exits non-zero when the
+install fails. It needs `curl` and `sha256sum` (or `shasum`); only Linux x86_64 and aarch64 are supported for now.
 
 After a PR merges, run `./install.sh` again to deploy it. The installed files (the ship agents included), the gate's state in
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because

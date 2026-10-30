@@ -30,6 +30,16 @@ both=$(printf '%s\n%s\n' "$gate" "$hint" | jq -s '.[0] * .[1]')
 # main: this tree's installer, then a commit whose installer also deploys a marker file.
 cp -R "$root/agents" "$root/hooks" "$root/skills" "$root/install.sh" "$root/README.md" "$tmp/src/"
 cp "$root/scripts/codex-status.sh" "$tmp/src/scripts/"
+# A stand-in for scripts/fetch-shfmt.sh (which has its own test): writes its argument's own path into that file, or
+# fails when FETCH_FAIL is set, so the test sees where install.sh asked for shfmt.
+cat >"$tmp/src/scripts/fetch-shfmt.sh" <<'STUB'
+#!/bin/sh
+[ -z "${FETCH_FAIL:-}" ] || {
+	echo "stub: fetch failed" >&2
+	exit 1
+}
+printf '%s\n' "$1" >"$1"
+STUB
 git init -q "$tmp/src"
 git -C "$tmp/src" add -A
 git -C "$tmp/src" commit -qm old
@@ -49,7 +59,7 @@ if ! CLAUDE_HOME="$tmp/dest" sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1; the
 	sed 's/^/  /' "$tmp/out"
 	fail=1
 fi
-for f in main-installer-ran hooks/review-gate.sh hooks/review-lib.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
+for f in main-installer-ran bin/shfmt hooks/review-gate.sh hooks/review-lib.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
 	skills/ship/orchestrate.md skills/ship/codex-status.sh agents/ship-explorer.md agents/ship-implementer.md \
 	agents/ship-codex.md hooks/codex-bash.sh agents/mine.md; do
 	[ -e "$tmp/dest/$f" ] || {
@@ -64,6 +74,11 @@ for f in "$tmp"/dest/hooks/*.sh "$tmp"/dest/skills/ship/*.sh; do
 		fail=1
 	}
 done
+# shfmt is fetched into $dest/bin/shfmt, by the fetch script from main's archive.
+[ "$(cat "$tmp/dest/bin/shfmt" 2>/dev/null)" = "$tmp/dest/bin/shfmt" ] || {
+	echo "FAIL: shfmt wasn't fetched into dest/bin/shfmt"
+	fail=1
+}
 # A valid registration: nothing to warn about, and install.sh never touches the settings.
 cmp -s "$tmp/settings.before" "$tmp/dest/settings.json" || {
 	echo "FAIL: install.sh changed the settings file"
@@ -221,6 +236,29 @@ fork_case fork-empty '.env = {"CLAUDE_CODE_FORK_SUBAGENT": ""}'
 fork_case fork-null '.env = {"CLAUDE_CODE_FORK_SUBAGENT": null}'
 fork_case fork-env-string '.env = "oops"'
 fork_case fork-env-array '.env = []'
+
+# A failing shfmt fetch is reported and makes the exit non-zero, but everything else is still deployed (run_case
+# checks the gate and that the settings stay untouched), and a valid registration adds no warning of its own.
+gate_with '.'
+FETCH_FAIL=1
+export FETCH_FAIL
+run_case shfmt-fails
+unset FETCH_FAIL
+expect shfmt-fails 1 0
+has shfmt-fails "couldn't install shfmt"
+has shfmt-fails "the review gate will need it"
+has shfmt-fails "The gate is registered"
+[ -e "$tmp/case-shfmt-fails/skills/ship/SKILL.md" ] || {
+	echo "FAIL: shfmt-fails: the skill wasn't deployed"
+	fail=1
+}
+# The same registration with a working fetch exits 0, with shfmt in place.
+run_case shfmt-works
+expect shfmt-works 0 0
+[ -f "$tmp/case-shfmt-works/bin/shfmt" ] || {
+	echo "FAIL: shfmt-works: no bin/shfmt"
+	fail=1
+}
 
 # Without jq the registration can't be read, so the check fails (the gate needs jq too).
 nojq="$tmp/nojq-bin"

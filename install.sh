@@ -1,10 +1,11 @@
 #!/bin/sh
 # Deploys claude-ship's origin/main into ~/.claude: the gate, its prompts and the orchestrate hint (hooks/), the
 # ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh for local DRY_RUN
-# checks). Only main is deployed, so a branch's changes never go live; after fetching, this script runs main's
-# copy of itself (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after
-# deploying, this script reads that file (never writes it) and warns about a missing or outdated entry, and says
-# when the PR loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing.
+# checks), and a pinned shfmt in bin/ (scripts/fetch-shfmt.sh; a failure there makes the exit non-zero). Only main
+# is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
+# (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after deploying, this
+# script reads that file (never writes it) and warns about a missing or outdated entry, and says when the PR
+# loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing.
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
@@ -15,7 +16,7 @@ if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-git -C "$repo" archive origin/main agents hooks skills scripts/codex-status.sh | tar -x -C "$tmp"
+git -C "$repo" archive origin/main agents hooks skills scripts/codex-status.sh scripts/fetch-shfmt.sh | tar -x -C "$tmp"
 mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills"
 # File by file: agents/ also holds the user's own agents.
 cp "$tmp"/agents/ship-*.md "$dest/agents/"
@@ -24,6 +25,15 @@ rm -rf "$dest/skills/ship"
 cp -R "$tmp/skills/ship" "$dest/skills/ship"
 cp "$tmp/scripts/codex-status.sh" "$dest/skills/ship/codex-status.sh"
 echo "Deployed claude-ship $(git -C "$repo" rev-parse --short origin/main) to $dest."
+
+# The gate's Bash checks will parse commands with shfmt (#135). main's fetch script installs a pinned release, checked
+# against a pinned sha256 (docs/scripts.md). A failure doesn't stop the rest of the install; the exit status says it.
+rc=0
+mkdir -p "$dest/bin"
+if ! sh "$tmp/scripts/fetch-shfmt.sh" "$dest/bin/shfmt"; then
+	echo "install: couldn't install shfmt (see above); the review gate will need it." >&2
+	rc=1
+fi
 
 # The first ```json block of origin/main's README.md that mentions $1: the registration the user copies.
 snippet_of() {
@@ -88,6 +98,5 @@ check_settings() {
 		echo "install: info: the PR loop needs \"env\": {\"CLAUDE_CODE_FORK_SUBAGENT\": \"0\"} in $settings (claude-ship #160); without it, nested agents run in the background."
 	fi
 }
-rc=0
 check_settings || rc=1
 [ "$rc" = 0 ] || exit "$rc"

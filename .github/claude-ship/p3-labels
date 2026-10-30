@@ -24,6 +24,8 @@ tests/orchestrate-hint.sh area:gate
 .github/claude-ship/*    area:gate
 install.sh               area:install
 tests/install.sh         area:install
+scripts/fetch-shfmt.sh   area:install
+tests/fetch-shfmt.sh     area:install
 README.md                documentation,area:docs
 AGENTS.md                documentation,area:docs
 docs/*                   documentation,area:docs
