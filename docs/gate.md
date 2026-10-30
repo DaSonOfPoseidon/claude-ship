@@ -211,6 +211,10 @@ plus `.git/review-gate`. The command blocks when:
   `dd`, `chmod`, `sed` with `-i` or `--in-place`, `find … -delete`) has a protected literal word among its words
   (a `cp` that only reads a protected source blocks too: stricter than needed, and what the text check did), or
 - a literal word holds a redirect to a protected path (`awk '{ print > "…/.git/review-gate/x" }'`), or
+- a literal word is a command line that names a protected path: a writing tool starts it, or follows `;`, `&`, `|`,
+  `(`, `{` or a quote, optionally after `sudo`, `env`, `nohup`, `exec`, `command`, `time`, `xargs` or `nice`
+  (`watch 'rm ~/.claude/hooks/x'`, `su -c`, `ssh host '…; rm …'`, awk's `system("rm …")`). Prose that mentions a
+  tool (`git commit -m "docs: cp of ~/.claude/hooks/x"`) isn't one, or
 - the command names a protected literal word and also writes a file other than `/dev/null`, `/dev/stdout` or
   `/dev/stderr` by redirect (`cat ~/.claude/hooks/x >/tmp/y`), as the text check did, or
 - a string it runs as shell blocks by these rules: `sh|bash|dash|zsh|ksh|ash -c STRING` and `eval ARGS` are parsed
@@ -241,9 +245,11 @@ read, so a quoted `>` counts. It runs when:
 What the tree check passes that the text check blocked, on purpose: a protected path inside a file name, a quoted
 argument (`gh issue create --body "… ~/.claude/skills/ship/x.sh <PR> …"`, `git commit -m`), a heredoc body, or a
 write command and a read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
-What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`. Not covered, as before: tools
-outside the writing-tool list (`curl -o`, `tar`, `rsync`, `awk system()`), since the list can't be complete; the gate
-catches Claude's slips and isn't a boundary.
+What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`. What neither check covers:
+tools outside the writing-tool list (`curl -o`, `tar`, `rsync`), since the list can't be complete. What only the
+tree check misses: a string handed to a program that runs it where the tool isn't at the start of a command line
+inside it (`git commit -m "x; cp …"` reads as a command line and blocks, but `node -e 'fs.writeFileSync("…")'`
+passes); the gate catches Claude's slips and isn't a boundary.
 
 ## Waivers and opt-in flags
 

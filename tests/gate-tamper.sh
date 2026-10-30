@@ -178,6 +178,18 @@ expect 2 'ionice -c3 rm ~/.claude/hooks/x'
 expect 2 'busybox rm ~/.claude/hooks/x'
 expect 2 'taskset 1 cp /tmp/x ~/.claude/hooks/x'
 expect 2 'strace -o /tmp/t sed -i s/a/b/ ~/.claude/hooks/x'
+# A word that is a command line (it starts with a writing tool, or one follows `;`, `&`, `|`, `(`, `{` or a quote) and
+# names a protected path writes: `watch 'rm …'`, `su -c`, `ssh host '…'`, awk's system(). Prose that mentions a tool
+# (a commit message, an issue body) is not a command line.
+expect 2 "awk 'BEGIN{system(\"rm ~/.claude/hooks/x\")}'"
+expect 2 "watch 'rm ~/.claude/hooks/x'"
+expect 2 "su -c 'rm ~/.claude/hooks/x'"
+expect 2 "ssh host 'cd /tmp; rm ~/.claude/hooks/x'"
+expect 2 "flock -c 'sudo tee ~/.claude/settings.json' /tmp/l"
+expect 2 "ssh host 'echo y | tee -a ~/.claude/hooks/x'"
+expect 0 'gh issue create --title t --body "the rm of ~/.claude/hooks/x and a cp of ~/.claude/settings.json"'
+expect 0 "ssh host 'cat ~/.claude/hooks/x'"
+expect 0 "watch 'sed -n 1p ~/.claude/hooks/x'"
 expect 0 'ionice -c3 ls ~/.claude/hooks'
 expect 0 'flock /tmp/l ls ~/.claude/hooks'
 expect 2 "awk '{ print > \"out\" }' ~/.claude/hooks/x"

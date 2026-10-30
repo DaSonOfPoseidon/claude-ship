@@ -292,6 +292,7 @@ def calls:
 	elif any($w[]; . == null) then {k: "dyn"}
 	else
 		(eff($w; false) as $e0 | if $e0 != null and odd($w; $e0) then {k: "dyn"} else empty end),
+		($w[] | select(isprot and test("(^|[;&|({\n\"\u0027])\\s*((sudo|env|nohup|exec|command|time|xargs|nice)\\s+)*(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|python[0-9.]*|perl|sed\\s+(-[a-zA-Z]*i|--in-place))(\\s|$)")) | {k: "block", p: ., w: "a command line"}),
 		($w[] | select(isprot) | {k: "lw", t: .}),
 		($w[] | select(test(">+[|&]?\\s*[\"\u0027]?[^\\s;&|\"\u0027]*(" + $prot + ")")) | {k: "block", p: ., w: ">"}),
 		(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w)) end)
