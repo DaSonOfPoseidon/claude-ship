@@ -59,9 +59,40 @@ forms, and every form that shows one must pass the checks. Checks that read text
 the raw command and its unmarked words (`cmd_all`), so quoting (`CLAUDE_AUTONO''MOUS`, `c''d`) can't split a
 name apart.
 
-The tamper check (and, in later changes, the others) reads a third form: the syntax tree shfmt makes of the command,
-where a quoted string, a file name and a heredoc body are what they are instead of text that looks like a command
-(Tamper protection below). The command must parse, or the call blocks.
+The tamper check, and the filter below, read a third form: the syntax tree shfmt makes of the command, where a quoted
+string, a file name and a heredoc body are what they are instead of text that looks like a command (Tamper
+protection below). The command must parse, or the call blocks.
+
+**The filter (`runs_gitgh`).** The checks that read text (the quoting check, the `gh api` scan, the push and
+`gh pr create` checks) only matter for a command that runs git or gh, so the tree decides first. The tamper walk
+(same jq run, same wrappers, `sh -c` and `eval` strings parsed again to depth 3) also raises `gg` for a command
+whose effective word is `git` or `gh` (also by path: `/usr/bin/git`), and `ggdyn` for anything that might run one.
+With neither, the command is not a push, a PR create or a `gh api` call, so after the tamper, waiver and opt-in
+checks the gate exits 0 without the rest: a heredoc body, a quoted argument or an `echo` that merely mentions
+`git push`, `gh pr create` or `gh api -X DELETE …` no longer blocks or starts a review (#135). With `gg` or `ggdyn`
+everything runs exactly as before, text checks included, so a real `gh issue comment … <<EOF` keeps its quoting check.
+
+What is `ggdyn`: the filter lists what is known *not* to run its arguments (`ggsafe`: `cat`, `echo`, `printf`, `grep`,
+`rg`, `wc`, `head`, `tail`, `sort`, `tee`, `ls`, `jq`, `mkdir`, `cp`, `mv`, `rm`, `cd`, …; not `sed` or `awk`, which can
+run commands) and treats every other effective command as unknown, so a wrapper the gate doesn't list (`flock`, `watch`,
+`ssh`, `busybox`), an interpreter (`python3 -c`, `node`), a script (`./run.sh`, `make`) or a shell function that calls one
+can't hide a push. Also unknown:
+
+- a word that is a path ending in the name of a listed tool, a wrapper or a shell (`./cat`, `/tmp/env`, `/bin/cat`): a
+  script of that name may be anything (only `git` and `gh` by path count as themselves);
+- a dynamic command word (`$x push`, `$(echo git) push`, `$'…'`); a dynamic argument is fine only for a listed tool
+  (`cat "$f"`);
+- a wrapper it can't unwrap, a shell run without `-c` (stdin, a script, `bash -s`, `bash <<EOF`), `source`, `.`, and an
+  `sh -c` or `eval` string that is dynamic, doesn't parse or nests deeper than 3;
+- text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `let`, `[[ a -eq b ]]`,
+  `[[ -v x ]]`), an array subscript, and the options that make a listed tool run something (`printf -v`, `rg --pre`,
+  `sort --compress-program`).
+
+Function bodies, `$(…)` and backticks, process substitutions and the `$(…)` in an unquoted heredoc are all in the tree,
+so `f(){ git push; }; f` and `cat <<EOF` with `$(git push)` are `gg`; a quoted heredoc body is data. A pipe or a
+heredoc feeding an unlisted command is no exception: that command is unknown on its own.
+A script written in one command and run by the same command (`./x`, `sh x`) is unknown too, since what runs isn't
+listed; one call that writes it and a later call that runs it are two calls, each judged on its own.
 
 A command that already holds a marker, quoting the scanner can't read, or a push whose own words have literal
 separators, quotes, `$` or newlines can't be checked word by word, so it blocks.

@@ -54,7 +54,8 @@ expect 0 'git -C . push origin HEAD | cat'
 expect 0 "cd $repo && git push -u origin HEAD 2>&1 | tail -3"
 # Quoted text that mentions a push is not a push.
 expect 0 'gh pr create --title t --body "see git push"'
-expect 2 'echo "git push" && echo done'
+# (Blocked before the syntax-tree filter, which sees that no git runs: claude-ship #135.)
+expect 0 'echo "git push" && echo done'
 expect 0 'gh pr create --body "costs $5, see git push"'
 expect 2 'gh pr create --body "see git push" && git config push.followTags true'
 expect 2 'gh pr create --body "$(git config push.followTags true; git push origin HEAD)"'
@@ -231,6 +232,116 @@ expect_review 2 'gh pr create --title t --body "see git push"' started
 # A real push still gets its review, and a command that is not data-only is still blocked (before any review).
 expect_review 2 'git push origin HEAD' started
 expect_review 2 'gh pr comment 7 --body "x" && git push origin HEAD' none
+
+# A command whose syntax tree runs no git or gh (only tools that don't run their arguments) never reaches the quoting,
+# `gh api` or push checks, however much its text mentions them (claude-ship #135). A heredoc body or a quoted
+# argument is data. `gh pr create` in the printf is the one that started a review before.
+expect_review 0 'cat >/tmp/x <<'\''EOF'\''
+## Plan
+
+Run `gh pr create --title "x" | tee y; (cd z)` then $HOME and git push origin HEAD;
+EOF
+wc -l /tmp/x' none
+expect_review 0 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
+Never run gh api -X DELETE repos/a/b here.
+EOF' none
+expect_review 0 'echo "run git push later"' none
+expect_review 0 'grep -n "gh api" hooks/review-gate.sh' none
+expect_review 0 "printf '%s\\n' 'gh pr create' >/tmp/y" none
+expect_review 0 'echo "gh api -X DELETE repos/a/b"' none
+expect_review 0 'rg -v "git push" f' none
+expect_review 0 'echo $((1+2)) "git push"; echo $x' none
+expect_review 0 'cat <<EOF | tee /tmp/y
+git push origin HEAD, $HOME `date`
+EOF' none
+expect_review 0 'mkdir -p "$d" && cd "$d" && cat > x <<'\''EOF'\''
+git push && gh pr create
+EOF' none
+expect_review 0 'for f in a b; do cat "$f"; echo "gh api $f"; done' none
+expect_review 0 'sudo cat /etc/hosts "git push"; env A=1 echo "git push"; timeout 5 grep "git push" f' none
+expect_review 0 "bash -c 'echo \"git push\"'" none
+expect_review 0 'echo "git push" >&2' none
+# A real gh call still gets every text check: a heredoc body for `gh issue comment` with quoting it can't read
+# blocks, as before.
+expect_review 2 'gh issue comment 135 --body-file - <<'\''EOF'\''
+Body with `backticks` and $HOME and (parens); git push
+EOF' none
+expect_review 2 'gh pr create --title t --body x' started
+expect_review 2 'git push' started
+expect_review 2 'echo "gh pr create" ; shellcheck x.sh' started
+# Whatever might run git or gh (a command the gate has no reason to trust, a word it can't read, an interpreter or
+# a script) keeps every check. These blocked or started a review before, and still do, or passed (0) and still pass.
+expect_review 2 "bash -c 'git push origin HEAD'" none
+expect_review 2 'eval "git push"' none
+expect_review 0 'x=git; $x push' none
+expect_review 0 '$(echo git) push' none
+expect_review 0 'export g=git; $g push' none
+expect_review 0 'for c in git; do $c push; done' none
+expect_review 0 'bash -c "$x"' none
+expect_review 2 'flock /tmp/l git push' none
+expect_review 2 'watch git push' none
+expect_review 2 'ssh host git push' none
+expect_review 2 "busybox sh -c 'git push'" none
+expect_review 2 'xargs git push </dev/null' none
+expect_review 2 '/usr/bin/git push' started
+expect_review 2 '"git" push' started
+expect_review 2 'g\it push' started
+expect_review 2 'sudo git push' none
+expect_review 2 'env git push' none
+expect_review 2 'timeout 5 git push' none
+expect_review 2 'time git push' none
+expect_review 2 'find . -name x -exec git push \;' none
+expect_review 2 "find . -name x -exec sh -c 'git push' \\;" none
+expect_review 0 "python3 -c 'import subprocess; subprocess.run([\"git\",\"push\"])'" none
+expect_review 2 "echo 'import os; os.system(\"git push\")' | python3" none
+expect_review 2 'python3 <<'\''EOF'\''
+import os
+os.system("git push")
+EOF' none
+expect_review 2 'echo "git push" | sh' none
+expect_review 2 'echo "git push" | xargs -I{} sh -c '\''{}'\''' none
+expect_review 2 'bash <<'\''EOF'\''
+git push
+EOF' none
+expect_review 0 'sh </tmp/script' none
+expect_review 2 'echo "git push" > /tmp/s.sh; sh /tmp/s.sh' none
+expect_review 2 'echo "git push" > /tmp/s.sh; chmod +x /tmp/s.sh; /tmp/s.sh' none
+expect_review 2 "shopt -s expand_aliases; alias g='git push'; g" none
+expect_review 2 "trap 'git push' EXIT; true" none
+expect_review 2 'f(){ git push; }; f' none
+expect_review 2 'f(){ "$@"; }; f git push' none
+expect_review 2 'git(){ echo; }; git push' none
+expect_review 2 'cat <<EOF
+$(git push)
+EOF' none
+expect_review 2 'echo $(git push)' none
+expect_review 2 'echo "$(echo "$(git push)")"' none
+expect_review 2 'bash -c '\''bash -c "bash -c \"bash -c \\\"git push\\\"\""'\''' none
+expect_review 2 'x='\''$(git push)'\''; echo $((x))' none
+expect_review 2 'x='\''$(git push)'\''; echo ${x@P}' none
+expect_review 2 "x='git push'; y=x; echo \${!y}" none
+expect_review 2 "printf -v 'a[\$(git push)]' x" none
+expect_review 2 'cat f | rg --pre '\''git push'\'' x' none
+expect_review 2 'awk '\''BEGIN{system("git push")}'\''' none
+expect_review 2 '[[ $a -eq 1 ]] && echo "git push"' none
+expect_review 2 'for ((i=0;i<3;i++)); do echo "git push"; done' none
+expect_review 2 'echo ${x:1:n} "git push"' none
+expect_review 2 'declare -i x; echo "git push"' none
+expect_review 2 '(( n=1 )); echo "git push"' none
+expect_review 0 'echo ${x:1:2} "git push"; (( 1+1 )); echo $((0x1f + 2))' none
+expect_review 2 'a[$(git push)]=1' none
+expect_review 2 'echo "git push" ; ./run.sh' none
+# A path named like a listed tool or wrapper is a script, not that tool.
+expect_review 2 'printf '\''git push'\'' > ./cat; chmod +x ./cat; ./cat' none
+expect_review 2 '/tmp/ls "git push"' none
+expect_review 2 'echo "git push"; /tmp/env x' none
+expect_review 2 'echo "git push"; ./nohup cat x' none
+expect_review 2 'echo "git push"; env ./cat x' none
+expect_review 2 'echo "git push"; sudo ./sh x' none
+expect_review 2 'echo "git push"; xargs /tmp/echo' none
+expect_review 0 'echo "see docs/ls for git push"; cat docs/cat.md' none
+expect_review 2 'echo "git push" ; node -e '\''x'\''' none
+expect_review 2 'echo "git push" ; flock l true' none
 
 # The reviewers share one time budget (claude-ship #103): REVIEW_GATE_BUDGET seconds from the gate's start, each
 # run capped at 1100 s and at what is left, and no run starts with fewer than REVIEW_GATE_MIN_SECS left. A fake
