@@ -57,6 +57,9 @@ expect 0 "CODEX_WAIT_SECS=300 $ship/codex-wait.sh 12"
 expect 0 "CODEX_WAIT_SECS=570 $ship/codex-wait.sh 12"
 expect 0 "CODEX_WAIT_SECS=1200 $ship/codex-wait.sh 12"
 expect 0 "$ship/codex-findings.sh 12"
+expect 0 "$ship/ci-failures.sh 12"
+expect 0 "$ship/ci-failures.sh 12 acme/app"
+expect 0 "$ship/ci-failures.sh 137 DaSonOfPoseidon/claude-ship"
 expect 0 "$ship/codex-triage.sh 12 $tf/triage-o+r-12.json"
 expect 0 "$ship/codex-triage.sh 137 $tf/triage-DaSonOfPoseidon+claude-ship-137.json"
 expect 0 "$ship/codex-triage.sh 12 $tf/triage-o+x-12-12.json"
@@ -67,6 +70,7 @@ expect 0 'gh pr view 12 --comments'
 expect 0 'gh pr checks 12'
 expect 0 'gh pr checks 12 --required'
 expect 0 'gh pr checks 12 -R o/r'
+expect 0 'gh pr checks 12 -R o/r --watch --interval 30'
 # Allowed: the triage file, and only it, to write.
 write 0 "$st/triage-o+r-12.json"
 write 0 "$st/triage-DaSonOfPoseidon+claude-ship-137.json"
@@ -120,6 +124,24 @@ expect 2 "$ship/codex-wait.sh"
 expect 2 "$ship/codex-wait.sh 12 extra"
 expect 2 "$ship/codex-findings.sh"
 expect 2 "$ship/codex-findings.sh 12 o/r"
+# ci-failures.sh: <pr> and an optional owner/repo only (the near misses of every allowed form).
+expect 2 "$ship/ci-failures.sh"
+expect 2 "$ship/ci-failures.sh x"
+expect 2 "$ship/ci-failures.sh 12abc"
+expect 2 "$ship/ci-failures.sh -1"
+expect 2 "$ship/ci-failures.sh 12 a;b"
+expect 2 "$ship/ci-failures.sh 12 o/r extra"
+expect 2 "$ship/ci-failures.sh 12 o"
+expect 2 "$ship/ci-failures.sh 12 -x/y"
+expect 2 "$ship/ci-failures.sh 12 o/r/s"
+expect 2 "$ship/ci-failures.sh 12 ../x"
+expect 2 "$ship/ci-failures.sh 12 o/r@x"
+expect 2 "CODEX_WAIT_SECS=300 $ship/ci-failures.sh 12"
+expect 2 "$ship/ci-failures.sh.bak 12"
+expect 2 "~/.claude/skills/other/ci-failures.sh 12"
+expect 2 "~/.claude/skills/ship/../ship/ci-failures.sh 12"
+expect 2 "sh $ship/ci-failures.sh 12"
+expect 2 "$ship/ci-failures.sh 12 | cat"
 expect 2 "$ship/codex-triage.sh 12"
 expect 2 "$ship/codex-triage.sh 12 $tf/triage-o+r-12.json o/r"
 # Denied: the triage file must be the PR's own, in the one directory, named by a repository and the PR number.
@@ -204,6 +226,7 @@ expect 2 'gh pr view 12 --web=true'
 expect 2 'gh pr view 12 -- --web'
 expect 2 'gh pr checks 12 --web'
 expect 2 'gh pr checks 12 -w'
+expect 2 'gh pr checks 12 -R o/r --watch --web'
 expect 2 'gh issue view 12'
 expect 2 'gh issue create'
 expect 2 'gh workflow run codex-review.yml'

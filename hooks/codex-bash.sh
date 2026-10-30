@@ -9,6 +9,7 @@
 #   ~/.claude/skills/ship/codex-request.sh <pr> <owner/repo> <full sha>
 #   [CODEX_WAIT_SECS=<n>] ~/.claude/skills/ship/codex-wait.sh <pr>
 #   ~/.claude/skills/ship/codex-findings.sh <pr>
+#   ~/.claude/skills/ship/ci-failures.sh <pr> [owner/repo]
 #   ~/.claude/skills/ship/codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json
 #   gh pr view <pr> ... | gh pr checks <pr> ...    without --web
 # and a Write of $HOME/.claude/state/claude-ship/triage-<owner>+<repo>-<n>.json (a fixed directory, so no checkout
@@ -22,7 +23,7 @@ poll=
 
 deny() {
 	echo "ship-codex may only run ~/.claude/skills/ship/codex-round.sh <pr> [owner/repo], codex-request.sh <pr> <owner/repo> <sha>," \
-		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>, codex-findings.sh <pr>, codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json," \
+		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>, codex-findings.sh <pr>, ci-failures.sh <pr> [owner/repo], codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json," \
 		"gh pr view|checks <pr> (no --web), as one plain command, and Write that triage file ($1)." >&2
 	if [ -n "$poll" ]; then
 		echo "To wait for codex-wait.sh: don't poll: run codex-wait.sh again in the foreground, and never end your turn before it returns a result." >&2
@@ -156,6 +157,11 @@ case $prog in
 	isnum "$1" || deny "PR number $1"
 	isslug "$2" || deny "repository $2"
 	issha "$3" || deny "sha $3"
+	;;
+"$ship/ci-failures.sh")
+	[ $# -ge 1 ] && [ $# -le 2 ] || deny "ci-failures.sh takes <pr> [owner/repo]"
+	isnum "$1" || deny "PR number $1"
+	[ $# -lt 2 ] || isslug "$2" || deny "repository $2"
 	;;
 "$ship/codex-wait.sh" | "$ship/codex-findings.sh")
 	[ $# -eq 1 ] || deny "${prog##*/} takes <pr>"

@@ -64,6 +64,28 @@ state is still `pending`.
 **Errors.** Each GitHub call is its own assignment, so `set -e` stops on a failed call; reading a pipeline's last
 exit status would turn an empty result into "no findings".
 
+## `skills/ship/ci-failures.sh`
+
+Sends CI failures to the implementer instead of the main session (#118). `ci-failures.sh <pr> [owner/repo]` reads
+`gh pr checks --json name,state,bucket,link,workflow` and prints one block per check whose `bucket` is `fail`:
+`<workflow> / <name>  <link>`, and for a GitHub Actions job (`/actions/runs/<run>/job/<job>`, both ids numbers) the
+last 60 lines of `gh run view <run> --job <job> --log-failed`, indented, with the job and step columns, timestamps,
+colours and carriage returns removed. Any other failed check (an external status, or a link whose ids aren't
+numbers) is its name and link only, and its link is never passed to `gh`. Then `pending: <n> checks still running`
+if any check is pending, and `no failed checks` when none failed (also when the PR has no checks at all).
+
+- **`gh pr checks` exits non-zero on a failure (1) or a pending check (8): that is the result, not an error.** The
+  script reads its output instead, and exits 1 only when that isn't a JSON list and isn't gh's "no checks
+  reported". A log that can't be fetched (a run still going has no failed-step log yet) is a
+  `(log unavailable: ...)` line, and the other checks still print.
+- **Log text is untrusted.** It is only printed, cut to 400 characters a line; names, workflows and links lose their
+  control characters first, so none can add a line or an escape sequence. The fields are joined with the unit
+  separator, not a tab: `read` drops a leading tab, so an external status's empty workflow would shift the name
+  into its place.
+- **Who calls it.** `ship-codex` runs it before requesting Codex, when `gh pr checks --watch` reports a failure, and
+  hands the output to the implementer as a `ci-failures:` block (`agents/ship-codex.md`); the orchestrator runs it
+  only in the fallback flow. `hooks/codex-bash.sh` allows it with one PR number and an optional `owner/repo`.
+
 ## `skills/ship/codex-round.sh`
 
 Counts the `@codex review` comments a PR has used, the way `codex-status.sh` counts requests: not from a bot, from
@@ -293,8 +315,9 @@ hook decides, not what Claude Code does with it.
   written with `~/` exactly (not `$HOME`, an absolute path, `./`, `..` or `env`/`sh`), or `gh`, or the one
   environment prefix below.
 - **Allowed, as one plain command.** `codex-round.sh <pr> [owner/repo]`, `codex-request.sh <pr> <owner/repo>
-  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `codex-triage.sh <pr> <file>`, and
-  `gh pr view|checks <pr> ...`. `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
+  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `ci-failures.sh <pr> [owner/repo]`, `codex-triage.sh <pr> <file>`, and
+  `gh pr view|checks <pr> ...` (so `gh pr checks <pr> -R <slug> --watch --interval 30`, which the agent uses to wait for CI, is
+  allowed with no change). `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
   with no part starting with `-`, no part that is `.`, and no `..` anywhere, a sha is 40 lowercase hex characters. Nothing else may precede or follow: any other variable
   (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, and `CODEX_WAIT_SECS` only before the wait.
 - **A poll is denied with a hint.** The agent runs `CODEX_WAIT_SECS=300 codex-wait.sh <pr>` in the foreground,
