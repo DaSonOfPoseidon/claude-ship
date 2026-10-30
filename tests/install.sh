@@ -49,7 +49,7 @@ if ! CLAUDE_HOME="$tmp/dest" sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1; the
 	sed 's/^/  /' "$tmp/out"
 	fail=1
 fi
-for f in main-installer-ran hooks/review-gate.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
+for f in main-installer-ran hooks/review-gate.sh hooks/review-lib.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
 	skills/ship/orchestrate.md skills/ship/codex-status.sh agents/ship-explorer.md agents/ship-implementer.md \
 	agents/ship-codex.md hooks/codex-bash.sh agents/mine.md; do
 	[ -e "$tmp/dest/$f" ] || {

@@ -1,0 +1,13 @@
+--- a/skills/ship/codex-round.sh
++++ b/skills/ship/codex-round.sh
+@@ -24,8 +24,8 @@
+ # edit time, so it can vouch only for the latest request; a receipt or a review stays and vouches for its own.
+ summaries=$(gh api --paginate "repos/$slug/issues/$pr/comments" \
+ 	--jq ".[] | select(.user.login == \"$bot\") | if (.body | contains(\"codex-pull-request-review-summary\")) then .updated_at elif (.body | contains(\"codex-review-receipt\")) then .created_at else empty end")
+-reviews=$(gh api --paginate "repos/$slug/pulls/$pr/reviews" \
+-	--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
++reviews=$(gh api --paginate "repos/$slug/pulls/$pr/reviews" |
++	jq -r ".[] | select(.user.login == \"$bot\") | .submitted_at")
+ bot_times=$(printf '%s\n%s\n' "$summaries" "$reviews" | grep . | cut -c1-19 | sort)
+ # Each request with the time of the next one (`-` for the latest), which ends the window its answer must fall in.
+ requests=$(printf '%s\n' "$requests" | grep . | sort -k2,2 |

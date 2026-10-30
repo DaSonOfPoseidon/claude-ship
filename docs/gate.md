@@ -177,7 +177,7 @@ a `cd` moves to and a `git -C` one: the call may run before or after either.
 
 ## Tamper protection
 
-The installed gate, its prompts, the ship skill and agents, the gate's state (`.git/review-gate/`) and the
+The installed gate, its prompts and lib (`hooks/`), the ship skill and agents, the gate's state (`.git/review-gate/`) and the
 settings that register it are the user's to change; claude-ship's source changes through reviewed PRs. `Write`,
 `Edit`, `MultiEdit` and `NotebookEdit` calls on those paths block. A project's own `.claude/settings` may change,
 but not to turn hooks off (`disableAllHooks`).
@@ -234,6 +234,11 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   failure would read as "no PR", "no threads" or an empty diff, and the review would skip what it was meant to
   check (#106). A branch with no PR, or a PR with no unresolved threads, is reviewed as before.
 - Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`.
+- The reviewer's prompts, schemas, run and verdict rules are in `hooks/review-lib.sh`, which the gate sources and
+  `tests/evals/run.sh` uses too, so the evals measure what the gate sends (see Changing prompts or models). It is
+  deployed and protected like the gate. A shell that fails to source a file exits with a status Claude Code lets
+  through, so the gate checks that it can read the lib first, and blocks when it can't. It blocks too when a prompt
+  file can't be read, since a prompt built without the reviewer's instructions would still look built.
 - The reviewers share one time budget, `REVIEW_GATE_BUDGET` (default 2200 s) counted from the gate's start: each run
   gets `min(1100 s, what is left)`, and none starts with fewer than `REVIEW_GATE_MIN_SECS` (default 120 s) left; the
   gate then blocks with "ran out of time". Two reviewers at 1100 s each would otherwise outlast the hook's timeout
@@ -247,3 +252,53 @@ hooks, skills and plugins, and `--restricted` ignores the user and project setti
 tools inside the repo (`--bare` would too, but needs an API key). Managed settings and policy hooks still load
 under both; they're the machine owner's, not the branch's. The prompt carries the diff and log, and the working
 tree is the commit being pushed (the gate refuses a dirty tree and pushes of anything but HEAD).
+
+## Changing prompts or models
+
+A change to what a reviewer is told or how it runs (`hooks/review-prompt.md`, `review-docs-prompt.md`,
+`review-verify-prompt.md`, and the schemas, models or flags in `hooks/review-lib.sh`) can make the gate catch more
+bugs or fewer, and a read of the diff can't say which. So a PR that makes such a change includes a before and after
+result of `tests/evals/run.sh` in its description: the runner's output on the base and on the branch (each from its
+own checkout, or the base's with `--prompt-dir` pointing at the branch's `hooks/`), and `--model-finder` and friends
+for a model change.
+
+**What it is.** `tests/evals/cases/<name>/` holds one case: a `change.diff` with a seeded bug (or a clean change) and a
+`case.json`: `base` (a full commit sha of this repo that the diff applies on), `kind` (`code` or `docs`, which must be
+what the gate's kind check says of the diff), `expect` (the findings a reviewer should report, each `{file, line,
+severity}` with `line` in the changed file; `[]` for a clean case), `source` (the pitfall, issue or PR it comes from)
+and an optional `commit` (the subject the reviewer sees in the commit list). The runner makes a detached worktree at
+`base`, commits the diff, and builds the prompt with the gate's own code (`hooks/review-lib.sh`, which the gate sources
+too), reading the rules, the checklist and the pitfalls from `base`, not from the working tree. It then runs the gate's
+stages with the gate's flags: the Sonnet finder, then the Haiku verifier when the finder found something (a docs case
+gets the Haiku claims check and no verifier). Cost rows go to a temporary file, not to
+`~/.claude/state/review-costs.jsonl`.
+
+**Scoring.** A finding matches an expected one when the file is the same and its line is within 3 lines. An expected
+bug is *caught* when a matching finding has its severity, a *wrong severity* when the matching findings have another
+one, and *missed* when none match. A finding that matches nothing is a *false positive*; two findings on one bug are
+one catch. Each case is scored after the finder and again after the verifier (the findings it rejected with a
+`file:line` citation dropped, as the gate does). A reviewer that fails, times out or returns nothing readable makes the
+case an *error*, counted apart from *missed*, since a flaky run says nothing about the prompt (its row still carries
+the cost of the failed run, so totals show what a failing configuration spends). A `--prompt-dir` that lacks the lib
+or a prompt is a setup error before any case runs. `INT` or `TERM` stops the running reviewer at once and removes the
+worktree and temp directory. A case whose `base` isn't
+in the clone (a shallow checkout) is skipped. The runner prints a line per case and stage, then totals per stage and
+model with their cost; `--json` prints the same as JSON. It exits 0 whatever the score. `--check` only sets the cases up
+(valid `case.json`, the diff applies, the kind matches, the expected lines exist, the prompt builds) and exits 1 when a
+case fails.
+
+**Cost.** Each run calls real `claude` sessions, about as much as the gate's reviews of that many pushes, so run it by
+hand and keep it out of CI. `tests/gate-evals.sh` (in the normal checks) tests the scoring with a fake `claude`, and
+runs `--check` on the seeded cases, so a case whose diff stops applying fails without tokens. CI checks out the whole
+history for that, since the cases apply on old commits.
+
+**Adding a case.** When a review (the gate's or Codex's) misses or wrongly reports something, turn it into a case:
+
+1. Take the commit the bug was introduced on top of (a commit of `main`, so its sha stays reachable) as `base`.
+2. Write the smallest realistic change at that commit that has the bug (or a correct one, for a clean case), and save
+   its diff as `change.diff`.
+3. Write `case.json`, with the file and line of the bug in the changed file and the severity the rules give it.
+4. Run `tests/evals/run.sh --check --case <name>`, then once for real with `--case <name>`.
+
+The first cases come from [`pitfalls.md`](pitfalls.md): one per class that bit this repo's own files, plus three clean
+changes (a refactor, a docs sentence and a test).

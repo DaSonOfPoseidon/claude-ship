@@ -291,6 +291,22 @@ hook decides, not what Claude Code does with it.
   wins over this allow. Every write the agent makes is through a ship script the gate's `gh api` allowlist
   already covers.
 
+## `hooks/review-lib.sh` and `tests/evals/run.sh`
+
+`review-lib.sh` holds what the gate and the eval runner share: the prompt builders, the two output schemas, the
+reviewer run (`run_claude`, with its flags and cost row) and the rules that turn verdicts into findings and a block
+count. It is sourced, never run, and reads the caller's variables (named in each function's header) instead of taking
+a dozen arguments; shellcheck can't follow the sourcing, so both files disable SC2034 and SC2154. Its functions return
+a status or print nothing on failure and never exit, because the gate turns that into a block and the runner into an
+`error` row. `tests/gate-lib.sh` checks that the prompt the gate writes is the one `build_prompt` writes for the same
+inputs.
+
+`tests/evals/run.sh` measures the reviewers (design notes and scoring: [`gate.md`](gate.md#changing-prompts-or-models)).
+Its inputs come from the case's `base` commit through the same `rules_of` and `checklist_of` the gate uses, never
+from the working tree it runs in (the pitfall of a step reading the current checkout). It sets the gate's inputs
+for a first review: no PR, no threads, no filed issues. A run that is interrupted removes its worktree and temp
+directory in a trap.
+
 ## `install.sh`
 
 Only `origin/main` is deployed, so what runs has passed review. That holds for the installer too: after

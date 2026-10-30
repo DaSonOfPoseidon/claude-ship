@@ -1,0 +1,11 @@
+--- a/hooks/review-gate.sh
++++ b/hooks/review-gate.sh
+@@ -60,7 +60,7 @@
+ # call it sees, and so it does for any call jq can't read: an empty result would pass as "not a push".
+ command -v jq >/dev/null 2>&1 || {
+ 	echo "Blocked: the review gate needs jq (https://jqlang.org), and it isn't installed, so it can't tell what this call does. Install jq and retry." >&2
+-	exit 2
++	exit 1
+ }
+ unreadable() {
+ 	echo "Blocked: the review gate couldn't read this tool call ($1), so it can't tell whether it pushes. Retry; if it keeps failing, tell the user." >&2

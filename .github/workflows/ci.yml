@@ -13,8 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The eval cases (tests/evals/cases) apply their diffs on commits of this repo's history.
+          fetch-depth: 0
       - name: shellcheck
-        run: shellcheck --shell=sh --severity=warning install.sh hooks/*.sh scripts/*.sh skills/ship/*.sh tests/*.sh
+        run: shellcheck --shell=sh --severity=warning install.sh hooks/*.sh scripts/*.sh skills/ship/*.sh tests/*.sh tests/evals/*.sh
       - name: tests
         run: for t in tests/*.sh; do sh "$t" || exit 1; done
       - name: actionlint

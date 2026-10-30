@@ -1,0 +1,7 @@
+{
+  "base": "c824f71755cde1001a4df1f8dd1c6d53ffe7b72f",
+  "kind": "docs",
+  "source": "a true sentence added to README (the per-reviewer cap is 1100 s, docs/gate.md)",
+  "commit": "docs: state the per-reviewer time cap next to the hook timeout",
+  "expect": []
+}

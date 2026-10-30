@@ -3,6 +3,7 @@
 # (open status:ready issues by priority) picks the issue up. tests/p3-issue.sh checks it for every tracked file.
 hooks/*                  area:gate
 tests/gate-*             area:gate
+tests/evals/*            area:gate
 tests/p3-issue.sh        area:gate
 tests/explorer-bash.sh   area:skill
 skills/*                 area:skill

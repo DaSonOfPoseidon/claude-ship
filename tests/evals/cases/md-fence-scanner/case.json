@@ -1,0 +1,13 @@
+{
+  "base": "c824f71755cde1001a4df1f8dd1c6d53ffe7b72f",
+  "kind": "code",
+  "source": "docs/pitfalls.md: A line scanner for Markdown settings must treat fences and HTML comments as literal inside each other",
+  "commit": "fix(hooks): close a fence on any fence line in the local-mode scan",
+  "expect": [
+    {
+      "file": "hooks/orchestrate-hint.sh",
+      "line": 53,
+      "severity": "P2"
+    }
+  ]
+}
