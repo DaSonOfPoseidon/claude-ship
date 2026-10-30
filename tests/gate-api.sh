@@ -78,6 +78,25 @@ bash 2 'gh api -X POST repos/acme/app/issues/169/dependencies/blocked_by/../../.
 bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by/5/extra'
 bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by'
 
+# A command whose syntax tree runs no gh is no `gh api` call, whatever its text says: a heredoc body or a quoted
+# argument is data (claude-ship #135). A real call still blocks, also next to such text.
+bash 0 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
+Never run gh api -X DELETE repos/a/b here.
+EOF'
+bash 0 'echo "gh api -X DELETE repos/a/b"'
+bash 0 'grep -n "gh api" hooks/review-gate.sh'
+bash 2 'gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'echo "gh api" && gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'sh -c "gh api -X DELETE repos/o/r/git/refs/heads/x"'
+bash 2 'flock /tmp/l gh api -X DELETE repos/o/r/git/refs/heads/x'
+# A gh call that shows `gh api` in its raw text, where the word-split form loses it, can't be scanned and says so once.
+bash 2 "gh issue list; echo 'gh api'"
+grep -q 'Blocked: this `gh api` call isn'\''t one the review gate can read\. ' "$tmp/err" || {
+	echo "FAIL: the unreadable gh api message reads wrong:"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+
 # MCP write tools block by name, whatever the server is called.
 for t in mcp__github__push_files mcp__GitHub__push_files mcp__gh__create_pull_request \
 	mcp__plugin_github_github__merge_pull_request mcp__GitHub__update_pull_request_branch; do

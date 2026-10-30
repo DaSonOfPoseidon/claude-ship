@@ -14,7 +14,16 @@ review finds a new class.
   can be named, too. The tamper check now reads a syntax tree (shfmt) instead of text, so file names, quoted
   strings and heredoc bodies stop counting (claude-ship #135, #40): add a new Bash check there, as an event
   from the tree, rather than as another regex, and let anything the tree can't settle fall back to the stricter
-  old check (docs/gate.md › Tamper protection).
+  old check (docs/gate.md › Tamper protection). The push, PR and `gh api` checks sit behind the same tree: a command
+  that runs no git or gh skips them (docs/gate.md › Command reading), and "runs no git" means every command in the
+  tree is on a list of tools known not to run their arguments, not that the tree names no git.
+- **A command's name is not the program it runs.** The runs-git filter trusted a listed name (`cat`, `echo`) by its
+  last path part, so `./cat` and `/tmp/ls` passed as the tools, and by the bare word, so `PATH=. cat` ran a script the
+  same command wrote (claude-ship #135). Trust a name only when it is a bare word and nothing in the command
+  (a `PATH`, `LD_*`, `BASH_ENV` or `ENV` assignment, a function of that name) can change what it resolves to. A listed
+  tool is trusted with its options too: `rg --pre` and `--hostname-bin` and `sort --compress-program` (also
+  abbreviated) run a program, `bash --rcfile … -ic true` runs a file before its `-c` string, and `xargs env` runs
+  whatever its input says, so none of those is judged by the visible arguments alone (codex, #191).
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
   `>&2` as a descriptor duplication when any non-alphanumeric followed, so `>&2.txt` (bash: a write to the file
   `2.txt`) and `>&1/x` passed; so did `&>/dev/null.log` (no terminator at all) and `>/dev/null,x` (the `/dev/…`
