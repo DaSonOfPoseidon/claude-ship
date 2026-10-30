@@ -21,6 +21,10 @@ $3.12 to $1.34).
 Only the user sets the variables (`! gh variable set CLAUDE_ORCHESTRATE --body true`). Without the loop, the
 ship skill's steps run as usual, for one PR at a time in your own context.
 
+The loop also needs the user setting `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}` in `~/.claude/settings.json`.
+Under fork mode a subagent's Agent call returns at once, so without it `ship-codex`'s report reaches you instead
+of the implementer, and you must forward its `fix` lines to the implementer with SendMessage (claude-ship #160).
+
 ## Who does what
 
 Pro and Max usage limits are shared across models. Anthropic doesn't publish how much each model draws on

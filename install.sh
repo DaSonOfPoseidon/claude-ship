@@ -3,7 +3,8 @@
 # ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh for local DRY_RUN
 # checks). Only main is deployed, so a branch's changes never go live; after fetching, this script runs main's
 # copy of itself (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after
-# deploying, this script reads that file (never writes it) and warns about a missing or outdated entry.
+# deploying, this script reads that file (never writes it) and warns about a missing or outdated entry, and says
+# when the PR loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing.
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
@@ -80,6 +81,11 @@ check_settings() {
 	if ! jqs -e 'any(.hooks.UserPromptSubmit[]?.hooks[]?; type == "object" and (.command | tostring | test("orchestrate-hint[.]sh$")))' "$settings" >/dev/null 2>&1; then
 		echo "install: info: orchestrated mode's hint hook isn't registered (optional). To use it, add:"
 		printf '%s\n' "$hint"
+	fi
+	# Under Claude Code's fork mode a subagent's Agent call returns at once, so the PR loop's implementer never
+	# gets ship-codex's report (claude-ship #160). Only the string "0" counts as set.
+	if ! jqs -e '.env | type == "object" and .CLAUDE_CODE_FORK_SUBAGENT == "0"' "$settings" >/dev/null 2>&1; then
+		echo "install: info: the PR loop needs \"env\": {\"CLAUDE_CODE_FORK_SUBAGENT\": \"0\"} in $settings (claude-ship #160); without it, nested agents run in the background."
 	fi
 }
 rc=0

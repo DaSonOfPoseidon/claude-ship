@@ -423,7 +423,9 @@ compares the gate's entry with the README snippet from `origin/main`, so the exp
 and the README's entry to paste. It exits 1 when the gate isn't registered at all (no file, invalid JSON, no
 `PreToolUse` hook running `~/.claude/hooks/review-gate.sh` or the absolute path in the target directory) or when
 it can't check (no `jq`; a README without the snippets, which would be a bug here). The orchestrate hint hook is
-optional: a missing one only prints an info line.
+optional: a missing one only prints an info line. So does a missing `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}`
+(only the string `"0"` counts): the PR loop needs it, because under fork mode a subagent's Agent call returns at
+once (#160).
 
 ## `action.yml` and the workflows
 
