@@ -133,14 +133,12 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      only these.
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
      flow** below.
-   - `codex: error` with `ship-codex` having ended early (its error says the wait was still running or was
-     denied a `sleep`/`cat`, so no round was lost): the review is still going. `ship-codex` waits in the
-     foreground and ends its turn only with its report (#142, #147), and its hook now denies `run_in_background`
-     (#171). If it still happens, use the **fallback flow**'s wait yourself, and don't start another
-     `ship-codex` or request again.
-   - `codex: no final report` (the implementer resumed `ship-codex` once and still got no `outcome:`): the round
-     may have ended anywhere, including step 0's CI wait, before any request. Stop any `ship-codex` still left on
-     the PR (`ListAgents`, then `TaskStop`), then pick the PR up as **Resuming** step 2 says: it starts a fresh
+   - `ship-codex` ended without a final outcome (an early `codex: error` whose message says the wait was still
+     running or was denied a `sleep`/`cat`, or `codex: no final report`, where the implementer resumed it once
+     and still got no `outcome:`): it may have stopped anywhere, step 0's CI wait included, before any request.
+     `ship-codex` waits in the foreground and ends its turn only with its report (#142, #147), and its hook
+     denies `run_in_background` (#171), so this should be rare. Stop any `ship-codex` still left on the PR
+     (`ListAgents`, then `TaskStop`), then pick the PR up as **Resuming** step 2 says: it starts a fresh
      `ship-codex` (in `mode: triage-only` when the head's review has already completed), which requests only if
      none is out, waits CI in bounded chunks and resolves the `replied` threads before waiting. Pass as `replied`
      the threads the implementer already answered. Don't post `@codex review` by hand.
