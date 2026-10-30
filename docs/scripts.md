@@ -98,6 +98,35 @@ if any check is pending, and `no failed checks` when none failed (also when the 
   red. The orchestrator runs it only in the fallback flow. `hooks/codex-bash.sh` allows it with a PR number, an
   optional `owner/repo`, and `--wait` after it.
 
+## `skills/ship/unit-state.sh`
+
+Tells the orchestrator where a planned unit stands when its implementer ended without a report (an error, a
+usage-limit stop, a killed session) or after `/clear` (#120). Resuming used to cover only in-flight PRs, so a unit
+with commits but no PR was lost. `unit-state.sh <branch> [owner/repo]` prints one `state:` line, then detail lines;
+`orchestrate.md` › **A unit with no report** maps each state to an action, and that table is the only place the
+actions are written.
+
+| State | When |
+|---|---|
+| `merged <pr>`, `pr-open <pr>`, `pr-closed <pr>` | `gh pr list --head <branch> --state all` has a PR: an open one if any, else the newest. Closed means closed unmerged |
+| `pushed` | on origin, no PR (`ahead: <n>` commits over the default branch; `unpushed: <n>` if the local branch is further along) |
+| `local <n>` | only a local branch, `<n>` commits ahead of origin's default branch |
+| `diverged` | no PR, and local and origin each have commits the other lacks (`unpushed:` and `origin-only:` give the counts). With a PR the state is the PR's and a `diverged: yes` line is added |
+| `none` | no branch anywhere, or one with no commits of its own |
+
+`worktree: <path>` names the worktree that has the branch, and `dirty: yes` (or `unknown` when git can't read it,
+as for a registered worktree whose directory is gone) means it holds modified or untracked files.
+
+- **Nothing is guessed from stale refs.** The default branch comes from GitHub, not `origin/HEAD` (a local ref the
+  agent controls, see `pitfalls.md`). It fetches that branch and then the unit's, each with an explicit refspec,
+  and asks `git ls-remote` whether the branch is on origin at all: a remote-tracking ref left over from a branch
+  origin deleted (a squash merge with `--delete-branch`) is never read. A failed fetch, `gh` call or `rev-list` is
+  exit 1, not `none`.
+- **The branch is data.** It comes from a plan file: it is checked with `git check-ref-format --branch` (and must
+  come back unchanged, since `@{-1}` would expand), may not start with `-`, and is only ever a quoted argument.
+  A bad name or repo is exit 2. A PR number is printed only when it is all digits.
+- **It never changes the repo**: no switch, reset, delete or push. The fetch updates remote-tracking refs only.
+
 ## `skills/ship/codex-round.sh`
 
 Counts the `@codex review` comments a PR has used, the way `codex-status.sh` counts requests: not from a bot, from
