@@ -64,6 +64,8 @@ expect 2 'gh issue create --title t --body "echo x > ~/.claude/hooks/x"'
 expect 2 'cp /tmp/x ~/.claude/hooks/review-gate.sh'
 expect 2 'echo x | tee ~/.claude/skills/ship/SKILL.md'
 expect 2 'sed -i s/a/b/ ~/.claude/hooks/review-prompt.md'
+expect 2 'echo x > ~/.claude/hooks/review-lib.sh'
+expect 0 'cat ~/.claude/hooks/review-lib.sh'
 expect 2 'rm -rf /repo/.git/review-gate'
 expect 2 'jq ".disableAllHooks = true" s.json > .claude/settings.local.json'
 expect 2 'echo x > ~/.claude/agents/ship-implementer.md'
@@ -84,6 +86,7 @@ write() {
 }
 write 2 "$tmp/home/.claude/agents/ship-implementer.md"
 write 2 "$tmp/home/.claude/skills/ship/orchestrate.md"
+write 2 "$tmp/home/.claude/hooks/review-lib.sh"
 write 0 "$tmp/home/.claude/agents/mine.md"
 
 [ "$fail" = 0 ] && echo "gate-tamper: ok"
