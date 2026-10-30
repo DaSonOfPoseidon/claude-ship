@@ -211,7 +211,10 @@ next prompt asks again (claude-ship #67).
 A workspace (the git toplevel, else the cwd) whose `AGENTS.md` or `CLAUDE.md` has `- mode: local` in its
 `## PR loop` section gets the local loop's hint instead, before any `gh` call or variable lookup (claude-ship #82).
 The section runs from its heading to the next `## `, and lines in HTML comments or code fences don't count, so the
-commented block in `templates/AGENTS.md` doesn't opt a repo in. The hook reads only those two files, never runs
+commented block in `templates/AGENTS.md` doesn't opt a repo in. The scan is a state table (in the hook's comment)
+in which a fence and a comment each treat the other's markers as literal text: `<!--` inside a fence starts nothing,
+a fence line inside a comment starts nothing, and a fence ends only on its own character at the opener's length or
+more (`tests/orchestrate-hint.sh` has a case per cell; claude-ship #159). The hook reads only those two files, never runs
 or quotes them (the hint holds just the directory, encoded by `jq`), and keeps the same mark, per session and
 workspace. Without the marker, a directory that isn't a git repo still gets nothing.
 

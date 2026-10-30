@@ -27,35 +27,47 @@ mark="$marks/$session-$(printf '%s' "$top" | cksum | cut -d' ' -f1)"
 [ -e "$mark" ] && exit 0
 
 # Succeeds when the file has `- mode: local` (backticks allowed) between the `## PR loop` heading and the next `## `
-# heading, outside HTML comments and code fences. A comment that opens or closes on a heading or mode line cuts
-# that line, so such a line doesn't count.
+# heading. The scan is a state table; each state treats the other's markers as literal text (claude-ship #159):
+#
+#   state       | input line                                        | then
+#   normal      | fence opener (3+ ` or ~ at the start)             | in a fence; the rest of the line is literal
+#   normal      | `<!-- ... -->` complete, any number of times      | cut out of the line; the rest is read as normal
+#   normal      | `<!--` with no `-->` after it                     | the text before it is read; in a comment
+#   normal      | heading `## X`                                    | the section is live only if X is `PR loop`
+#   normal      | `- mode: local`, in a live section                | found
+#   in a fence  | a line of only the opener's character, as long    | normal
+#   in a fence  | anything else (`<!--`, `-->`, headings, modes)    | literal, skipped
+#   in a comment| a line holding `-->`                              | normal; the whole line is part of the comment
+#   in a comment| anything else (fences, headings, modes)           | literal, skipped
 has_local_mode() {
 	[ -f "$1" ] || return 1
 	[ "$(awk '
-		{ sub(/\r$/, "") }
-		incomment { if (index($0, "-->")) { incomment = 0 } next }
+		function check(l) {
+			if (l ~ /^ ? ? ?## /) { insec = (l ~ /^ ? ? ?## PR loop[ \t]*$/); return }
+			if (insec && l ~ /^[ \t]*-[ \t]+mode:[ \t]*`?local`?[ \t]*$/) { found = 1; exit }
+		}
 		{
+			sub(/\r$/, "")
+			if (st == 1) {
+				t = $0; gsub(/[ \t]/, "", t)
+				if (t ~ /^(`+|~+)$/ && substr(t, 1, 1) == fch && length(t) >= flen) { st = 0 }
+				next
+			}
+			if (st == 2) { if (index($0, "-->")) { st = 0 } next }
+			if ($0 ~ /^[ \t]*(```|~~~)/) {
+				t = $0; sub(/^[ \t]*/, "", t)
+				fch = substr(t, 1, 1); flen = 0
+				while (substr(t, flen + 1, 1) == fch) { flen++ }
+				st = 1; next
+			}
 			line = $0
 			while ((i = index(line, "<!--")) > 0) {
 				rest = substr(line, i + 4)
 				if ((j = index(rest, "-->")) > 0) { line = substr(line, 1, i - 1) substr(rest, j + 3) }
-				else { line = substr(line, 1, i - 1); incomment = 1; break }
+				else { line = substr(line, 1, i - 1); st = 2; break }
 			}
+			check(line)
 		}
-		# A fence closes on a line of only its own character, at least as long as its opener.
-		fence {
-			t = line; gsub(/[ \t]/, "", t)
-			if (t ~ /^(`+|~+)$/ && substr(t, 1, 1) == fch && length(t) >= flen) { fence = 0 }
-			next
-		}
-		line ~ /^[ \t]*(```|~~~)/ {
-			t = line; sub(/^[ \t]*/, "", t)
-			fch = substr(t, 1, 1); flen = 0
-			while (substr(t, flen + 1, 1) == fch) { flen++ }
-			fence = 1; next
-		}
-		line ~ /^## / { insec = (line ~ /^## PR loop[ \t]*$/); next }
-		insec && line ~ /^[ \t]*-[ \t]+mode:[ \t]*`?local`?[ \t]*$/ { found = 1; exit }
 		END { print found ? "yes" : "no" }' "$1" 2>/dev/null)" = yes ]
 }
 if has_local_mode "$top/AGENTS.md" || has_local_mode "$top/CLAUDE.md"; then

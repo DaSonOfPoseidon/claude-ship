@@ -121,6 +121,32 @@ printf '## PR loop\n```\n~~~\n- mode: local\n~~~\n```\n' >"$tmp/l-fencemix/AGENT
 # After the fence really closes, the section is live again.
 printf '## PR loop\n````\n```\n````\n- mode: local\n' >"$tmp/l-fenceend/AGENTS.md"
 printf '## PR loop\n~~~~sh\n- mode: local\n~~~~~\n- mode: local\n' >"$tmp/l-fenceinfo/AGENTS.md"
+# The scanner is a state table (hooks/orchestrate-hint.sh): normal, in a fence, in a comment. In a fence, comment
+# markers, headings and mode lines are literal; in a comment, fence lines, headings and mode lines are literal. One
+# file per cell that can occur; `fx <name> <file content>` writes it.
+fx() {
+	mkdir -p "$tmp/$1"
+	printf "$2" >"$tmp/$1/AGENTS.md"
+}
+fx t-f-open '## PR loop\n```sh\necho "<!--"\n```\n- mode: local\n'
+fx t-f-close '## PR loop\n```\necho "-->"\n```\n- mode: local\n'
+fx t-f-head '## PR loop\n```\n## Other\n```\n- mode: local\n'
+fx t-f-prloop '## Other\n```\n## PR loop\n```\n- mode: local\n'
+fx t-f-info '## PR loop\n```<!--\nx\n```\n- mode: local\n'
+fx t-c-fence '## PR loop\n<!--\n```\n-->\n- mode: local\n'
+fx t-c-head '## PR loop\n<!--\n## Other\n-->\n- mode: local\n'
+fx t-c-prloop '## Other\n<!--\n## PR loop\n-->\n- mode: local\n'
+fx t-c-mode '## PR loop\n<!--\n- mode: local\n-->\n'
+fx t-c-eof '## PR loop\n<!-- never closed\n- mode: local\n'
+fx t-c-tail '## PR loop\n<!--\n--> - mode: local\n'
+fx t-n-inline '## PR loop\n<!-- - mode: local -->\n'
+fx t-n-before '## PR loop\n<!-- note --> - mode: local\n'
+fx t-n-after '## PR loop\n- mode: local <!-- note -->\n'
+fx t-n-open '## PR loop\n- mode: local <!--\nhidden\n-->\n'
+fx t-n-headopen '## PR loop <!--\nhidden\n-->\n- mode: local\n'
+fx t-n-headbefore '<!-- x --> ## PR loop\n- mode: local\n'
+fx t-n-twice '## PR loop\n<!-- a --> <!-- b -->\n- mode: local\n'
+fx t-n-stray '## PR loop\n--> not a comment\n- mode: local\n'
 printf '## PR loop\n- mode: local\n' >"$tmp/l-sub/AGENTS.md"
 git init -q "$tmp/l-gitmode"
 printf '## PR loop\n- mode: local\n' >"$tmp/l-gitmode/AGENTS.md"
@@ -142,6 +168,25 @@ hint no "mode: local inside a four-backtick fence holding a triple one" plan l20
 hint no "mode: local inside a backtick fence holding a tilde line" plan l21 "$tmp/l-fencemix"
 hint local "mode: local after a four-backtick fence closed" plan l22 "$tmp/l-fenceend"
 hint local "mode: local after a longer closing fence" plan l23 "$tmp/l-fenceinfo"
+hint local "in a fence: <!-- is literal" plan t1 "$tmp/t-f-open"
+hint local "in a fence: --> is literal" plan t2 "$tmp/t-f-close"
+hint local "in a fence: a heading doesn't end the section" plan t3 "$tmp/t-f-head"
+hint no "in a fence: a PR loop heading doesn't open the section" plan t4 "$tmp/t-f-prloop"
+hint local "fence opener with <!-- in its info string" plan t5 "$tmp/t-f-info"
+hint local "in a comment: a fence line is literal" plan t6 "$tmp/t-c-fence"
+hint local "in a comment: a heading doesn't end the section" plan t7 "$tmp/t-c-head"
+hint no "in a comment: a PR loop heading doesn't open the section" plan t8 "$tmp/t-c-prloop"
+hint no "in a comment: the mode line is literal" plan t9 "$tmp/t-c-mode"
+hint no "a comment never closed hides the rest" plan t10 "$tmp/t-c-eof"
+hint no "the line that closes a comment is part of it" plan t11 "$tmp/t-c-tail"
+hint no "a complete comment around the mode line" plan t12 "$tmp/t-n-inline"
+hint local "the mode line after a complete comment" plan t13 "$tmp/t-n-before"
+hint local "the mode line before a comment" plan t14 "$tmp/t-n-after"
+hint local "the mode line before an unclosed comment" plan t15 "$tmp/t-n-open"
+hint local "the heading before an unclosed comment" plan t16 "$tmp/t-n-headopen"
+hint local "the heading after a complete comment" plan t17 "$tmp/t-n-headbefore"
+hint local "two complete comments on one line" plan t18 "$tmp/t-n-twice"
+hint local "a --> outside any comment is text" plan t19 "$tmp/t-n-stray"
 hint no "no AGENTS.md or CLAUDE.md at all" plan l12 "$tmp/notrepo"
 hint local "local loop, git repo with the marker" plan l13 "$tmp/l-gitmode"
 # The workspace is the git toplevel, so a subdirectory finds the toplevel's file; two workspaces mark separately.
