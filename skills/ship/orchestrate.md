@@ -195,7 +195,7 @@ is the plan file's `- **Branch:**` field) and take the first row of this table t
 | `dirty: yes` or `dirty: unknown` | stop and ask: the worktree holds unfinished work (the same stop as **Replacing an implementer**, step 2) |
 | `state: pr-closed <pr>` or `state: diverged`, or a `diverged: yes` line | stop and ask: closed unmerged, or local and origin disagree, and only the user picks which to keep |
 | `state: merged <pr>` | the unit is done: go to step 6 for its follow-ups (a `worktree:` line is removed as **Replacing an implementer** step 2 says) |
-| `state: pr-open <pr>` with an `unpushed:` line | the PR lacks those commits: as the last row, but tell the new implementer the PR is open, so it pushes and runs the Codex rounds instead of opening one |
+| `state: pr-open <pr>` with an `unpushed:` line | the PR lacks those commits: do what the `local`/`pushed` row below says, but tell the new implementer "continue from `pushed`: PR <pr> is already open", so it pushes and runs the Codex rounds instead of opening a PR |
 | `state: pr-open <pr>` | **Resuming** step 2: pick the PR up at its state (no live agent on it, so replace the implementer if `worktree:` is missing) |
 | `state: local <n>` or `state: pushed` | **Replacing an implementer** steps 1 and 2 (the `worktree:` line is its path), then a new `ship-implementer` with the plan file's path, the usual "open the PR and run the Codex rounds", and "continue from `<state line>`: the branch has commits; run the checks, push and open the PR, don't redo them" |
 | `state: none` | no work to continue: remove a `worktree:` it names the same way, then start the unit as in step 3 |
