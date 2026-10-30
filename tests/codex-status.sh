@@ -85,9 +85,9 @@ expect() {
 		printf '%s\n' "$APPROVALS" | jq -Rn '[inputs | split("|") | select(length == 4)
 			| {id:888,user:{login:"u",type:.[2]},author_association:.[1],created_at:.[0],body:.[3],reactions:{eyes:0}}]'
 		# STATE is the summary's Code Review state (none by default), STATE_SHA the commit it names (null by
-		# default) and AGE how many seconds ago it was edited.
-		jq -n --arg r "$row" --arg st "$STATE" --arg ss "${STATE_SHA:-}" --argjson age "$AGE" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
-			author_association:"NONE",created_at:"2026-10-21T14:00:00Z",updated_at:(now - $age | todate),
+		# default), AGE how many seconds ago it was edited and SUMMARY_AT the exact edit time (overrides AGE).
+		jq -n --arg r "$row" --arg st "$STATE" --arg ss "${STATE_SHA:-}" --argjson age "$AGE" --arg at "${SUMMARY_AT:-}" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
+			author_association:"NONE",created_at:"2026-10-21T14:00:00Z",updated_at:(if $at != "" then $at else (now - $age | todate) end),
 			body:("<!-- codex-pull-request-review-summary -->\n"
 				+ (if $st == "" then "" else "<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":" + (if $ss == "" then "null" else "\"" + $ss + "\"" end) + ",\"status\":\"" + $st + "\"}} -->\n" end)
 				+ $r)}]'
@@ -333,6 +333,42 @@ with_msg 'Codex reviewed 7ca1cc3 with no findings' fork f/r '' expect success 'f
 ROW=$failed
 with_msg "Codex can't review fork PRs" fork null '' expect failure 'null head repo' '`7ca1cc3`' $p $c '' ''
 with_msg "Codex can't review fork PRs" fork null "$after|OWNER|User|Okay to merge" expect failure 'null head repo, approval' '`7ca1cc3`' $p $c '' ''
+ROW=
+
+# claude-ship #184: a trusted request after a failed review means a retry is running, so the failure no longer
+# stands. The failure's time is the summary's last edit (SUMMARY_AT).
+ROW=$failed
+push=$(ago 7200)
+SUMMARY_AT=$(ago 120)
+# 1. A failed row with no request after it is a failure, as before.
+with_msg 'ask for another' expect failure 'failed, no request' '`7ca1cc3`' "$push" $c '' ''
+# ...and one whose only request came before the failure.
+with_msg 'ask for another' expect failure 'failed, request before the failure' '`7ca1cc3`' "$push" $c "$(ago 150) OWNER" ''
+# 2. An owner request 30 s after the failure is pending, not a failure.
+with_msg 'Waiting for Codex' expect pending 'failed, fresh request after' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
+with_msg 'Waiting for Codex' expect pending 'failed, fresh collaborator request after' '`7ca1cc3`' "$push" $c "$(ago 90) COLLABORATOR" ''
+# 3. A request in the failure's own second can't be told apart from before it.
+tie=$(ago 120)
+SUMMARY_AT=$tie
+with_msg 'ask for another' expect failure 'failed, request ties the failure' '`7ca1cc3`' "$push" $c "$tie OWNER" ''
+# 4. An old request with no sign of life is unacknowledged, so codex-wait.sh can still exit 3.
+SUMMARY_AT=$(ago 3600)
+with_msg 'acknowledged' expect pending 'failed, request unacknowledged' '`7ca1cc3`' "$push" $c "$(ago 3000) OWNER" ''
+# ...but one Codex answered with a receipt is waiting.
+with_msg 'Waiting for Codex' expect pending 'failed, request answered' '`7ca1cc3`' "$push" $c "$(ago 3000) OWNER" "receipt $(ago 2900)"
+# 5. An outsider's request doesn't count.
+SUMMARY_AT=$(ago 120)
+with_msg 'ask for another' expect failure 'failed, untrusted request' '`7ca1cc3`' "$push" $c "$(ago 90) NONE" ''
+with_msg 'ask for another' expect failure 'failed, member request' '`7ca1cc3`' "$push" $c "$(ago 90) MEMBER" ''
+# 6. A fork PR with a request after the failure is pending too; an owner approval still wins.
+with_msg 'Waiting for Codex' fork f/r '' expect pending 'fork, failed, request after' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
+with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'fork, failed, no request' '`7ca1cc3`' "$push" $c '' ''
+with_msg 'Owner approved 7ca1cc3 for merge (fork PR)' fork f/r "$(ago 3500)|OWNER|User|Okay to merge" expect success 'fork, failed, request and approval' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
+# Unresolved Codex threads still fail it.
+echo "$unresolved" >"$tmp/threads.json"
+with_msg 'unresolved Codex thread' expect failure 'failed, request after, findings' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
+rm -f "$tmp/threads.json"
+SUMMARY_AT=
 ROW=
 
 exit $fail

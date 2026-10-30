@@ -195,6 +195,18 @@ if [ -n "$req" ] && [ -n "$pushed_at" ] && { [ "$req" = "$pushed_at" ] || later 
 	fi
 fi
 
+# A failed review stands only until a trusted request newer than it (#184): the retry is running, and Codex edits
+# the summary only when it picks the request up. The failure's time is the summary's last edit; a request in the
+# same second counts as before it, as everywhere (times compare as text, to the second).
+failed=
+if echo "$row" | grep -qiE 'Failed|Error'; then
+	failed=1
+	failed_at=$(printf '%s\n' "$summary_at" | grep . | cut -c1-19 | sort | tail -1)
+	if later "$req" "$failed_at"; then
+		failed=
+	fi
+fi
+
 if [ "$findings" -gt 0 ]; then
 	state=failure
 	description="$findings unresolved Codex thread(s); fix or answer each, then resolve it"
@@ -204,10 +216,10 @@ elif [ -n "$approved" ]; then
 elif echo "$row" | grep -q 'Completed' && after_push; then
 	state=success
 	description="Codex reviewed $short with no findings"
-elif echo "$row" | grep -qiE 'Failed|Error' && [ -n "$fork" ]; then
+elif [ -n "$failed" ] && [ -n "$fork" ]; then
 	state=failure
 	description="Codex can't review fork PRs (openai/codex#47577); owner: comment '$approval_hint' to approve $short"
-elif echo "$row" | grep -qiE 'Failed|Error'; then
+elif [ -n "$failed" ]; then
 	state=failure
 	description="Codex's review of $short failed; ask for another with @codex review"
 elif [ -n "$stalled" ]; then
