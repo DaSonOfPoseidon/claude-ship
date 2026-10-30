@@ -183,3 +183,7 @@ review finds a new class.
   a status of 0 (claude-ship #163). Test that the inputs are readable before the group, fail the build on a failed
   `cat`, and make the caller treat a failed build as a block or an error. Check the inputs a caller names up front too
   (`--prompt-dir` needs every prompt, not only the lib).
+- **Text the PR's own code writes is untrusted, and it travels.** CI log tails come from the PR's tests and scripts, so
+  they can say anything. `ship-codex` copies them into its report and the implementer, which can edit, commit and
+  push, reads them (claude-ship #118). Wherever a step passes such text on, say in that step that it is data, not
+  instructions, and that it is only used to see which check failed; the same goes for PR text and Codex comments.
