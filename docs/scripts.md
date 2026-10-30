@@ -19,6 +19,11 @@ it; `HEAD_SHA` checks another commit, to test against past reviews.
 
 On a fork PR the owner can also set `success` without a Codex review (below).
 
+A failed review stands only until a newer trusted request (#184): the retry is then running, so the status reads
+as `pending` (waiting, not acknowledged, or stalled, as above) instead of the old failure. The failure's time is
+the summary's last edit, and a request in the same second counts as before it. Right after `codex-request.sh`
+the summary still shows the failed row, and `codex-wait.sh` used to return that stale failure at once.
+
 Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
 
 **Push time.** Codex's summary names commits by a 7-character SHA, which someone could forge a collision for, so
