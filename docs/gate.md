@@ -228,6 +228,14 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   the branch only when the default branch has none of that file (the bootstrap PR). A branch that edits them could
   otherwise tell its own reviewer what to skip; its edits are in the diff, reviewed as changes. A file that exists
   on the default branch but can't be read blocks instead of falling back to the branch's copy.
+- `docs/false-positives.md` (findings past reviews raised that were judged wrong) is shown to the finder, the
+  docs check and the verifier as "Known false positives", from the default branch **only**: unlike the pitfalls
+  there is no fallback to the branch's copy, so a branch can't add an entry that silences its own review (its file
+  is in the diff, reviewed as a change). When the default branch has none, there is no section. The finder is told
+  not to report a matching finding unless the code differs from the entry; the verifier may reject a match, but a
+  rejection still needs the `file:line` of the code that shows it is the pattern described (`mark_rejected` ignores
+  one without), and names the entry in its reason. Entries are narrow patterns, never a whole class of bug. The ship
+  skill adds one when a finding is answered "not valid" or waived.
 - The finder prompt also quotes the branch's open PR's unresolved threads from Codex, the owner and collaborators
   (as data, not instructions), so it can check that earlier findings are fixed. The gate reads the PR, the threads,
   the commit list and the diff before it writes the prompt, and blocks when any of them can't be read: an ignored
@@ -268,7 +276,7 @@ what the gate's kind check says of the diff), `expect` (the findings a reviewer 
 severity}` with `line` in the changed file; `[]` for a clean case), `source` (the pitfall, issue or PR it comes from)
 and an optional `commit` (the subject the reviewer sees in the commit list). The runner makes a detached worktree at
 `base`, commits the diff, and builds the prompt with the gate's own code (`hooks/review-lib.sh`, which the gate sources
-too), reading the rules, the checklist and the pitfalls from `base`, not from the working tree. It then runs the gate's
+too), reading the rules, the checklist, the pitfalls and the false positives from `base`, not from the working tree. It then runs the gate's
 stages with the gate's flags: the Sonnet finder, then the Haiku verifier when the finder found something (a docs case
 gets the Haiku claims check and no verifier). Cost rows go to a temporary file, not to
 `~/.claude/state/review-costs.jsonl`.

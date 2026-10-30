@@ -44,7 +44,7 @@ n=0
 
 g() { git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }
 
-# fixture: a repo on branch feat whose default branch (origin's master) has the rules, a checklist and the pitfalls.
+# fixture: a repo on branch feat whose default branch (origin's master) has the rules, a checklist, the pitfalls and the false positives.
 fixture() {
 	n=$((n + 1))
 	repo=$tmp/repo$n
@@ -56,6 +56,7 @@ fixture() {
 	printf '## Reviews\n\n- check a\n\n## Other\n' >"$repo/CONTRIBUTING.md"
 	mkdir -p "$repo/docs"
 	printf '# Pitfalls\n\n- p1\n' >"$repo/docs/pitfalls.md"
+	printf '# False positives\n\n- fp1\n' >"$repo/docs/false-positives.md"
 	git -C "$repo" add -A
 	g commit -q -m base
 	git -C "$repo" push -qf "$tmp/origin.git" HEAD:refs/heads/master
@@ -70,7 +71,7 @@ gate() {
 }
 
 # same <name>: the prompt the gate left equals build_prompt's, from inputs read here without the gate's code.
-# Needs $kind, $checklist, $pitfalls, $threads, $scoped, $base and $filed_text set by the case.
+# Needs $kind, $checklist, $pitfalls, $false_positives, $threads, $scoped, $base and $filed_text set by the case.
 same() {
 	if [ "$rc" != 2 ] || [ ! -e "$prompt" ]; then
 		echo "FAIL ($1): the gate exited $rc (want 2) and built no prompt"
@@ -85,6 +86,7 @@ same() {
 		rules=$(printf '\n- P0: x')
 		checklist_src='CONTRIBUTING.md on refs/remotes/origin/master'
 		pitfalls_src='docs/pitfalls.md on refs/remotes/origin/master'
+		false_positives_src='docs/false-positives.md on refs/remotes/origin/master'
 		pr=7
 		main=master
 		upstream=refs/remotes/origin/master
@@ -117,8 +119,14 @@ kind=code checklist='## Reviews
 
 - check a' pitfalls='# Pitfalls
 
-- p1' threads='' scoped='' base='' filed_text=''
+- p1' false_positives='# False positives
+
+- fp1' threads='' scoped='' base='' filed_text=''
 same code
+grep -qF 'Known false positives (docs/false-positives.md on refs/remotes/origin/master)' "$prompt" || {
+	echo "FAIL (code): the gate's prompt has no false-positives section"
+	fail=1
+}
 grep -qF 'Known pitfalls from past reviews' "$prompt" || {
 	echo "FAIL (code): the gate's prompt has no pitfalls section"
 	fail=1
@@ -130,7 +138,9 @@ echo 'hello' >"$repo/README.md"
 git -C "$repo" add -A
 g commit -q -m docs
 gate
-kind=docs checklist='' pitfalls='' threads='' scoped='' base='' filed_text=''
+kind=docs checklist='' pitfalls='' false_positives='# False positives
+
+- fp1' threads='' scoped='' base='' filed_text=''
 same docs
 if grep -qF 'Known pitfalls' "$prompt"; then
 	echo "FAIL (docs): the docs prompt has the pitfalls"
@@ -154,7 +164,9 @@ kind=code checklist='## Reviews
 
 - check a' pitfalls='# Pitfalls
 
-- p1' threads='### x.sh:1
+- p1' false_positives='# False positives
+
+- fp1' threads='### x.sh:1
 Codex says: fix the quoting' scoped=1 base=$first filed_text='k1	filed thing (u)
 '
 same scoped
@@ -208,6 +220,16 @@ x.sh')" code
 	check findings-structured "$(findings_of "$tmp/o1")" '[{"a":1}]'
 	check findings-result "$(findings_of "$tmp/o2")" '[]'
 	check findings-garbage "$(findings_of "$tmp/o3")" ''
+	# The verifier's prompt shows the known false positives when there are any, and no heading when there are none.
+	dir=$root/hooks range=a...b
+	vf='[{"severity":"P2","file":"x.sh","line":1,"summary":"s","failure_scenario":"f"}]'
+	false_positives='- fp1' false_positives_src='docs/false-positives.md on refs/remotes/origin/master'
+	build_verify_prompt "$tmp/v1.md" "$vf" 'diff text'
+	check verify-fp "$(grep -cF 'Known false positives (docs/false-positives.md on refs/remotes/origin/master)' "$tmp/v1.md")" 1
+	check verify-fp-text "$(grep -cF -- '- fp1' "$tmp/v1.md")" 1
+	false_positives=
+	build_verify_prompt "$tmp/v2.md" "$vf" 'diff text'
+	check verify-no-fp "$(grep -cF 'Known false positives' "$tmp/v2.md")" 0
 ) || fail=1
 
 # A gate that can't read its lib blocks the push (a shell that fails to source a file exits with a status that lets

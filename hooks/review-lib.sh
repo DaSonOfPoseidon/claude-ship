@@ -39,10 +39,20 @@ kind_of() {
 	fi
 }
 
+# false_positives_section <instruction>: prints the known-false-positives section with the instruction as its first
+# line, or nothing when $false_positives is empty. The gate reads the text from the default branch only.
+false_positives_section() {
+	[ -n "${false_positives:-}" ] || return 0
+	echo
+	echo "## Known false positives ($false_positives_src)"
+	printf '%s\n' "$1"
+	printf '%s\n' "$false_positives"
+}
+
 # build_prompt <out file>: writes the finder's prompt (the docs check's when $kind is docs). Reads $dir (the prompts'
-# directory), $kind, $rules, $scoped, $base, $range, $checklist, $checklist_src, $pitfalls, $pitfalls_src, $filed (a
-# file), $threads, $pr, $commits, $branch_stat, $main and $diff_text, and runs `git rev-parse` in the current
-# directory when $scoped is set.
+# directory), $kind, $rules, $scoped, $base, $range, $checklist, $checklist_src, $pitfalls, $pitfalls_src,
+# $false_positives, $false_positives_src, $filed (a file), $threads, $pr, $commits, $branch_stat, $main and $diff_text,
+# and runs `git rev-parse` in the current directory when $scoped is set.
 build_prompt() {
 	if [ "$kind" = docs ]; then
 		template=$dir/review-docs-prompt.md
@@ -76,6 +86,7 @@ build_prompt() {
 				printf '%s\n' "$pitfalls"
 			fi
 		fi
+		false_positives_section "Past reviews raised these and they were judged wrong. Don't report them again unless the code differs from what the entry describes."
 		if [ -s "$filed" ]; then
 			echo
 			echo "## Already filed as issues; don't report these again"
@@ -104,11 +115,13 @@ build_prompt() {
 	} >"$1"
 }
 
-# build_verify_prompt <out file> <findings JSON> <diff text>: writes the verifier's prompt. Reads $dir and $range.
+# build_verify_prompt <out file> <findings JSON> <diff text>: writes the verifier's prompt. Reads $dir, $range,
+# $false_positives and $false_positives_src.
 build_verify_prompt() {
 	[ -r "$dir/review-verify-prompt.md" ] || return 1
 	{
 		cat "$dir/review-verify-prompt.md" || return 1
+		false_positives_section "A finding that matches one of these entries may be rejected. You must still cite the file:line of the code that shows it is the pattern the entry describes, and name the entry in \`reason\`. If the code differs from the entry, don't reject on it."
 		echo
 		echo "## Findings to verify (numbered from 0)"
 		printf '%s' "$2" | jq -r 'to_entries[] | "### \(.key): [\(.value.severity)] \(.value.file):\(.value.line)\n\(.value.summary)\n\nFailure scenario: \(.value.failure_scenario)\n"'

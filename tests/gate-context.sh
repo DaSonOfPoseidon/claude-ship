@@ -161,5 +161,51 @@ has mixed 'upstream checklist'
 lacks mixed 'steer checklist'
 has mixed 'branch pitfall'
 
+# Known false positives (docs/false-positives.md) come from the default branch only, with no branch fallback: a
+# branch that adds an entry would silence its own review.
+fixture
+mkdir -p "$repo/docs"
+printf '# False positives\n\n- upstream fp\n' >"$repo/docs/false-positives.md"
+git -C "$repo" add -A
+g commit -q -m context
+publish
+printf '# False positives\n\n- steer fp\n' >"$repo/docs/false-positives.md"
+branch_change
+review fp-upstream-wins
+has fp-upstream-wins 'upstream fp'
+lacks fp-upstream-wins 'steer fp'
+has fp-upstream-wins 'Known false positives (docs/false-positives.md on refs/remotes/origin/master)'
+
+# The file exists only on the branch: not shown, and no heading.
+fixture
+publish
+mkdir -p "$repo/docs"
+printf '# False positives\n\n- branch only fp\n' >"$repo/docs/false-positives.md"
+branch_change
+review fp-branch-only
+lacks fp-branch-only 'branch only fp'
+lacks fp-branch-only 'Known false positives'
+
+# No file anywhere: no heading.
+fixture
+publish
+branch_change
+review fp-absent
+lacks fp-absent 'Known false positives'
+
+# A docs-only change gets the section too.
+fixture
+mkdir -p "$repo/docs"
+printf '# False positives\n\n- upstream docs fp\n' >"$repo/docs/false-positives.md"
+git -C "$repo" add -A
+g commit -q -m context
+publish
+echo 'hello' >"$repo/README.md"
+git -C "$repo" add -A
+g commit -q -m docs
+review fp-docs
+has fp-docs 'upstream docs fp'
+has fp-docs 'Known false positives (docs/false-positives.md on refs/remotes/origin/master)'
+
 [ "$fail" = 0 ] && echo "gate-context: ok"
 exit "$fail"
