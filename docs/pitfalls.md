@@ -172,7 +172,8 @@ review finds a new class.
   returns a fork's PR from a branch of the same name, so `unit-state.sh` could call an unfinished unit merged or
   send the orchestrator into someone else's review (claude-ship #120). Ask for `isCrossRepository`, drop those, and
   fail when the field is missing. A state read from a merged PR also says nothing about commits made after its last
-  push: check for unpushed work before treating the unit as done.
+  push: check for unpushed work before treating the unit as done, against the PR's own last head
+  (`refs/pull/<n>/head`), since origin's branch is deleted by then and has nothing to compare with.
 - **A doc must not widen an opt-in beyond its marker.** `skills/ship/SKILL.md` said any workspace that isn't a
   GitHub repo gets the local loop, while the hook and `orchestrate.md` start it only on `- mode: local` or a user
   request (claude-ship #159). State each opt-in once, with its exact marker, and have other docs point to it.
