@@ -119,7 +119,7 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    - It stopped (`stopped because:`), or `codex:` is `stop`, `stalled`, `timeout`, `ci-timeout`, `round-cap` or
      `error`: handle it as the stop table below says. A `stop:` line is a P0/P1 finding in round 3 or later: ask
      the user. `stalled` is Codex stalling (or never acknowledging a request) twice on one head: tell the user.
-     `ci-timeout` is checks still pending after 18 minutes, with no fix round run and no request made: tell the
+     `ci-timeout` is checks still pending after 20 minutes, with no fix round run and no request made: tell the
      user (a stuck runner). `round-cap` and `timeout` need no new request unless the user asks.
    - `denied:` lines: the agent's triage write or call was denied, or `codex-triage.sh` failed part-way (auto
      mode denies subagents some calls, #100). `file:` names the triage file, `done:` the threads the script
@@ -134,9 +134,12 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
      flow** below.
    - `codex: error` with `ship-codex` having ended early (its error says the wait was still running or was
-     denied a `sleep`/`cat`, so no round was lost): the review is still going. This should no longer happen,
-     since `ship-codex` now waits in the foreground and ends its turn only with its report (#142, #147). If it
-     does, use the **fallback flow**'s wait yourself, and don't start another `ship-codex` or request again.
+     denied a `sleep`/`cat`, so no round was lost): the review is still going. `ship-codex` waits in the
+     foreground and ends its turn only with its report (#142, #147), and its hook now denies `run_in_background`
+     (#171). If it still happens, use the **fallback flow**'s wait yourself, and don't start another `ship-codex`
+     or request again.
+   - `codex: no final report` (the implementer resumed `ship-codex` once and still got no `outcome:`): same as the
+     bullet above. Run the **fallback flow**'s wait, and don't start another `ship-codex` or request again.
 5. **Fallback flow (the implementer couldn't start `ship-codex`).** It requested round 1 and stopped. Then:
    - Run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command (nothing chained after it),
      with the exit codes as in the ship skill's step 3.4. Since your own checkout isn't on the PR's branch,
@@ -208,7 +211,7 @@ is the plan file's `- **Branch:**` field) and take the first row of this table t
 | The work needs hardware, a car or device session, or a design decision | the user's call |
 | A safety or policy change, or a gate finding you or the implementer judge wrong (a waiver) | only the user waives |
 | A P0/P1 Codex finding in round 3 or later | the ship skill's outcome table |
-| CI fails for a reason outside the PR, CI stays pending for 18 minutes (`ci-timeout`), or Codex stalls twice on one head | not fixable in the PR |
+| CI fails for a reason outside the PR, CI stays pending for 20 minutes (`ci-timeout`), or Codex stalls twice on one head | not fixable in the PR |
 | The implementer reports the plan is wrong, and fixing it changes what the user approved | re-approval |
 
 Otherwise, keep going without asking.

@@ -79,9 +79,11 @@ if any check is pending, and `no failed checks` when none failed (also when the 
   on it would end every round as a timeout, and a round-2 head with open threads would read as a CI failure no code
   change fixes. It is ignored by exact name (a `codex-review-lint` check still counts), as failed and as pending.
 - **`--wait`** polls (`CI_WAIT_POLLS`, 18, every `CI_WAIT_INTERVAL` seconds, 30: 9 minutes plus the calls, under the
-  agent's 10-minute Bash timeout) until nothing is pending, then prints as usual. At the cap it prints the same
+  agent's 10-minute Bash timeout) until nothing is pending, then prints as usual. `ship-codex` sets
+  `CI_WAIT_POLLS=10` (5 minutes of polling), so the polls plus the failed-job log fetches, which run after the cap,
+  fit well inside the Bash timeout, and calls it up to 4 times. At the cap it prints the same
   result and exits 3, so the caller tells "still running" from "settled". `gh pr checks --watch` isn't used because
-  it can't exclude a check. The two variables are for the tests; the hook allows no environment for this script.
+  it can't exclude a check. `CI_WAIT_INTERVAL` is for the tests only; the hook allows `CI_WAIT_POLLS` for this script and no other variable.
 
 - **`gh pr checks` exits non-zero on a failure (1) or a pending check (8): that is the result, not an error.** The
   script reads its output instead, and exits 1 only when that isn't a JSON list and isn't gh's "no checks
@@ -356,16 +358,22 @@ hook decides, not what Claude Code does with it.
   written with `~/` exactly (not `$HOME`, an absolute path, `./`, `..` or `env`/`sh`), or `gh`, or the one
   environment prefix below.
 - **Allowed, as one plain command.** `codex-round.sh <pr> [owner/repo]`, `codex-request.sh <pr> <owner/repo>
-  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `ci-failures.sh <pr> [owner/repo [--wait]]`, `codex-triage.sh <pr> <file>`, and
+  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `[CI_WAIT_POLLS=<n>] ci-failures.sh <pr> [owner/repo [--wait]]`, `codex-triage.sh <pr> <file>`, and
   `gh pr view|checks <pr> ...`. `--wait` is the one option `ci-failures.sh` takes, and only as its third word,
   after the repository (`ci-failures.sh 12 --wait` and `ci-failures.sh 12 o/r --wait extra` deny). `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
   with no part starting with `-`, no part that is `.`, and no `..` anywhere, a sha is 40 lowercase hex characters. Nothing else may precede or follow: any other variable
-  (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, and `CODEX_WAIT_SECS` only before the wait.
+  (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, `CODEX_WAIT_SECS` only before the wait, and `CI_WAIT_POLLS`
+  (digits, one to nine) only before `ci-failures.sh`; only one of the two may be given.
 - **A poll is denied with a hint.** The agent runs `CODEX_WAIT_SECS=300 codex-wait.sh <pr>` in the foreground,
   up to 4 calls in a row, and never ends its turn before one gives a result, so its report reaches the
   implementer and not the orchestrator (claude-ship #147). A command that starts with `sleep`, `cat`, `tail` or
   `head` still denies like any other, but the reason adds "don't poll: run codex-wait.sh again in the foreground,
   and never end your turn before it returns a result" (claude-ship #142, #147). It allows nothing new.
+- **A backgrounded call is denied.** A Bash call whose `run_in_background` is anything but absent, `null` or
+  `false` (so `true`, `"true"` and `1` too) denies, whatever the command, with the hint "Run it in the
+  foreground (no run_in_background), and never end your turn before it returns a result." The prose rule in
+  `agents/ship-codex.md` was not enough: the agent still backgrounded its waits and ended its turn, so the
+  implementer got an interim result (claude-ship #171). A Write ignores the field.
 - **gh.** Only `pr view` and `pr checks`, after a PR number. `--web`, and any short option cluster holding `w`,
   deny, as does the same word after a `--` (which can be an option's argument), so every word is checked.
 - **The triage file** lives in a fixed directory, `~/.claude/state/claude-ship/`, named

@@ -84,6 +84,8 @@ wait for the review yourself and the orchestrator sees only your final report.
    Agent result. If what comes back has no `outcome:` line, or says it is still waiting, that is not its
    report (claude-ship #147): don't hand back, and don't start a second `ship-codex`. Resume it with
    SendMessage ("send your final report"), wait for that result, and act only on a report with an `outcome:`.
+   Text with no `outcome:` line is interim, not a result. If the resumed `ship-codex` again returns no
+   `outcome:`, hand back with `codex: no final report (interim results only)` and never request a review yourself.
    Never start a second `ship-codex` for this PR while one is running. Don't request or wait for Codex any
    other way, and never post `@codex review` by hand.
 3. Act on the outcome:

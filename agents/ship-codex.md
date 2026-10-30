@@ -33,11 +33,11 @@ implementer already replied to), `mode: resolve-only` (see **Resolve only**) or 
   quotes, redirects, `$(...)`, and no `cd`):
   - `~/.claude/skills/ship/codex-round.sh <pr> <slug>`
   - `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>`
-  - `~/.claude/skills/ship/codex-wait.sh <pr>`, optionally with `CODEX_WAIT_SECS=<n>` before it (the only
-    environment variable allowed; step 4 sets it to 300)
+  - `~/.claude/skills/ship/codex-wait.sh <pr>`, optionally with `CODEX_WAIT_SECS=<n>` before it (step 4 sets it
+    to 300; the only other environment variable allowed is `CI_WAIT_POLLS=<n>`, below)
   - `~/.claude/skills/ship/codex-findings.sh <pr>`
-  - `~/.claude/skills/ship/ci-failures.sh <pr> <slug>`, with `--wait` after the slug in step 0 (Bash `timeout:
-    600000`)
+  - `~/.claude/skills/ship/ci-failures.sh <pr> <slug>`, with `--wait` after the slug and `CI_WAIT_POLLS=<n>` before
+    it in step 0 (Bash `timeout: 600000`)
   - `~/.claude/skills/ship/codex-triage.sh <pr> <triage file (Bash)>`
   - `gh pr view <pr> ...` and `gh pr checks <pr> ...` (add `-R <slug>`), without `--web`
 - **Never** call `gh api`, post or edit a comment, request a review by hand, resolve a thread, or retry a denied
@@ -58,8 +58,9 @@ no request, so they don't wait for CI).
       push GitHub can still report the old head, and the CI read would be that head's. If it
       prints anything else, skip the rest of step 0 and go to step 1, which waits until `<sha>` is the head; step 5
       reads CI after the review, and the implementer acts on a `fail` there.
-   b. `ci-failures.sh <pr> <slug> --wait` (Bash `timeout: 600000`, no `run_in_background`), alone. It polls for up
-      to 9 minutes until no check is pending, then prints the failed checks with their log tails. It ignores the
+   b. `CI_WAIT_POLLS=10 ci-failures.sh <pr> <slug> --wait` (Bash `timeout: 600000`, no `run_in_background`),
+      alone. It polls for up to 5 minutes until no check is pending, then prints the failed checks with their log
+      tails (fetching those takes more time, outside the poll cap, and still fits the Bash timeout). It ignores the
       `codex-review` status, which stays pending until Codex has reviewed, and Codex isn't requested until this
       step is over: waiting with `gh pr checks --watch` would wait for it forever. The same rule as step 4 holds:
       never end your turn or send report text before a call has returned. Read the exit code and the output:
@@ -68,7 +69,7 @@ no request, so they don't wait for CI).
       |---|---|---|
       | 0 | `no failed checks` | go on to step 1 |
       | 0 or 3 | failed check blocks | `outcome: ci-fail`: copy the output word for word under `ci-failures:` in the report, request nothing, and stop. No request was made, so no Codex round was used |
-      | 3 | `no failed checks` and a `pending:` line | checks still running at the cap: call it once more (chunk 2); a second exit 3 with no failed check: `outcome: ci-timeout`, `stopped because: checks still pending after 18 minutes` |
+      | 3 | `no failed checks` and a `pending:` line | checks still running at the cap: on chunks 1 to 3 call it again (the next chunk, up to 4 in all); exit 3 with no failed check on chunk 4: `outcome: ci-timeout`, `stopped because: checks still pending after 20 minutes` |
       | 1, 2 | | `outcome: error` with the message |
 
    Checks are not registered for the first moments after a push, so a poll that finds none says `no failed checks`;
@@ -107,10 +108,10 @@ no request, so they don't wait for CI).
    | 2 | usage error, or the status script failed | `outcome: error` with the message | same |
    | 3 | a stall, a request Codex never acknowledged, or a completion nobody asked for, so only a new request clears it | once per head: go back to step 1 (the request step applies the cap: exit 4 is `outcome: round-cap`), then step 2 again for the new round (a stalled or unacknowledged request isn't counted, so the round stays; a "finished more than once" one is, so the round rises and its column applies), then wait again from step 4 with chunk 1. A second exit 3 for this head: `outcome: stalled` | same |
 
-   If a call is moved to the background anyway (its result says the command is running in the background), that
-   is the only time to wait for a completion notification: end your turn without report text, and when it
-   arrives, Read the output file it names for the status line and take the exit code from the notification.
-   A call that returns directly with its output and exit code needs no notification.
+   If a call's result says the command is running in the background anyway, don't wait for it and don't end your
+   turn: call the same command again in the foreground, as the same chunk. `codex-wait.sh` and `ci-failures.sh`
+   only read state, so a second call is safe, and the backgrounded one is left to finish. Never end your turn on
+   work that is still running, whatever the reason.
 5. `ci-failures.sh <pr> <slug>` for `ci:` (see **Report**). The push can have started jobs after step 0 read CI; the
    outcome stays the findings' (below), and the implementer acts on a `fail` here.
 6. `codex-findings.sh <pr>`: one block per unresolved Codex thread: `<thread id> <P0..P3 or P?> <path>:<line>`,
