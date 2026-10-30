@@ -1,0 +1,11 @@
+--- a/hooks/explorer-bash.sh
++++ b/hooks/explorer-bash.sh
+@@ -93,7 +93,7 @@
+ 		[ $# -ge 1 ] || deny "gh api needs a path"
+ 		for a in "$@"; do
+ 			case $a in
+-			--*) exact "$a" --field --raw-field --method --input && deny "gh option $a" ;;
++			--*) exact "$a" --field --method --input && deny "gh option $a" ;;
+ 			# A cluster of short options: -f, -F and -X add a body or a method, and may be bundled (-XPOST).
+ 			-*[fFX]*) deny "gh option $a" ;;
+ 			esac

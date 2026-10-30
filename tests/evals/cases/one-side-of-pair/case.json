@@ -1,0 +1,13 @@
+{
+  "base": "c824f71755cde1001a4df1f8dd1c6d53ffe7b72f",
+  "kind": "code",
+  "source": "docs/pitfalls.md: Checking one side of a pair leaves the other open",
+  "commit": "refactor(hooks): let the explorer pass long gh api flags that -f already covers",
+  "expect": [
+    {
+      "file": "hooks/explorer-bash.sh",
+      "line": 96,
+      "severity": "P1"
+    }
+  ]
+}

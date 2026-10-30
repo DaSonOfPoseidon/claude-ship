@@ -1,0 +1,10 @@
+--- a/tests/gate-kind.sh
++++ b/tests/gate-kind.sh
+@@ -100,6 +100,7 @@
+ # Behaviour in a .md file, or any other file: the finder.
+ change prompt sonnet hooks/review-prompt.md
+ change skill sonnet skills/ship/SKILL.md
++change hooks-notes sonnet hooks/notes.md
+ change agent sonnet agents/a.md
+ change claude-skill sonnet .claude/skills/x/SKILL.md
+ change agents-md sonnet AGENTS.md

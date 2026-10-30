@@ -1,0 +1,14 @@
+--- a/hooks/review-gate.sh
++++ b/hooks/review-gate.sh
+@@ -454,11 +454,8 @@
+ 	while IFS= read -r url; do
+ 		s=$(printf '%s\n' "$url" | sed -E 's#/+$##; s#\.git$##' |
+ 			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm]\.?(:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
+-		host=$(printf '%s\n' "$url" | sed -E 's#^[[:alpha:]+]+://##; s#^[^@/]*@##; s#[:/].*##')
+ 		if [ -n "$s" ]; then
+ 			echo "$s"
+-		elif printf '%s' "$host" | grep -Eqi '(^|\.)github\.com\.?$'; then
+-			echo "?$url"
+ 		fi
+ 	done | sort -u
+ }

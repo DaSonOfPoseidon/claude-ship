@@ -309,6 +309,34 @@ run --check --case badpatch
 	fail=1
 }
 
+# The seeded cases (tests/evals/cases): each is valid, its diff applies at its base in this repo, the kind is the gate's,
+# and its expected findings point into the changed tree. A base that isn't in the clone (a shallow checkout) is skipped
+# here, but not in CI, which checks out the whole history.
+TMPDIR=$tmp/tmpdir sh "$root/tests/evals/run.sh" --check --json >"$tmp/real.json" 2>"$tmp/err"
+rc=$?
+if [ "$rc" != 0 ]; then
+	echo "FAIL: the seeded cases: exit $rc"
+	sed 's/^/  /' "$tmp/err"
+	jq -r '.rows[] | select(.status == "error") | "  \(.case): \(.error)"' "$tmp/real.json" 2>/dev/null
+	fail=1
+fi
+if [ "$(jq -r '[.rows[] | select(.status == "skipped")] | length' "$tmp/real.json" 2>/dev/null)" != 0 ]; then
+	if [ -n "${GITHUB_ACTIONS:-}" ]; then
+		echo "FAIL: CI skipped seeded cases whose base isn't in the clone; check out with fetch-depth: 0"
+		fail=1
+	else
+		echo "gate-evals: some seeded cases were skipped (their base isn't in this clone)"
+	fi
+fi
+for c in "$root"/tests/evals/cases/*/; do
+	n=$(jq '.expect | length' "${c}case.json")
+	echo "$n"
+done >"$tmp/expects"
+if [ "$(grep -vc '^0$' "$tmp/expects")" -lt 6 ] || [ "$(grep -c '^0$' "$tmp/expects")" -lt 3 ]; then
+	echo "FAIL: the seeded cases need at least 6 with a bug and 3 clean ones"
+	fail=1
+fi
+
 # Nothing is left behind: no worktree, no temp directory.
 if [ "$(git -C "$repo" worktree list | wc -l)" -ne 1 ]; then
 	echo "FAIL: the runner left a worktree:"

@@ -1,0 +1,11 @@
+--- a/skills/ship/codex-wait.sh
++++ b/skills/ship/codex-wait.sh
+@@ -43,7 +43,5 @@
+ 	fi
+ 	# Never sleep past the deadline.
+ 	left=$((deadline - $(date +%s)))
+-	if [ "$left" -gt 0 ]; then
+-		sleep $((left < 60 ? left : 60))
+-	fi
++	[ "$left" -le 0 ] || sleep $((left < 60 ? left : 60))
+ done

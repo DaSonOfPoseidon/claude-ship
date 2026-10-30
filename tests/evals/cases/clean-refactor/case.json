@@ -1,0 +1,7 @@
+{
+  "base": "c824f71755cde1001a4df1f8dd1c6d53ffe7b72f",
+  "kind": "code",
+  "source": "a behaviour-preserving refactor of the wait loop in codex-wait.sh",
+  "commit": "refactor(skill): shorten the sleep guard in codex-wait.sh",
+  "expect": []
+}
