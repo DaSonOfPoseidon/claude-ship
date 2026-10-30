@@ -346,6 +346,65 @@ for other in 'rm x' 'git log' "$ship/codex-wait.sh" 'gh pr merge 12' 'catalog x'
 		fail=1
 	fi
 done
+# A backgrounded call denies (claude-ship #171): ship-codex's waits run in the foreground, or its parent gets an
+# interim result. false, absent and null are the foreground. Whatever the field holds, the command is judged too.
+bg() {
+	jq -nc --arg c "$2" --argjson b "$1" '{tool_name: "Bash", tool_input: {command: $c, run_in_background: $b}}'
+}
+check 2 "$(bg true "$ship/codex-wait.sh 12")"
+check 2 "$(bg '"true"' "$ship/codex-wait.sh 12")"
+check 2 "$(bg 1 "$ship/codex-wait.sh 12")"
+check 2 "$(bg '"false"' "$ship/codex-wait.sh 12")"
+check 2 "$(bg 0 "$ship/codex-wait.sh 12")"
+check 2 "$(bg '[]' "$ship/codex-wait.sh 12")"
+check 2 "$(bg '{}' "$ship/codex-wait.sh 12")"
+check 2 "$(bg true "CODEX_WAIT_SECS=300 $ship/codex-wait.sh 12")"
+check 2 "$(bg true "CI_WAIT_POLLS=10 $ship/ci-failures.sh 12 o/r --wait")"
+check 2 "$(bg true 'gh pr view 12')"
+check 2 "$(bg true 'sleep 5')"
+check 2 "$(bg false 'sleep 5')"
+check 0 "$(bg false "$ship/codex-wait.sh 12")"
+check 0 "$(bg null "$ship/codex-wait.sh 12")"
+check 0 "$(bg false "CODEX_WAIT_SECS=300 $ship/codex-wait.sh 12")"
+check 0 "$(bg false "CI_WAIT_POLLS=10 $ship/ci-failures.sh 12 o/r --wait")"
+check 0 "$(bg false 'gh pr view 12')"
+# A Write ignores the field.
+check 0 "$(jq -nc --arg p "$st/triage-o+r-12.json" '{tool_name: "Write", tool_input: {file_path: $p, content: "[]", run_in_background: true}}')"
+check 2 "$(bg true "$ship/codex-wait.sh 12")"
+grep -q "Run it in the foreground (no run_in_background), and never end your turn before it returns a result." "$tmp/err" || {
+	echo "FAIL: the denial of a backgrounded call doesn't tell the agent to run it in the foreground"
+	fail=1
+}
+grep -q 'codex-round.sh' "$tmp/err" || {
+	echo "FAIL: the denial of a backgrounded call doesn't name the allowed forms"
+	fail=1
+}
+# The foreground hint is for a backgrounded call only.
+expect 2 "$ship/codex-wait.sh"
+if grep -q 'run_in_background' "$tmp/err"; then
+	echo "FAIL: the denial of a foreground call mentions run_in_background"
+	fail=1
+fi
+# CI_WAIT_POLLS: the --wait poll count, digits only, and only before ci-failures.sh.
+expect 0 "CI_WAIT_POLLS=10 $ship/ci-failures.sh 12 o/r --wait"
+expect 0 "CI_WAIT_POLLS=1 $ship/ci-failures.sh 12 o/r"
+expect 0 "CI_WAIT_POLLS=123456789 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=1234567890 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=abc $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS= $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=-1 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=1.5 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=10 CI_WAIT_POLLS=1 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=10 CODEX_WAIT_SECS=300 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CODEX_WAIT_SECS=300 CI_WAIT_POLLS=10 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=10 $ship/codex-wait.sh 12"
+expect 2 "CI_WAIT_POLLS=10 $ship/codex-round.sh 12"
+expect 2 "CI_WAIT_POLLS=10 $ship/codex-findings.sh 12"
+expect 2 "CI_WAIT_POLLS=10 $ship/codex-request.sh 12 o/r $sha"
+expect 2 "CI_WAIT_POLLS=10 gh pr view 12"
+expect 2 "CI_WAIT_POLLS=10 PATH=/tmp/x $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=10 $ship/ci-failures.sh 12 o/r --wait; rm x"
+expect 2 "CI_WAIT_POLLS=10"
 # A hook registered as a command needs its execute bit (claude-ship #69).
 [ -x "$root/hooks/codex-bash.sh" ] || {
 	echo "FAIL: hooks/codex-bash.sh isn't executable"

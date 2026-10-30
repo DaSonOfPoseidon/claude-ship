@@ -120,7 +120,11 @@ review finds a new class.
   handed back, and the real report landed with the orchestrator (claude-ship #147; PRs #146 and #150). A
   subagent that ends its turn while its own work is still running hands its parent an interim result, so nested
   agents must block in the foreground, in chunks under the tool's timeout, and send one report at the end. Tell
-  the caller too that a result without an `outcome:` isn't the report, and to resume the agent for it.
+  the caller too that a result without an `outcome:` isn't the report, and to resume the agent for it. Prose
+  rules weren't enough either: the agent still backgrounded its waits and ended its turn (PRs #165 and #170,
+  claude-ship #171), so a nested agent's foreground rule needs a hook that denies `run_in_background`
+  (`hooks/codex-bash.sh`). And never tell an agent to end its turn on background work, even as a fallback:
+  that instruction is what made #147 happen.
 - **A new script is committed without its execute bit.** Written with an editor, it lands as `100644`, and
   `install.sh` copies modes as they are, so a hook registered as a command fails with `Permission denied`
   while tests that run it with `sh` pass (claude-ship #69). Commit scripts as `100755`
