@@ -91,7 +91,9 @@ wait for the review yourself and the orchestrator sees only your final report.
    through `gh api graphql`), then judge it against the code. Valid: fix it test-first, sweep for the class,
    run the checks and commit; push the round's commits through the gate in one push. Reply on the thread
    naming the fixing commit (GraphQL `addPullRequestReviewThreadReply` with the thread id). Not valid: reply
-   with file:line evidence. Either way, don't resolve it (auto mode denies subagents that call, #100): the next
+   with file:line evidence, and add an entry to `docs/false-positives.md` (one narrow pattern, why it's fine,
+   where it came up) in the same commit set, or name it in the report if you make no commit, unless the finding
+   was wrong only about this one diff. Either way, don't resolve it (auto mode denies subagents that call, #100): the next
    `ship-codex` resolves the threads you pass as `replied`. Leave threads it didn't send you alone.
 
    **When you judged every thread not valid** and made no commit, there is nothing new to review: the head is

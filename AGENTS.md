@@ -57,6 +57,11 @@ or anything CI already checks (shellcheck, actionlint).
 
 Classes of bug past reviews caught here are in [`docs/pitfalls.md`](docs/pitfalls.md).
 
+### Known false positives
+
+Findings past reviews raised here that were judged wrong are in
+[`docs/false-positives.md`](docs/false-positives.md); the gate shows them to its reviewers.
+
 Why the gate's checks are shaped as they are: [`docs/gate.md`](docs/gate.md). The same for the other scripts, the
 action and the workflow: [`docs/scripts.md`](docs/scripts.md).
 

@@ -28,6 +28,11 @@ or anything CI already checks (formatting, lints, tests).
 Classes of bug past reviews caught here are in [`docs/pitfalls.md`](docs/pitfalls.md); check every change
 against them.
 
+### Known false positives
+
+Findings past reviews raised that were judged wrong are in [`docs/false-positives.md`](docs/false-positives.md);
+the gate shows them to its reviewers. Add an entry when a finding is answered "not valid" or waived.
+
 <!-- Optional: settings for the ship skill's orchestrated PR loop (skills/ship/orchestrate.md). Uncomment and
      fill in to change the defaults.
 ## PR loop

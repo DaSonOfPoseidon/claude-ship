@@ -52,6 +52,10 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 4. Create `docs/pitfalls.md` if it doesn't exist, with the title `# Pitfalls` and this intro: "Classes of
    bug that reviews have caught here. Check every change against them, and add an entry when a review
    finds a new class." AGENTS.md's Known pitfalls section links to it, and the gate shows it to reviewers.
+   Also create `docs/false-positives.md` with the title `# False positives` and this intro: "Findings
+   reviews raised here that were judged wrong. Each entry is one narrow pattern, why it's fine, and where it
+   came up. The gate shows this file to its reviewers. Never add a whole class of bug." The gate shows the
+   default branch's copy only, so entries take effect once merged.
 5. Create the label `review:p3` (`gh label create review:p3 --color c5def5 --description "Minor finding from an AI review"`).
    If the repo's issue conventions need more labels on auto-filed P3s, write the per-file label map
    `.github/claude-ship/p3-labels` (format in claude-ship's README; give every path an area and a `*` rule
@@ -74,7 +78,9 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 4. Commit, then `git push`. The PreToolUse gate (`~/.claude/hooks/review-gate.sh`) reviews it:
    - Blocked: fix every blocking finding test-first, sweep, then push again (a re-push of the same commit
      re-blocks without a new review). If a finding is wrong, explain why and ask the user to waive it with
-     `! ~/.claude/hooks/review-gate.sh --waive "<why>"`. Never work around the gate.
+     `! ~/.claude/hooks/review-gate.sh --waive "<why>"`. Never work around the gate. After the user waives,
+     ask for the reason if it isn't clear, and add an entry for the finding to `docs/false-positives.md` in the
+     next push (one narrow pattern, why it's fine, where it came up).
    - When a blocking finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in
      the same push: the class, what to check, and where it bit (PR or issue).
    - The gate files confirmed P3s as issues itself. Don't fix them in this PR.
@@ -129,7 +135,10 @@ Every finding ends with one outcome (fixed, not valid, deferred to an issue, or 
 thread is resolved once it has one. A user-approved fix after round 3 gets one more review, with the same
 right-hand column.
 
-- **Not valid:** reply on the thread explaining why (with file:line evidence), then resolve it.
+- **Not valid:** reply on the thread explaining why (with file:line evidence), then resolve it. Also add an
+  entry to `docs/false-positives.md` in the same push (with no push left, in the next PR's first commit), unless
+  the finding was wrong only about this one diff. The entry is one narrow pattern, why it's fine and where it
+  came up; never a whole class of bug.
 - **Fix:** test-first, with a sweep for the same class. Reply on the thread with the fixing commit, then
   resolve the thread.
 - **File an issue:** reply on the thread with the issue's link, then resolve it. The issue is filed with
