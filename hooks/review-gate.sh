@@ -774,10 +774,18 @@ fi
 # branch that edits them would steer its own review (its edits are in the diff, reviewed as changes). ctx_file
 # <path>... sets ctx_ref and ctx_text to the first of the paths that exists on the default branch, else on the
 # branch (the bootstrap PR that adds them). It fails when neither has one, and blocks when a file that exists
-# can't be read, rather than falling back to the branch's copy.
+# can't be read, rather than falling back to the branch's copy. With --upstream-only first, the branch is never
+# consulted: it fails when the default branch has none. The known false positives use that, since a branch that
+# added an entry would silence its own review.
 ctx_file() {
+	ctx_refs="$upstream HEAD"
+	if [ "${1:-}" = --upstream-only ]; then
+		shift
+		ctx_refs=$upstream
+	fi
 	ctx_text=
-	for ctx_ref in "$upstream" HEAD; do
+	# shellcheck disable=SC2086 # refs never contain whitespace (git check-ref-format)
+	for ctx_ref in $ctx_refs; do
 		for ctx_path in "$@"; do
 			git cat-file -e "$ctx_ref:$ctx_path" 2>/dev/null || continue
 			if ! ctx_text=$(git show "$ctx_ref:$ctx_path"); then
@@ -870,6 +878,15 @@ run_reviewer() {
 # P3s already filed as issues, so reviewers don't report them again.
 filed="$state/p3-filed.tsv"
 touch "$filed"
+
+# The default branch's known false positives, for the finder, the docs check and the verifier, read here (not with the
+# finder's context) because a cached finder run still needs them for the verifier. Upstream only: the branch's own
+# copy is never shown, so it can't add an entry that silences its own review.
+false_positives=
+if ctx_file --upstream-only docs/false-positives.md; then
+	false_positives=$ctx_text
+	false_positives_src="docs/false-positives.md on $ctx_ref"
+fi
 
 # A commit that was already reviewed keeps its findings: re-pushing it re-blocks without a new review.
 out="$state/$head.json"

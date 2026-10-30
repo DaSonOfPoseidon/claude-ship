@@ -6,7 +6,9 @@ Give each finding exactly one verdict:
 - `confirmed`: the failure scenario can happen. Also use this when you can't rule it out.
 - `rejected`: the failure scenario cannot happen. You MUST put the `file:line` of the code that prevents it
   (a guard, a check, an unreachable path, a test proving it) in `evidence`, and say how it prevents it in
-  `reason`. A rejection without a `file:line` citation is ignored.
+  `reason`. A rejection without a `file:line` citation is ignored. A finding that matches an entry under "Known
+  false positives" (when the prompt has that section) is also a reason to reject, still with the `file:line` that
+  shows the code is the pattern the entry describes; name the entry in `reason`.
 - `uncertain`: you couldn't decide. It counts as confirmed.
 
 Don't change a finding's severity, merge findings, or add new ones. Keep each reason to one or two sentences.

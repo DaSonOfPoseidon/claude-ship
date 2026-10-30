@@ -8,7 +8,7 @@
 #
 # Each case (cases/<name>/case.json and change.diff) is a diff applied on a commit of this repo (`base`), with the
 # findings a reviewer should report. The runner makes a temporary detached worktree at `base`, commits the diff there,
-# builds the prompt as the gate would at that base (hooks/review-lib.sh: the rules, checklist and pitfalls are read from
+# builds the prompt as the gate would at that base (hooks/review-lib.sh: the rules, checklist, pitfalls and false positives are read from
 # `base`, not from the working tree), and runs the gate's stages with the gate's flags: the Sonnet finder, then the
 # Haiku verifier (a docs case gets the Haiku claims check and no verifier). --prompt-dir takes the lib and the prompts
 # from another directory, so a changed prompt can be measured before it is deployed. Cost rows go to a temporary file,
@@ -287,6 +287,12 @@ run_case() (
 			pitfalls=$(git show "$upstream:docs/pitfalls.md") || broken "couldn't read docs/pitfalls.md at $case_base"
 			pitfalls_src="docs/pitfalls.md on refs/remotes/origin/$main"
 		fi
+	fi
+	# The known false positives: the default branch's copy only, for both kinds, as the gate reads it.
+	false_positives=
+	if git cat-file -e "$upstream:docs/false-positives.md" 2>/dev/null; then
+		false_positives=$(git show "$upstream:docs/false-positives.md") || broken "couldn't read docs/false-positives.md at $case_base"
+		false_positives_src="docs/false-positives.md on refs/remotes/origin/$main"
 	fi
 	commits=$(git log --format='%h %s' "$upstream"..HEAD) || broken "couldn't list the commits"
 	diff_text=$(git diff "$range") || broken "couldn't read the diff"
