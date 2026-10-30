@@ -154,3 +154,17 @@ review finds a new class.
   `gh repo view` returns GitHub's canonical `nameWithOwner`. Comparing them with `==` drops every row of a repo
   whose remote differs in case, and the missing rows read as a cheap report. Compare repo slugs without case
   (`ascii_downcase`), and test with a differently-cased row (claude-ship #110).
+- **A line scanner for Markdown settings must treat fences and HTML comments as literal inside each other.** The
+  local-mode check in `hooks/orchestrate-hint.sh` read `<!--` inside a fenced example as a real comment, which hid
+  the settings after it, and let the inner triple backticks of a four-backtick example end the fence early, so an
+  example's `- mode: local` opted a workspace in (claude-ship #159, three Codex rounds, each finding the next
+  sibling). Write the scanner as one state table (normal, in a fence, in a comment, against every kind of line:
+  fence, `<!--`, `-->`, both on one line, heading, setting), close a fence only on its own character at the
+  opener's length or more, and add a test per cell that can occur.
+- **An encoding that joins path parts must escape its own separator and escape character first.** Writing `/`
+  as `+` gave `/srv/a+b/c` and `/srv/a/b+c` the same state directory, so one workspace's loop overwrote the
+  other's (claude-ship #159). Escape the escape character (`%` to `%25`), then the new separator (`+` to `%2B`),
+  then substitute, and give the doc a pair of paths that used to collide.
+- **A doc must not widen an opt-in beyond its marker.** `skills/ship/SKILL.md` said any workspace that isn't a
+  GitHub repo gets the local loop, while the hook and `orchestrate.md` start it only on `- mode: local` or a user
+  request (claude-ship #159). State each opt-in once, with its exact marker, and have other docs point to it.

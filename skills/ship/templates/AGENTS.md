@@ -37,4 +37,7 @@ against them.
 - skip labels: `<labels for work that needs hardware, research or a decision>`
 - priority labels: `<highest first, comma-separated>`
 - merge: no
+
+     For a workspace without git or GitHub, add the line `- mode: local` to this section instead of the settings
+     above but checks: the loop then plans and implements one unit at a time with no PRs (orchestrate.md > Local mode).
 -->
