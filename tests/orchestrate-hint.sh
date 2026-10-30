@@ -113,6 +113,14 @@ printf '## PR loop\n- mode: github\n\n## Notes\n- mode: local\n' >"$tmp/l-other/
 printf '<!-- Optional\n## PR loop\n- mode: local\n-->\n# Rules\n' >"$tmp/l-comment/AGENTS.md"
 printf '## PR loop\n```\n- mode: local\n```\n' >"$tmp/l-fence/AGENTS.md"
 printf '## PR loop\r\n- mode: local\r\n' >"$tmp/l-crlf/AGENTS.md"
+# A fence closes only on its own character, at least as long as the opener: the inner ``` of a four-backtick
+# example, and a ~~~ line inside a backtick fence, don't end it.
+mkdir -p "$tmp/l-fence4" "$tmp/l-fencemix" "$tmp/l-fenceend" "$tmp/l-fenceinfo"
+printf '## PR loop\n````md\n```\n- mode: local\n```\n````\n' >"$tmp/l-fence4/AGENTS.md"
+printf '## PR loop\n```\n~~~\n- mode: local\n~~~\n```\n' >"$tmp/l-fencemix/AGENTS.md"
+# After the fence really closes, the section is live again.
+printf '## PR loop\n````\n```\n````\n- mode: local\n' >"$tmp/l-fenceend/AGENTS.md"
+printf '## PR loop\n~~~~sh\n- mode: local\n~~~~~\n- mode: local\n' >"$tmp/l-fenceinfo/AGENTS.md"
 printf '## PR loop\n- mode: local\n' >"$tmp/l-sub/AGENTS.md"
 git init -q "$tmp/l-gitmode"
 printf '## PR loop\n- mode: local\n' >"$tmp/l-gitmode/AGENTS.md"
@@ -130,6 +138,10 @@ hint no "mode: local under the heading after PR loop" plan l8 "$tmp/l-other"
 hint no "PR loop without a mode line, not a repo" plan l9 "$tmp/l-nomode"
 hint no "mode: local inside an HTML comment" plan l10 "$tmp/l-comment"
 hint no "mode: local inside a code fence" plan l11 "$tmp/l-fence"
+hint no "mode: local inside a four-backtick fence holding a triple one" plan l20 "$tmp/l-fence4"
+hint no "mode: local inside a backtick fence holding a tilde line" plan l21 "$tmp/l-fencemix"
+hint local "mode: local after a four-backtick fence closed" plan l22 "$tmp/l-fenceend"
+hint local "mode: local after a longer closing fence" plan l23 "$tmp/l-fenceinfo"
 hint no "no AGENTS.md or CLAUDE.md at all" plan l12 "$tmp/notrepo"
 hint local "local loop, git repo with the marker" plan l13 "$tmp/l-gitmode"
 # The workspace is the git toplevel, so a subdirectory finds the toplevel's file; two workspaces mark separately.

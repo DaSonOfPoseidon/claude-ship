@@ -42,8 +42,18 @@ has_local_mode() {
 				else { line = substr(line, 1, i - 1); incomment = 1; break }
 			}
 		}
-		line ~ /^[ \t]*(```|~~~)/ { fence = !fence; next }
-		fence { next }
+		# A fence closes on a line of only its own character, at least as long as its opener.
+		fence {
+			t = line; gsub(/[ \t]/, "", t)
+			if (t ~ /^(`+|~+)$/ && substr(t, 1, 1) == fch && length(t) >= flen) { fence = 0 }
+			next
+		}
+		line ~ /^[ \t]*(```|~~~)/ {
+			t = line; sub(/^[ \t]*/, "", t)
+			fch = substr(t, 1, 1); flen = 0
+			while (substr(t, flen + 1, 1) == fch) { flen++ }
+			fence = 1; next
+		}
 		line ~ /^## / { insec = (line ~ /^## PR loop[ \t]*$/); next }
 		insec && line ~ /^[ \t]*-[ \t]+mode:[ \t]*`?local`?[ \t]*$/ { found = 1; exit }
 		END { print found ? "yes" : "no" }' "$1" 2>/dev/null)" = yes ]
