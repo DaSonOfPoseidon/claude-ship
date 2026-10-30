@@ -29,7 +29,7 @@ the rest, one PR at a time (claude-ship #66):
 | Questions about the code, for the plan (its Bash is held to read-only `git` and `gh` by `hooks/explorer-bash.sh`) | `agents/ship-explorer.md` | Haiku, medium |
 | Implementing a unit, fixing its gate and Codex findings, opening the PR | `agents/ship-implementer.md` | Sonnet, high; Haiku for trivial units |
 | Implementing a unit in local mode (no git, PR, gate or Codex; it never commits) | `agents/ship-local-implementer.md` | Sonnet, high |
-| Running each Codex round for the implementer: request, wait, CI, findings, the rule-decided issues and resolves (its Bash and Write are held to the ship scripts and one triage file by `hooks/codex-bash.sh`) | `agents/ship-codex.md` | Haiku, medium |
+| Running each Codex round for the implementer: CI first (a red head goes back to the implementer, with the failing jobs' log tails, before any request), request, wait, findings, the rule-decided issues and resolves (its Bash and Write are held to the ship scripts and one triage file by `hooks/codex-bash.sh`) | `agents/ship-codex.md` | Haiku, medium |
 | The mechanics under it: waiting, listing findings, filing issues | the ship scripts | none |
 
 Progress lives on GitHub (PRs and labels), with the plans kept in `.git/claude-ship/` outside the repo's
