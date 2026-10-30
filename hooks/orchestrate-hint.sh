@@ -6,6 +6,10 @@
 # session and repo (claude-ship #66; docs/scripts.md). On any error it adds nothing and lets the prompt through;
 # a variable lookup that fails for any reason but "not found" (network, rate limit) isn't remembered either, so
 # the next prompt asks again (claude-ship #67).
+#
+# A workspace (the git toplevel, else the cwd) whose AGENTS.md or CLAUDE.md has `- mode: local` in its `## PR loop`
+# section gets the local loop's hint instead, with no repo variable and no `gh` (claude-ship #82). It reads only
+# those two files, never runs anything from them, and puts only the directory in the hint.
 set -u
 
 input=$(cat)
@@ -16,11 +20,45 @@ session=$(printf '%s' "$input" | jq -r '.session_id // ""')
 # The session id names a file below, so it may hold only id characters.
 printf '%s' "$session" | grep -Eq '^[A-Za-z0-9_-]+$' || exit 0
 cd "$cwd" 2>/dev/null || exit 0
-top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd) || exit 0
 
 marks="${TMPDIR:-/tmp}/claude-ship-hint"
 mark="$marks/$session-$(printf '%s' "$top" | cksum | cut -d' ' -f1)"
 [ -e "$mark" ] && exit 0
+
+# Succeeds when the file has `- mode: local` (backticks allowed) between the `## PR loop` heading and the next `## `
+# heading, outside HTML comments and code fences. A comment that opens or closes on a heading or mode line cuts
+# that line, so such a line doesn't count.
+has_local_mode() {
+	[ -f "$1" ] || return 1
+	[ "$(awk '
+		{ sub(/\r$/, "") }
+		incomment { if (index($0, "-->")) { incomment = 0 } next }
+		{
+			line = $0
+			while ((i = index(line, "<!--")) > 0) {
+				rest = substr(line, i + 4)
+				if ((j = index(rest, "-->")) > 0) { line = substr(line, 1, i - 1) substr(rest, j + 3) }
+				else { line = substr(line, 1, i - 1); incomment = 1; break }
+			}
+		}
+		line ~ /^[ \t]*(```|~~~)/ { fence = !fence; next }
+		fence { next }
+		line ~ /^## / { insec = (line ~ /^## PR loop[ \t]*$/); next }
+		insec && line ~ /^[ \t]*-[ \t]+mode:[ \t]*`?local`?[ \t]*$/ { found = 1; exit }
+		END { print found ? "yes" : "no" }' "$1" 2>/dev/null)" = yes ]
+}
+if has_local_mode "$top/AGENTS.md" || has_local_mode "$top/CLAUDE.md"; then
+	mkdir -p "$marks" 2>/dev/null && : >"$mark" 2>/dev/null
+	jq -nc --arg dir "$top" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: (
+		"Local orchestrated mode is on for " + $dir + " (## PR loop \u203a mode: local). If this prompt is an "
+		+ "objective to plan, read ~/.claude/skills/ship/orchestrate.md \u203a Local mode now, explore with the "
+		+ "ship-explorer agent instead of Explore, and write the plan in its master-plan shape. Once the plan is "
+		+ "approved, run the local loop it describes: one unit at a time, no commits, PRs, gate or Codex.")}}'
+	exit 0
+fi
+# Without the marker, a directory that isn't a git repo is not a workspace for the GitHub loop.
+git rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
 
 slug=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || exit 0
 [ -n "$slug" ] || exit 0
