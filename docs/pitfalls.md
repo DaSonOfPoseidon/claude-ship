@@ -11,7 +11,10 @@ review finds a new class.
   inside `sh -c` or `awk`, so quoting doesn't make it text. Test a new
   pattern against read-only commands that mention the same paths. It cuts both ways: a word boundary that
   excluded `/` missed `/usr/bin/gh api` and `/usr/bin/git push` (claude-ship #9). Test every way the command
-  can be named, too.
+  can be named, too. The tamper check now reads a syntax tree (shfmt) instead of text, so file names, quoted
+  strings and heredoc bodies stop counting (claude-ship #135, #40): add a new Bash check there, as an event
+  from the tree, rather than as another regex, and let anything the tree can't settle fall back to the stricter
+  old check (docs/gate.md › Tamper protection).
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
   `>&2` as a descriptor duplication when any non-alphanumeric followed, so `>&2.txt` (bash: a write to the file
   `2.txt`) and `>&1/x` passed; so did `&>/dev/null.log` (no terminator at all) and `>/dev/null,x` (the `/dev/…`

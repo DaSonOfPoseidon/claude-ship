@@ -3,9 +3,11 @@
 # (claude-ship #12) or slash-named branches (#10), and GitHub MCP write tools on any server name (#15).
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tests/lib/shfmt.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home"
+link_shfmt "$tmp/home"
 printf '#!/bin/sh\necho true\n' >"$tmp/bin/gh"
 chmod +x "$tmp/bin/gh"
 fail=0

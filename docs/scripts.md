@@ -461,7 +461,7 @@ gate and the skill are deployed either way.
 
 ## `scripts/fetch-shfmt.sh`
 
-`scripts/fetch-shfmt.sh <dest-file>` installs shfmt v3.14.1, the shell parser the gate's Bash checks will use (#135),
+`scripts/fetch-shfmt.sh <dest-file>` installs shfmt v3.14.1, the shell parser the gate's tamper check uses (#135),
 on Linux x86_64 or aarch64/arm64 (anything else exits 1). `install.sh` calls it for `~/.claude/bin/shfmt`, and CI
 for the same path before its tests.
 

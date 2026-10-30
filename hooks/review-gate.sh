@@ -93,14 +93,15 @@ mcp__*__push_files | mcp__*__create_or_update_file | mcp__*__delete_file | mcp__
 	;;
 Write | Edit | MultiEdit | NotebookEdit)
 	path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""') || unreadable "file path"
-	# Protected: the installed gate, prompts, skill and ship agents, the gate's state and the settings that register
-	# it. A project's own settings may change, but not to turn hooks off. The new text is read on its own, since a
+	# Protected: the installed gate, prompts, skill and ship agents, the gate's state, the settings that register it
+	# and shfmt (~/.claude/bin, which the gate reads every Bash command with: replacing it would blind the gate).
+	# A project's own settings may change, but not to turn hooks off. The new text is read on its own, since a
 	# pipeline's status is grep's, and a jq failure would read as "no disableAllHooks".
 	written=
 	if printf '%s' "$path" | grep -Eq '\.claude/settings'; then
 		written=$(printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")') || unreadable "text written"
 	fi
-	if printf '%s' "$path" | grep -Eq "^$HOME/\.claude/(hooks/|settings|skills/ship/|agents/ship-)|\.git/review-gate(/|$)" ||
+	if printf '%s' "$path" | grep -Eq "^$HOME/\.claude/(hooks/|settings|skills/ship/|agents/ship-|bin/)|\.git/review-gate(/|$)" ||
 		printf '%s' "$written" | grep -q disableAllHooks; then
 		echo "Blocked: the review gate's script, prompts, settings and state are the user's to change." >&2
 		exit 2
@@ -112,6 +113,20 @@ Bash) ;;
 esac
 
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""') || unreadable "command"
+
+# The command's syntax tree, from shfmt, for the tamper check (docs/gate.md › Tamper protection). It fails closed like
+# the jq check above: without shfmt, or when shfmt can't read the command, the gate can't tell what the command does,
+# so it blocks, in every repo. The tool is read by its installed path, which the tamper check protects.
+shfmt="$HOME/.claude/bin/shfmt"
+if [ ! -f "$shfmt" ] || [ ! -x "$shfmt" ]; then
+	echo "Blocked: the review gate needs shfmt (~/.claude/bin/shfmt), which ./install.sh installs (or run scripts/fetch-shfmt.sh ~/.claude/bin/shfmt), and it isn't there, so the gate can't read this command. Install it and retry." >&2
+	exit 2
+fi
+if ! tree=$(printf '%s' "$cmd" | "$shfmt" -ln bash --to-json 2>&1); then
+	echo "Blocked: the review gate couldn't parse this command ($(printf '%s' "$tree" | head -n 1 | cut -c 1-200)), so it can't tell what it does. Fix the syntax, or split the command, and retry." >&2
+	exit 2
+fi
+[ -n "$tree" ] || unreadable "command syntax tree"
 
 # `git push` (also with global options, anywhere in a chain) and `gh pr create`. `/` counts as a boundary before
 # git and gh (`/usr/bin/git`); `.`, `_` and `-` don't (`.git/`, `my-gh`). push_scope allows only `-C`.
@@ -160,22 +175,221 @@ if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|de
 	echo "Blocked: CLAUDE_AUTONOMOUS, CLAUDE_ORCHESTRATE and the CLAUDE_P3_* variables are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
 	exit 2
 fi
-# A command that names gate state or the installed gate writes when it runs a writing tool or redirects anywhere
-# but a descriptor or /dev/null (docs/gate.md › Tamper protection). A quoted `>` counts: `sh -c "… > f"`.
-protected=$(printf '%s' "$cmd_all" |
-	grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship|agents/ship-)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
-if [ -n "$protected" ]; then
-	write=$(printf '%s' "$cmd_all" |
-		sed -E 's/[0-9]*>&([0-9]+|-)['\''"]?([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)['\''"]?([[:space:];&|)]|$)#\3#g' |
-		grep -Eo '[^[:space:]]*>[^[:space:]]*([[:space:]]+[^[:space:];&|]+)?' | head -1)
-	[ -n "$write" ] || write=$(printf '%s' "$cmd_all" |
-		grep -Eo '(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)' |
-		head -1 | sed -E 's/^[^[:alpha:]]//; s/[^[:alpha:]]$//')
-	if [ -n "$write" ]; then
-		echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names \`$protected\` and writes with \`$write\`." >&2
-		exit 2
+# Tamper protection: a command that writes gate state, the installed gate or shfmt (docs/gate.md › Tamper protection).
+# prot_re is the protected paths as a regex for jq: ~ or the home directory, then the gate's files; `.git/review-gate`
+# is the gate's state in any repo.
+home_re=$(printf '%s' "$HOME" | sed 's/[][\.*^$(){}?+|]/\\&/g')
+prot_re="(~|$home_re)/\\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
+# The command's simple commands and redirects read from its syntax tree, `$tree`, as events, one object each:
+#   {k: "block", p, w}  a literal word p names a protected path and writes (w says how)
+#   {k: "dyn"}          something the tree can't settle: a word that isn't literal (a variable, a substitution, a
+#                       glob, `$'...'`), a wrapper it can't unwrap, a protected `cd`, a shell or `source` run
+#                       without a `-c` string, `python` or `perl` (their stdin or script may write)
+#   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
+#   {k: "wr", t}        a write redirect to the literal target t
+#   {k: "lw", t}        a literal word t that names a protected path
+# A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
+# kept as text); anything else is dynamic. The output, for the loop below: the verdict (block, dyn, pass, or bad when the
+# input is no tree) on the first line, then the message of a block, or the strings to parse again, one JSON string per line.
+tamper_jq='
+def bn: sub("^.*/"; "");
+def isprot: test($prot);
+def unq: if (gsub("\\\\[\\s\\S]"; "") | test("[*?\\[]|^~[^/]|\\{[^}]*(,|\\.\\.)[^}]*\\}")) then null
+	else gsub("\\\\\n"; "") | gsub("\\\\(?<c>[\\s\\S])"; .c) end;
+def dq: gsub("\\\\\n"; "") | gsub("\\\\(?<c>[$`\"\\\\])"; .c);
+def pv: if .Type == "Lit" then (.Value | unq)
+	elif .Type == "SglQuoted" then (if .Dollar then null else .Value end)
+	elif .Type == "DblQuoted" then (if .Dollar then null
+		else ([.Parts[]? | if .Type == "Lit" then (.Value | dq) else null end] | if any(. == null) then null else join("") end) end)
+	else null end;
+def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
+# The words left after the options of a wrapper: $val are the options that take the next word, $flag those that take
+# none. null for an option it does not know, so the caller treats the command as unreadable.
+def skipopts($w; $val; $flag):
+	def go($i):
+		if $i >= ($w | length) then []
+		else $w[$i] as $x
+			| if $x == "--" then $w[$i + 1:]
+			elif ($x | test($val)) then go($i + 2)
+			elif ($x | test($flag)) then go($i + 1)
+			elif ($x | test("^-.")) then null
+			else $w[$i:] end
+		end;
+	go(0);
+def skipenv: until(length == 0 or (.[0] | test("^[A-Za-z_][A-Za-z0-9_]*=") | not); .[1:]);
+# The commands a simple command runs, after its wrappers and `find -exec`: [{w: words, x: true when xargs or find hand it
+# arguments the command line does not show}], or
+# null when a wrapper cannot be unwrapped.
+def eff($w; $x):
+	def uw($a; $val; $flag; $drop; $envs; $xx):
+		skipopts($a; $val; $flag) as $r
+		| if $r == null then null else eff(($r | if $envs then skipenv else . end | .[$drop:]); $xx) end;
+	if ($w | length) == 0 then []
+	else ($w[0] | bn) as $c | $w[1:] as $a
+	| if $c == "env" then uw($a; "^(-u|-C|--unset|--chdir)$"; "^(-[i0v]|-|--(ignore-environment|null|debug)|-[uC].+|--(unset|chdir)=.*)$"; 0; true; $x)
+	elif $c == "command" then (if (($a[0] // "") | test("^-[pvV]*[vV][pvV]*$")) then [] else uw($a; "^$"; "^-p$"; 0; false; $x) end)
+	elif $c == "builtin" then eff($a; $x)
+	elif $c == "exec" then uw($a; "^-a$"; "^-[cl]+$"; 0; false; $x)
+	elif $c == "nohup" then uw($a; "^$"; "^$"; 0; false; $x)
+	elif $c == "nice" then uw($a; "^(-n|--adjustment)$"; "^(-[0-9]+|-n[0-9-]+|--adjustment=.*)$"; 0; false; $x)
+	elif $c == "time" then uw($a; "^(-f|-o|--format|--output)$"; "^(-[pavqV]+|--(portability|append|verbose|quiet)|-[fo].+|--(format|output)=.*)$"; 0; false; $x)
+	elif $c == "timeout" then uw($a; "^(-k|-s|--kill-after|--signal)$"; "^(--foreground|--preserve-status|-v|--verbose|-[ks].+|--(kill-after|signal)=.*)$"; 1; false; $x)
+	elif $c == "stdbuf" then uw($a; "^(-i|-o|-e)$"; "^(-[ioe].+|--(input|output|error)=.*)$"; 0; false; $x)
+	elif $c == "setsid" then uw($a; "^$"; "^(-[cfw]|--(ctty|fork|wait))$"; 0; false; $x)
+	elif $c == "sudo" then uw($a; "^-[ugphCDRTrtU]$"; "^(-[EHnSbAkKPV]+|-[ugphCDRTrtU].+|--(preserve-env(=.*)?|set-home|non-interactive|stdin|background|reset-timestamp|remove-timestamp|prompt=.*|user=.*|group=.*|host=.*|chdir=.*))$"; 0; true; $x)
+	elif $c == "doas" then uw($a; "^-[uC]$"; "^-n$"; 0; false; $x)
+	elif $c == "xargs" then uw($a; "^(-[aEdILnPs]|--(arg-file|delimiter|eof|replace|max-lines|max-args|max-procs|max-chars))$";
+		"^(-[0rtpxoile]|--(null|no-run-if-empty|verbose|interactive|exit|open-tty|show-limits)|-[aEdILnPsie].+|--(arg-file|delimiter|eof|replace|max-lines|max-args|max-procs|max-chars|process-slot-var)=.*)$"; 0; false; true)
+	elif $c == "find" then
+		([range(0; $a | length) | select($a[.] | test("^-(exec|execdir|ok|okdir)$"))]) as $ix
+		| [$ix[] as $i | $a[$i + 1:] as $r
+			| ([range(0; $r | length) | select($r[.] == ";" or ($r[.] == "+" and . > 0 and $r[. - 1] == "{}"))] | first // ($r | length)) as $e
+			| eff($r[:$e]; true)] as $subs
+		| if any($subs[]; . == null) then null
+		else (if any($a[]; . == "-delete") then [{w: ["rm"], x: false}] else [] end) + ($subs | add // []) end
+	else [{w: $w, x: $x}] end
+	end;
+# `sh -c STRING`: the string, or dyn when the shell runs a script or stdin instead.
+def shellstr($a):
+	def go($i):
+		if $i >= ($a | length) then {k: "dyn"}
+		else $a[$i] as $x
+			| if ($x | test("^-[a-zA-Z]*c[a-zA-Z]*$")) then (if $i + 1 < ($a | length) then {k: "str", v: $a[$i + 1]} else {k: "dyn"} end)
+			elif ($x | test("^[-+][Oo]$|^--(rcfile|init-file)$")) then go($i + 2)
+			elif $x == "--" then {k: "dyn"}
+			elif ($x | test("^[-+]")) then go($i + 1)
+			else {k: "dyn"} end
+		end;
+	go(0);
+def cmdev($e; $all):
+	($e.w[0] | bn) as $c | $e.w[1:] as $a
+	| if ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x then {k: "dyn"} else shellstr($a) end)
+	elif $c == "eval" then (if $e.x then {k: "dyn"} elif ($a | length) > 0 then {k: "str", v: ($a | join(" "))} else empty end)
+	elif ($c | test("^(source|\\.)$")) then {k: "dyn"}
+	elif ($c | test("^(cd|pushd)$")) then
+		([$a[] | select(startswith("-") | not)] | first) as $t
+		| if $t != null and ($t | isprot) then {k: "dyn"} else empty end
+	elif ($c | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod)$")) or ($c == "sed" and ($a | any(test("^-[a-zA-Z]*i|^--in-place")))) then
+		(if any($all[]; isprot) then {k: "block", p: ([$all[] | select(isprot)] | first), w: $c} elif $e.x then {k: "dyn"} else empty end)
+	elif ($c | test("^(python[0-9.]*|perl)$")) then
+		(if any($all[]; isprot) then {k: "block", p: ([$all[] | select(isprot)] | first), w: $c} else {k: "dyn"} end)
+	else empty end;
+def redirs: (.Redirs? // [])[]
+	| select(.Op | test("^(>|>>|>\\||<>|&>|&>>|>&)$"))
+	| (.Word | wv) as $t
+	| if $t == null then {k: "dyn"}
+	elif .Op == ">&" and ($t | test("^([0-9]+-?|-)$")) then empty
+	else {k: "wr", t: $t, op: .Op} end;
+# Shapes the tree can not read as a write but the text check blocked, so they fall back to it: a writing tool named
+# after the command word (behind a wrapper the gate does not list: flock, ionice, watch, busybox...) with a protected
+# word among the words, and a `>` in one word (an awk program) with a protected path in another.
+def odd($w; $effs):
+	any($effs[]; any(.w[1:][]; bn | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed|python[0-9.]*|perl)$"))) and any($w[]; isprot)
+	or any(range(0; $w | length); . as $i | ($w[$i] | contains(">")) and any(range(0; $w | length); . as $j | $j != $i and ($w[$j] | isprot)));
+def calls:
+	(.Args? // []) as $args | [$args[] | wv] as $w
+	| if ($w | length) == 0 then empty
+	elif any($w[]; . == null) then {k: "dyn"}
+	else
+		(eff($w; false) as $e0 | if $e0 != null and odd($w; $e0) then {k: "dyn"} else empty end),
+		($w[] | select(isprot and test("(^|[;&|({\n\"\u0027])\\s*((sudo|env|nohup|exec|command|time|xargs|nice)\\s+)*(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|python[0-9.]*|perl|sed\\s+(-[a-zA-Z]*i|--in-place))(\\s|$)")) | {k: "block", p: ., w: "a command line"}),
+		($w[] | select(isprot) | {k: "lw", t: .}),
+		($w[] | select(test(">+[|&]?\\s*[\"\u0027]?[^\\s;&|\"\u0027]*(" + $prot + ")")) | {k: "block", p: ., w: ">"}),
+		(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w)) end)
+	end;
+if .Type != "File" then "bad"
+else
+	[.. | objects | if .Type == "CallExpr" then calls else empty end, (if has("Redirs") then redirs else empty end)] as $ev
+	| ($ev | map(select(.k == "lw")) | first) as $lw
+	| ($ev | map(select(.k == "block")) | first) as $b
+	| ($ev | map(select(.k == "wr" and (.t | isprot))) | first) as $wp
+	| ($ev | map(select(.k == "wr" and (.t | test("^/dev/(null|stdout|stderr)$") | not))) | first) as $wo
+	| (if $b != null then {p: $b.p, w: $b.w}
+		elif $wp != null then {p: $wp.t, w: ($wp.op + $wp.t)}
+		elif $lw != null and $wo != null then {p: $lw.t, w: ($wo.op + $wo.t)}
+		else null end) as $blk
+	| if $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
+		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end), ($ev[] | select(.k == "str") | .v | tojson) end
+end'
+# What the tree can't settle falls back to the text check: a command that names gate state or the installed gate
+# writes when it runs a writing tool or redirects anywhere but a descriptor or /dev/null. A quoted `>` counts:
+# `sh -c "… > f"`. It reads the raw command and its words with their quoting removed, so it also catches what a
+# variable or substitution hides from the tree.
+text_tamper() {
+	protected=$(printf '%s' "$cmd_all" |
+		grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
+	if [ -n "$protected" ]; then
+		write=$(printf '%s' "$cmd_all" |
+			sed -E 's/[0-9]*>&([0-9]+|-)['\''"]?([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)['\''"]?([[:space:];&|)]|$)#\3#g' |
+			grep -Eo '[^[:space:]]*>[^[:space:]]*([[:space:]]+[^[:space:];&|]+)?' | head -1)
+		[ -n "$write" ] || write=$(printf '%s' "$cmd_all" |
+			grep -Eo '(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+-i|python3?|perl)([^[:alnum:]_-]|$)' |
+			head -1 | sed -E 's/^[^[:alpha:]]//; s/[^[:alpha:]]$//')
+		if [ -n "$write" ]; then
+			echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names \`$protected\` and writes with \`$write\`." >&2
+			exit 2
+		fi
 	fi
-fi
+}
+# Walks the tree, then the strings it runs as shell (`sh -c`, `eval`) to a depth of 3, each parsed again. A string
+# that doesn't parse, or sits deeper, is dynamic.
+tamper_dyn=0
+printf '%s' "$cmd_all" | grep -q disableAllHooks && tamper_dyn=1
+tamper_nl=$(printf '\n_')
+tamper_nl=${tamper_nl%_}
+pending=
+depth=0
+cur=$tree
+while [ -n "$cur" ]; do
+	# One jq run per tree: its first line is the verdict (block, dyn, pass, or bad for something that is no tree), and
+	# the rest the message of a block or the strings the command runs as shell, one JSON string per line.
+	res=$(printf '%s' "$cur" | jq -r --arg prot "$prot_re" "$tamper_jq") || unreadable "command syntax tree"
+	verdict=${res%%"$tamper_nl"*}
+	rest=
+	case $res in *"$tamper_nl"*) rest=${res#*"$tamper_nl"} ;; esac
+	case $verdict in
+	block)
+		echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names $rest." >&2
+		exit 2
+		;;
+	dyn) tamper_dyn=1 ;;
+	pass) ;;
+	bad)
+		# Only a string run as shell can fail to make a tree: the command's own parse was checked above.
+		[ "$depth" != 0 ] || unreadable "command syntax tree"
+		tamper_dyn=1
+		;;
+	*) unreadable "command syntax tree" ;;
+	esac
+	if [ "$verdict" != bad ] && [ -n "$rest" ]; then
+		nested=$(printf '%s\n' "$rest" | sed "s/^/$((depth + 1)) /")
+		pending=${pending:+$pending$tamper_nl}$nested
+	fi
+	cur=
+	while [ -n "$pending" ] && [ -z "$cur" ]; do
+		case $pending in
+		*"$tamper_nl"*)
+			item=${pending%%"$tamper_nl"*}
+			pending=${pending#*"$tamper_nl"}
+			;;
+		*)
+			item=$pending
+			pending=
+			;;
+		esac
+		depth=${item%% *}
+		if [ "$depth" -gt 3 ]; then
+			tamper_dyn=1
+			continue
+		fi
+		text=$(printf '%s' "${item#* }" | jq -r '.') || unreadable "command syntax tree"
+		if ! cur=$(printf '%s' "$text" | "$shfmt" -ln bash --to-json 2>/dev/null) || [ -z "$cur" ]; then
+			tamper_dyn=1
+			cur=
+		fi
+	done
+done
+[ "$tamper_dyn" = 0 ] || text_tamper
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then
 	push_cmd=$words

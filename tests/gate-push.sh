@@ -3,9 +3,11 @@
 # (claude-ship #11, #13), and a pushing command may contain only the push (#14, #25).
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tests/lib/shfmt.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home"
+link_shfmt "$tmp/home"
 printf '#!/bin/sh\necho true\n' >"$tmp/bin/gh"
 chmod +x "$tmp/bin/gh"
 export HOME="$tmp/home"
