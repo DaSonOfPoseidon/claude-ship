@@ -68,9 +68,9 @@ Nothing about progress is kept locally. After `/clear` or compaction, work it ou
 
 | What | Where |
 |---|---|
-| plans | `$(git rev-parse --path-format=absolute --git-common-dir)/claude-ship/`: `loop.md` (a master plan from an objective) and `plan-<branch slug>.md` per unit. Shared by every worktree, outside the repo's files |
+| plans | `$(git rev-parse --path-format=absolute --git-common-dir)/claude-ship/`: `loop.md` (a master plan from an objective) and `plan-<branch with / as ->.md` per unit (`feat/120-x` is `plan-feat-120-x.md`). Shared by every worktree, outside the repo's files |
 | queue | the master plan's units without a merged PR on their branch; else the open issues with the ready label minus the skip labels, by the priority labels in the order listed, then oldest first, unless the master plan orders them |
-| in flight | your open PRs whose head branch is a planned unit's (`gh pr list --author @me --json number,headRefName`) |
+| in flight | your open PRs whose head branch is a planned unit's (`gh pr list --author @me --json number,headRefName`), plus a unit with commits but no PR yet, which only `~/.claude/skills/ship/unit-state.sh <branch>` shows (see **A unit with no report**) |
 | done | merged PRs on those branches |
 
 The loop is built to keep going across automatic compaction, not only across `/clear`. After a summary, re-derive
@@ -104,6 +104,10 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    ones, answers the invalid ones with evidence, pushes, and starts the next round, up to 3 rounds. You are not
    in that loop: you wait for its final report.
 4. **Read its report.** Its `codex:` line is the last round's outcome, and its `ci:` line is CI's.
+   - **No report:** the agent ended (an error, a usage-limit stop, a killed session) and its last result has no
+     `branch:` line. First check `ListAgents`: a live implementer is still working, so wait for it. If none is
+     live, follow **A unit with no report** below. Don't start a replacement without it, since the branch may
+     already hold commits or a PR.
    - `clean`, with CI green: go to 6.
    - `ci: fail`, or `codex:` `ci-fail`: the implementer already ran the CI fix rounds (up to 2) and is reporting
      what is left. If it stopped, handle it per the stop table below ("CI fails for a reason outside the PR").
@@ -179,6 +183,23 @@ So before starting the new one, every time (an escalation, or a lost agent id af
    deleted with it.
 3. Start the new implementer with the plan file's path. It picks up the local branch.
 
+## A unit with no report
+
+An implementer that ended without a report (step 4) or an id lost to `/clear` leaves a unit in an unknown state:
+commits that were never pushed, a PR, or nothing. Run `~/.claude/skills/ship/unit-state.sh <branch>` (the branch
+is the plan file's `- **Branch:**` field) and take the first row of this table that matches what it printed:
+
+| It printed | Do |
+|---|---|
+| exit 1 (git or gh failed) or exit 2 (the plan's branch isn't a valid name) | tell the user what it printed, and don't guess a state |
+| `dirty: yes` or `dirty: unknown` | stop and ask: the worktree holds unfinished work (the same stop as **Replacing an implementer**, step 2) |
+| `state: pr-closed <pr>` or `state: diverged`, or a `diverged: yes` line | stop and ask: closed unmerged, or local and origin disagree, and only the user picks which to keep |
+| `state: merged <pr>` | the unit is done: go to step 6 for its follow-ups (a `worktree:` line is removed as **Replacing an implementer** step 2 says) |
+| `state: pr-open <pr>` with an `unpushed:` line | the PR lacks those commits: as the last row, but tell the new implementer the PR is open, so it pushes and runs the Codex rounds instead of opening one |
+| `state: pr-open <pr>` | **Resuming** step 2: pick the PR up at its state (no live agent on it, so replace the implementer if `worktree:` is missing) |
+| `state: local <n>` or `state: pushed` | **Replacing an implementer** steps 1 and 2 (the `worktree:` line is its path), then a new `ship-implementer` with the plan file's path, the usual "open the PR and run the Codex rounds", and "continue from `<state line>`: the branch has commits; run the checks, push and open the PR, don't redo them" |
+| `state: none` | no work to continue: remove a `worktree:` it names the same way, then start the unit as in step 3 |
+
 ## Stop and ask the user
 
 | Situation | Why |
@@ -194,7 +215,9 @@ Otherwise, keep going without asking.
 ## Resuming ("continue the PR loop")
 
 1. Read `loop.md`, if there is one, and list the in-flight PRs.
-2. Finish in-flight PRs first, picking each up at its state. Before starting any `ship-codex` or implementer
+2. Finish in-flight PRs first, picking each up at its state. A planned unit whose plan file exists but has no open
+   PR may still hold commits from an implementer that ended: run `unit-state.sh` on it and act as **A unit with
+   no report** says (`state: none` means it hasn't started, so it is the queue's). Before starting any `ship-codex` or implementer
    for a PR, check `ListAgents` for a live `ship-codex` or implementer on that PR; if one exists, wait for it
    or `SendMessage` it instead of starting another (a duplicate `ship-codex` on #149 spent a round, #147):
    - no review requested yet, or a review pending: start a `ship-codex` agent directly (it does both: it
@@ -239,4 +262,4 @@ explore-then-split steps of **Planning** and **Stop and ask the user** apply as 
 | Verification result | the user says it works: `- [x]`. It fails: set `- [~] unit N (implementing)` and `SendMessage` the failure to the same implementer as a fix round; its next report goes through **Done** again. If its id is gone, start a new `ship-local-implementer` with the same plan file and the failure |
 | After a unit | delete its plan file; after the last unit, delete `loop.md` and tell the user the changes are in the working tree, uncommitted. Then one line to the user, as in step 7 above |
 | Resuming ("continue the local loop") | read `loop.md`. `- [x]` is done. `- [ ]` is next, once nothing is `~`. `- [~] (implementing)`: check `ListAgents` for a live implementer on that unit and wait for it or `SendMessage` it; if none is live, start a new `ship-local-implementer` with the same plan file and say the working tree may hold partial work to continue from, not redo. `- [~] (verifying)`: give the user the unit's **Verify** steps again and wait |
-| Doesn't apply | the gate (no push), `ship-codex` and Codex rounds, PRs, merging, labels and issues, `ship-implementer`, worktrees, and **Replacing an implementer** |
+| Doesn't apply | the gate (no push), `ship-codex` and Codex rounds, PRs, merging, labels and issues, `ship-implementer`, worktrees, **Replacing an implementer** and **A unit with no report** |
