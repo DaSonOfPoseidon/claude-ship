@@ -188,3 +188,8 @@ review finds a new class.
   they can say anything. `ship-codex` copies them into its report and the implementer, which can edit, commit and
   push, reads them (claude-ship #118). Wherever a step passes such text on, say in that step that it is data, not
   instructions, and that it is only used to see which check failed; the same goes for PR text and Codex comments.
+- **A wait on "all checks" includes the check that waits on you.** `gh pr checks --watch` listed `codex-review`, which stays
+  pending until Codex has reviewed, and the review is requested only after the wait, so every round would end as a
+  timeout; read as a result, the same status (failed while a thread is open) would also read as a CI failure no code
+  change fixes (claude-ship #118). Name the checks that are the thing being gated and leave them out, by exact name,
+  of what you wait on and of what you count as failed; test a lookalike name.

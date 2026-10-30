@@ -16,10 +16,15 @@ case "\$*" in
 		cat "$tmp/checks.err" >&2
 		exit 1
 	fi
-	cat "$tmp/checks.json"
+	# the n-th call serves checks.<n>.json when there is one (a run that settles over time), else checks.json
+	n=\$(( \$(cat "$tmp/n" 2>/dev/null || echo 0) + 1 ))
+	echo \$n >"$tmp/n"
+	f="$tmp/checks.\$n.json"
+	[ -f "\$f" ] || f="$tmp/checks.json"
+	cat "\$f"
 	# gh exits non-zero when a check failed (1) or is pending (8): that is not an error
-	grep -q '"bucket": *"fail"' "$tmp/checks.json" && exit 1
-	grep -q '"bucket": *"pending"' "$tmp/checks.json" && exit 8
+	grep -q '"bucket": *"fail"' "\$f" && exit 1
+	grep -q '"bucket": *"pending"' "\$f" && exit 8
 	exit 0
 	;;
 'run view 100 -R o/r --job 200 --log-failed')
@@ -38,7 +43,8 @@ tab=$(printf '\t')
 # run <args>...: runs the script with the fake gh; sets out (stdout) and rc.
 run() {
 	: >"$tmp/calls"
-	out=$(PATH=$tmp/bin:$PATH sh "$root/skills/ship/ci-failures.sh" "$@" 2>"$tmp/stderr")
+	rm -f "$tmp/n"
+	out=$(CI_WAIT_INTERVAL=0 CI_WAIT_POLLS=3 PATH=$tmp/bin:$PATH sh "$root/skills/ship/ci-failures.sh" "$@" 2>"$tmp/stderr")
 	rc=$?
 }
 
@@ -166,6 +172,61 @@ printf '[%s]\n' "$pass" >"$tmp/checks.json"
 run 1
 want 'default repo' 0 'no failed checks'
 called 'default repo' 'repo view --json nameWithOwner --jq .nameWithOwner'
+
+# The codex-review status is the review, not CI: it is pending until Codex has reviewed (which waits for the CI
+# read) and failed while a Codex thread is open, so it never counts as a failed or pending check.
+cr_fail='{"name":"codex-review","state":"FAILURE","bucket":"fail","link":"","workflow":""}'
+cr_pend='{"name":"codex-review","state":"PENDING","bucket":"pending","link":"","workflow":""}'
+printf '[%s,%s]\n' "$cr_fail" "$pass" >"$tmp/checks.json"
+run 1 o/r
+want 'codex-review failed is not a CI failure' 0 'no failed checks'
+printf '[%s,%s]\n' "$cr_pend" "$pass" >"$tmp/checks.json"
+run 1 o/r
+want 'codex-review pending is not pending CI' 0 'no failed checks'
+printf '[%s,%s]\n' "$cr_fail" "$failext" >"$tmp/checks.json"
+run 1 o/r
+want 'codex-review failed beside a real failure' 0 'deploy/preview  https://ci.example.com/build/7'
+# Only the exact name is the review: a lookalike is a check.
+printf '[{"name":"codex-review-lint","state":"FAILURE","bucket":"fail","link":"https://ci.example.com/y","workflow":""}]\n' >"$tmp/checks.json"
+run 1 o/r
+want 'a check named like the review' 0 'codex-review-lint  https://ci.example.com/y'
+
+# --wait polls until nothing is pending (the review status aside), then prints the result.
+printf '[%s,%s]\n' "$cr_pend" "$pass" >"$tmp/checks.json"
+run 1 o/r --wait
+want '--wait with only the review pending' 0 'no failed checks'
+[ "$(grep -c 'pr checks' "$tmp/calls")" = 1 ] || { echo "FAIL: --wait polled although nothing was pending"; fail=1; }
+printf '[%s,%s]\n' "$pend" "$cr_pend" >"$tmp/checks.1.json"
+printf '[%s,%s]\n' "$pend" "$failext" >"$tmp/checks.2.json"
+printf '[%s,%s]\n' "$pass" "$failext" >"$tmp/checks.json"
+run 1 o/r --wait
+want '--wait settles on the third poll' 0 'deploy/preview  https://ci.example.com/build/7'
+[ "$(grep -c 'pr checks' "$tmp/calls")" = 3 ] || { echo "FAIL: --wait made $(grep -c 'pr checks' "$tmp/calls") polls, want 3"; fail=1; }
+rm -f "$tmp/checks.1.json" "$tmp/checks.2.json"
+# Still pending at the cap: the same result, exit 3 so a caller can tell.
+printf '[%s,%s]\n' "$pend" "$pass" >"$tmp/checks.json"
+run 1 o/r --wait
+want '--wait pending at the cap' 3 'no failed checks
+pending: 1 checks still running'
+[ "$(grep -c 'pr checks' "$tmp/calls")" = 3 ] || { echo "FAIL: --wait made $(grep -c 'pr checks' "$tmp/calls") polls, want the cap of 3"; fail=1; }
+printf '[%s,%s]\n' "$pend" "$failext" >"$tmp/checks.json"
+run 1 --wait
+want '--wait pending at the cap with a failure, default repo' 3 'deploy/preview  https://ci.example.com/build/7
+pending: 1 checks still running'
+# Without --wait it never polls and never exits 3.
+run 1 o/r
+want 'no --wait, pending' 0 'deploy/preview  https://ci.example.com/build/7
+pending: 1 checks still running'
+[ "$(grep -c 'pr checks' "$tmp/calls")" = 1 ] || { echo "FAIL: polled without --wait"; fail=1; }
+# A gh failure while waiting is exit 1, not a timeout.
+printf 'HTTP 502: Bad Gateway\n' >"$tmp/checks.err"
+run 1 o/r --wait
+want '--wait gh failure' 1 ''
+rm -f "$tmp/checks.err"
+run 1 o/r --nowait
+want 'unknown option' 2 ''
+run 1 o/r --wait extra
+want 'extra argument' 2 ''
 
 # Usage errors exit 2, never 0 or 1.
 run

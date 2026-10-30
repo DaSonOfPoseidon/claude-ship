@@ -66,13 +66,22 @@ exit status would turn an empty result into "no findings".
 
 ## `skills/ship/ci-failures.sh`
 
-Sends CI failures to the implementer instead of the main session (#118). `ci-failures.sh <pr> [owner/repo]` reads
-`gh pr checks --json name,state,bucket,link,workflow` and prints one block per check whose `bucket` is `fail`:
+Sends CI failures to the implementer instead of the main session (#118). `ci-failures.sh <pr> [owner/repo] [--wait]`
+reads `gh pr checks --json name,state,bucket,link,workflow` and prints one block per check whose `bucket` is `fail`:
 `<workflow> / <name>  <link>`, and for a GitHub Actions job (`/actions/runs/<run>/job/<job>`, both ids numbers) the
 last 60 lines of `gh run view <run> --job <job> --log-failed`, indented, with the job and step columns, timestamps,
 colours and carriage returns removed. Any other failed check (an external status, or a link whose ids aren't
 numbers) is its name and link only, and its link is never passed to `gh`. Then `pending: <n> checks still running`
 if any check is pending, and `no failed checks` when none failed (also when the PR has no checks at all).
+
+- **The `codex-review` status is not CI.** `gh pr checks` lists it with the other checks, but it is pending until
+  Codex has reviewed and failed while a Codex thread is open. Codex is requested only after the CI read, so waiting
+  on it would end every round as a timeout, and a round-2 head with open threads would read as a CI failure no code
+  change fixes. It is ignored by exact name (a `codex-review-lint` check still counts), as failed and as pending.
+- **`--wait`** polls (`CI_WAIT_POLLS`, 18, every `CI_WAIT_INTERVAL` seconds, 30: 9 minutes plus the calls, under the
+  agent's 10-minute Bash timeout) until nothing is pending, then prints as usual. At the cap it prints the same
+  result and exits 3, so the caller tells "still running" from "settled". `gh pr checks --watch` isn't used because
+  it can't exclude a check. The two variables are for the tests; the hook allows no environment for this script.
 
 - **`gh pr checks` exits non-zero on a failure (1) or a pending check (8): that is the result, not an error.** The
   script reads its output instead, and exits 1 only when that isn't a JSON list and isn't gh's "no checks
@@ -82,10 +91,12 @@ if any check is pending, and `no failed checks` when none failed (also when the 
   control characters first, so none can add a line or an escape sequence. The fields are joined with the unit
   separator, not a tab: `read` drops a leading tab, so an external status's empty workflow would shift the name
   into its place.
-- **Who calls it.** `ship-codex` runs it once `gh pr checks --watch` has returned, before requesting Codex. Failed
-  checks in its output end the round as `outcome: ci-fail`, with the output as a `ci-failures:` block for the
-  implementer (`agents/ship-codex.md`); the implementer also runs it itself when a review is clean but CI is red.
-  The orchestrator runs it only in the fallback flow. `hooks/codex-bash.sh` allows it with one PR number and an optional `owner/repo`.
+- **Who calls it.** `ship-codex` runs it with `--wait` before requesting Codex (once `gh pr view` shows the pushed
+  head: the API lags a push, and the CI read would be the old head's), and without it after the review to fill `ci:`.
+  Failed checks in the first call end the round as `outcome: ci-fail`, with the output as a `ci-failures:` block
+  for the implementer (`agents/ship-codex.md`); the implementer also runs it itself when a review is clean but CI is
+  red. The orchestrator runs it only in the fallback flow. `hooks/codex-bash.sh` allows it with a PR number, an
+  optional `owner/repo`, and `--wait` after it.
 
 ## `skills/ship/codex-round.sh`
 
@@ -316,9 +327,9 @@ hook decides, not what Claude Code does with it.
   written with `~/` exactly (not `$HOME`, an absolute path, `./`, `..` or `env`/`sh`), or `gh`, or the one
   environment prefix below.
 - **Allowed, as one plain command.** `codex-round.sh <pr> [owner/repo]`, `codex-request.sh <pr> <owner/repo>
-  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `ci-failures.sh <pr> [owner/repo]`, `codex-triage.sh <pr> <file>`, and
-  `gh pr view|checks <pr> ...` (so `gh pr checks <pr> -R <slug> --watch --interval 30`, which the agent uses to wait for CI, is
-  allowed with no change). `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
+  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `ci-failures.sh <pr> [owner/repo [--wait]]`, `codex-triage.sh <pr> <file>`, and
+  `gh pr view|checks <pr> ...`. `--wait` is the one option `ci-failures.sh` takes, and only as its third word,
+  after the repository (`ci-failures.sh 12 --wait` and `ci-failures.sh 12 o/r --wait extra` deny). `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
   with no part starting with `-`, no part that is `.`, and no `..` anywhere, a sha is 40 lowercase hex characters. Nothing else may precede or follow: any other variable
   (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, and `CODEX_WAIT_SECS` only before the wait.
 - **A poll is denied with a hint.** The agent runs `CODEX_WAIT_SECS=300 codex-wait.sh <pr>` in the foreground,
