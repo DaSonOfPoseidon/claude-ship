@@ -14,8 +14,10 @@ it; `HEAD_SHA` checks another commit, to test against past reviews.
 | State | When |
 |---|---|
 | `success` | Codex completed a review of the head commit after it was pushed, and every Codex review thread is resolved |
-| `failure` | a Codex thread is unresolved, or Codex's review failed |
+| `failure` | a Codex thread is unresolved, or Codex's review failed (on a fork PR, with a message that a retry won't help) |
 | `pending` | no completed review of the head yet, or the review stalled, was never acknowledged, or can't be tied to a request |
+
+On a fork PR the owner can also set `success` without a Codex review (below).
 
 Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
 
@@ -60,6 +62,27 @@ read only for a request this old (the list of requests shows a 👀 count, and t
 0), so a normal run makes no extra call. A stall (above) keeps its own message when both apply, and a retry
 that is only a minute old is waiting, not unacknowledged. The output contract of the action is unchanged: the
 state is still `pending`.
+
+**Fork PRs (#126).** Codex's review of a fork PR fails upstream (openai/codex#47577), and a fork PR's own
+`pull_request` run gets a read-only token that can't set a status, so the workflow skips that run (below). The
+script treats a PR as a fork when its head repository differs from the base (names compare without regard to
+case) or is gone (a deleted fork, whose push activity can't be read either). Same-repo PRs behave exactly as above
+and never read approval comments. For a fork PR the order is:
+
+1. an unresolved Codex thread fails it, as always: an approval doesn't override findings;
+2. an owner approval makes it `success`: "Owner approved <sha> for merge (fork PR)";
+3. a failed Codex review fails it with "Codex can't review fork PRs (openai/codex#47577); owner: comment 'Okay to
+   merge' to approve <sha>", since another `@codex review` won't help;
+4. otherwise the rules above apply unchanged (a clean review of the head is still `success`).
+
+An approval is a comment whose whole body, after trimming whitespace and one trailing `.` or `!` and ignoring
+case, is one of `Okay to merge`, `Approved for merge`, `Ready for prod` or `Owner approved` (the list is
+`approval_phrases` at the top of the script). It is short and deliberate, and because the whole comment must match
+it doesn't fire from conversation ("Okay to merge after CI" doesn't count). The comment must come from
+`author_association == "OWNER"` and a user that isn't a `Bot`, and its `created_at` must be strictly after the
+head's push time (the same rule as a review), so an approval of an older head doesn't carry over to a new push.
+`created_at`, not `updated_at`: editing a comment doesn't move it past a push. Members and collaborators can't
+approve, the same trust line as `@codex review`.
 
 **Errors.** Each GitHub call is its own assignment, so `set -e` stops on a failed call; reading a pipeline's last
 exit status would turn an empty result into "no findings".
@@ -437,6 +460,14 @@ that went stale). Triggers and permissions stay in the short caller (`skills/shi
 since a called workflow can't set triggers or exceed its caller's permissions. This repo's own caller uses the
 local path (`./.github/workflows/codex-status.yml`), so a PR exercises the new file before `v1` moves.
 
+The job skips a `pull_request` run whose head is in another repository: a fork PR's token is read-only, so that run
+could only fail with a 403 and a red check (#126). A fork PR's status comes from the other triggers instead, which
+run the default branch's workflow with the caller's permissions: Codex's own comments and reviews, a dispatch run,
+and an `issue_comment` whose `author_association` is `OWNER`, so the owner's approval phrase takes effect at once.
+That `if:` is only a filter (anyone can comment); the script checks who and when again. The template's triggers
+already include `issue_comment`, so callers need no change; they get this when the owner moves `v1`. No new
+permission is needed, and there is no `pull_request_target`.
+
 Inside a called workflow `github.event` is the caller's event, so the PR number expressions work as before. The
 `inputs` context there is the workflow's own `workflow_call` inputs, not the caller's dispatch inputs, so a
 dispatch run's number is read from `github.event.inputs.pr`. The action step stays `@v1` rather than `./`: a
@@ -447,7 +478,7 @@ The check run is named `codex-review / codex-status` (caller job / called job). 
 commit *status* the script sets is unchanged, and it is what branch protection reads.
 
 `v1` moves (owner only) when claude-ship releases, which changes the check in every caller without a PR there. A
-PR that changes the ref needs write access; fork PRs get a read-only token, which can't set statuses.
+PR that changes the ref needs write access.
 
 A repo's first PR (the one that adds the workflow) can't rely on the status: Codex reports a clean review by
 editing a comment, which runs the default branch's workflow, and that branch doesn't have it yet. Require

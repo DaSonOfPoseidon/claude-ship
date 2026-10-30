@@ -8,9 +8,6 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 sha=7ca1cc33ba5b464f6d80256626fb4c96f1ddb721
-cat >"$tmp/pr.json" <<EOT
-{"head":{"sha":"$sha","ref":"b","repo":{"full_name":"o/r"}}}
-EOT
 cat >"$tmp/bin/gh" <<EOF
 #!/bin/sh
 expr=
@@ -20,7 +17,11 @@ for a in "\$@"; do
 	prev=\$a
 done
 case "\$*" in
-*'graphql'*) exit 0 ;;
+*'graphql'*)
+	# No unresolved threads unless a test writes threads.json (the response's shape, not the script's filter).
+	[ -f "$tmp/threads.json" ] || exit 0
+	f=threads
+	;;
 *'/activity'*) f=activity ;;
 *'/issues/comments/'*'/reactions'*)
 	# Only asked for when a request is old and nothing else shows Codex started: a missing file is a test failure.
@@ -57,10 +58,16 @@ check() {
 	esac
 }
 
+# HEAD_REPO is the PR head's repository ("null" for a deleted fork), APPROVALS lines "<time>|<association>|<user
+# type>|<body>" of extra comments (the owner's approval phrase on a fork PR).
+HEAD_REPO=o/r
+APPROVALS=
+
 # expect <state> <label> <commit cell> <pushed at> <completed at> <requests> <markers>
 # requests: lines "<time> <author_association>"; markers: lines "receipt <time>" or "review <time>", the
 # earlier completions Codex left behind (a clean review's receipt comment, a review with findings).
 expect() {
+	jq -n --arg s "$sha" --arg h "$HEAD_REPO" '{head:{sha:$s,ref:"b",repo:(if $h == "null" then null else {full_name:$h} end)}}' >"$tmp/pr.json"
 	jq -n --arg t "$4" --arg s "$sha" \
 		'[{activity_type:"push",after:$s,timestamp:$t}]' >"$tmp/activity.json"
 	printf '%s\n' "$7" | jq -Rn '[inputs | split(" ") | select(.[0] == "review")
@@ -75,6 +82,8 @@ expect() {
 		printf '%s\n' "$7" | jq -Rn '[inputs | split(" ") | select(.[0] == "receipt")
 			| {user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},author_association:"NONE",created_at:.[1],
 			body:"<!-- codex-review-receipt:v1 -->"}]'
+		printf '%s\n' "$APPROVALS" | jq -Rn '[inputs | split("|") | select(length == 4)
+			| {id:888,user:{login:"u",type:.[2]},author_association:.[1],created_at:.[0],body:.[3],reactions:{eyes:0}}]'
 		# STATE is the summary's Code Review state (none by default), STATE_SHA the commit it names (null by
 		# default) and AGE how many seconds ago it was edited.
 		jq -n --arg r "$row" --arg st "$STATE" --arg ss "${STATE_SHA:-}" --argjson age "$AGE" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
@@ -262,5 +271,68 @@ stall running 2000 "$running" with_msg 'stalled' expect pending 'stalled outrank
 AGE=7200
 expect success 'finished beats unacknowledged' '`7ca1cc3`' "$pushed" "$(ago 100)" "$(ago 360) OWNER" ''
 AGE=0
+
+# claude-ship #126: fork PRs. Codex can't review them (openai/codex#47577), so a failed review says a retry won't
+# help, and the repo owner can approve the head by commenting a set phrase after its push.
+# fork <head repo> <approval lines> expect …: runs one case against that head repository and those comments.
+fork() {
+	HEAD_REPO=$1
+	APPROVALS=$2
+	shift 2
+	"$@"
+	HEAD_REPO=o/r
+	APPROVALS=
+}
+failed='| 📝 **Code Review** | ❌ **Failed** <relative-time datetime="2026-10-21T15:41:21Z">x</relative-time> | `7ca1cc3` | Manual request |'
+after='2026-10-21T15:30:00Z'
+before='2026-10-21T15:20:00Z'
+unresolved='{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"chatgpt-codex-connector"}}]}}]}}}}}'
+ROW=$failed
+# 1. A fork PR whose review failed and with no approval: a retry won't help, and the owner is told how to approve.
+with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'fork, failed review' '`7ca1cc3`' $p $c '' ''
+# The approval phrase is in the message, and the description fits GitHub's limit (check() enforces 140).
+with_msg "comment 'Okay to merge' to approve 7ca1cc3" fork f/r '' expect failure 'fork, failed review, hint' '`7ca1cc3`' $p $c '' ''
+# 2. The owner's phrase after the push approves it.
+with_msg 'Owner approved 7ca1cc3 for merge (fork PR)' fork f/r "$after|OWNER|User|Okay to merge" expect success 'fork, owner approval' '`7ca1cc3`' $p $c '' ''
+# ...with no Codex row at all, since Codex never reviews these.
+ROW='| 📝 **Code Review** | ⏳ **Running** | `0b996f7` | Manual request |'
+fork f/r "$after|OWNER|User|Okay to merge" expect success 'fork, approval, no review of the head' '`7ca1cc3`' $p $c '' ''
+ROW=$failed
+# 3. An approval from before the push doesn't carry over to the new head.
+with_msg "Codex can't review fork PRs" fork f/r "$before|OWNER|User|Okay to merge" expect failure 'fork, approval before push' '`7ca1cc3`' $p $c '' ''
+# ...and one in the push's own second can't be told apart from before it.
+with_msg "Codex can't review fork PRs" fork f/r "$p|OWNER|User|Okay to merge" expect failure 'fork, approval ties push' '`7ca1cc3`' $p $c '' ''
+# 4. Anyone but the owner is ignored, whatever the association.
+for a in COLLABORATOR MEMBER CONTRIBUTOR NONE; do
+	with_msg "Codex can't review fork PRs" fork f/r "$after|$a|User|Okay to merge" expect failure "fork, $a approval" '`7ca1cc3`' $p $c '' ''
+done
+# 5. The whole comment must be the phrase; case, whitespace and one trailing . or ! don't matter.
+with_msg "Codex can't review fork PRs" fork f/r "$after|OWNER|User|Okay to merge after CI" expect failure 'fork, phrase inside a comment' '`7ca1cc3`' $p $c '' ''
+with_msg "Codex can't review fork PRs" fork f/r "$after|OWNER|User|Okay to merge!!" expect failure 'fork, two trailing marks' '`7ca1cc3`' $p $c '' ''
+with_msg "Codex can't review fork PRs" fork f/r "$after|OWNER|User|Not okay to merge" expect failure 'fork, negated phrase' '`7ca1cc3`' $p $c '' ''
+for b in 'ready for prod!' 'READY FOR PROD.' '  Approved for merge  ' 'Owner approved' 'okay TO merge!'; do
+	fork f/r "$after|OWNER|User|$b" expect success "fork, phrase variant: $b" '`7ca1cc3`' $p $c '' ''
+done
+# 6. A bot with the owner's association (an app acting as the owner) is not the owner.
+with_msg "Codex can't review fork PRs" fork f/r "$after|OWNER|Bot|Okay to merge" expect failure 'fork, bot approval' '`7ca1cc3`' $p $c '' ''
+# 7. A same-repo PR ignores the phrase: the old failure text, not success.
+with_msg 'ask for another' fork o/r "$after|OWNER|User|Okay to merge" expect failure 'same repo, owner approval ignored' '`7ca1cc3`' $p $c '' ''
+ROW='| 📝 **Code Review** | ⏳ **Running** | `0b996f7` | Manual request |'
+with_msg 'Waiting for Codex' fork o/r "$after|OWNER|User|Okay to merge" expect pending 'same repo, approval, no review' '`7ca1cc3`' $p $c '' ''
+ROW=$failed
+# The repository names compare without regard to case.
+with_msg 'ask for another' fork O/R "$after|OWNER|User|Okay to merge" expect failure 'same repo, other case' '`7ca1cc3`' $p $c '' ''
+# 8. Unresolved Codex threads still fail a fork PR, approved or not.
+echo "$unresolved" >"$tmp/threads.json"
+with_msg 'unresolved Codex thread' fork f/r "$after|OWNER|User|Okay to merge" expect failure 'fork, approval and findings' '`7ca1cc3`' $p $c '' ''
+rm -f "$tmp/threads.json"
+# 9. A fork PR whose review completed clean is a success as before, with no approval.
+ROW=
+with_msg 'Codex reviewed 7ca1cc3 with no findings' fork f/r '' expect success 'fork, clean review' '`7ca1cc3`' $p $c '' ''
+# 10. A deleted fork (no head repository) counts as a fork, and has no push record to compare an approval with.
+ROW=$failed
+with_msg "Codex can't review fork PRs" fork null '' expect failure 'null head repo' '`7ca1cc3`' $p $c '' ''
+with_msg "Codex can't review fork PRs" fork null "$after|OWNER|User|Okay to merge" expect failure 'null head repo, approval' '`7ca1cc3`' $p $c '' ''
+ROW=
 
 exit $fail

@@ -17,14 +17,18 @@ on:
 
 jobs:
   codex-status:
-    # Only Codex's own comments and reviews matter; anyone can comment on a public repo.
+    # Only Codex's own comments and reviews matter; anyone can comment on a public repo. The exceptions are the
+    # owner's comments, which can approve a fork PR (scripts/codex-status.sh re-checks who and when), and
+    # same-repo `pull_request` runs: a fork PR's run gets a read-only token, so it would only fail with a 403.
     if: >-
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request_review' &&
         github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-        github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+        (github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
+          github.event.comment.author_association == 'OWNER'))
     # One run per PR at a time. A running run is never cancelled (that showed as a red check), and two runs
     # writing one status at once could let a stale read overwrite a newer result. GitHub keeps only the newest
     # queued run, and the last run to start reads the latest state. A queued run replaced before it starts still
@@ -39,8 +43,9 @@ jobs:
     steps:
       # claude-ship's v1 tag decides, not the calling repo's files; it moves (owner only) on release. Pinned
       # to `@v1` rather than `./`: a called workflow has no checkout of claude-ship, and `./` would mean the
-      # caller's repo. Changing this ref needs write access; fork PRs get a read-only token, which can't set
-      # statuses.
+      # caller's repo. Changing this ref needs write access. A fork PR's own `pull_request` run is skipped above
+      # (its token is read-only and can't set statuses); its status comes from the `issue_comment` and dispatch
+      # runs, which run the default branch's workflow with the caller's permissions.
       - uses: DaSonOfPoseidon/claude-ship@v1
         with:
           pr: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr || inputs.pr }}
