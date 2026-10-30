@@ -192,6 +192,36 @@ printf '%s\n' "$gate" | jq '.hooks.PreToolUse[0].hooks[0].timeout = 600' >"$star
 run_case no-hint-warning
 expect no-hint-warning 0 1
 
+# The PR loop needs CLAUDE_CODE_FORK_SUBAGENT=0 (claude-ship #160): only the string "0" counts; anything else
+# gets an info line, with the exit and the warning count unchanged.
+fork_info='"CLAUDE_CODE_FORK_SUBAGENT": "0"'
+gate_with '.'
+run_case fork-missing
+expect fork-missing 0 0
+has fork-missing "$fork_info"
+has fork-missing "claude-ship #160"
+gate_with '.env = {"CLAUDE_CODE_FORK_SUBAGENT": "0"}'
+run_case fork-set
+expect fork-set 0 0
+grep -qF 'CLAUDE_CODE_FORK_SUBAGENT' "$tmp/out" && {
+	echo "FAIL: fork-set: the setting is there but the output mentions it"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+# fork_case <name> <jq filter>: a settings file that doesn't set the string "0".
+fork_case() {
+	gate_with "$2"
+	run_case "$1"
+	expect "$1" 0 0
+	has "$1" "$fork_info"
+}
+fork_case fork-number '.env = {"CLAUDE_CODE_FORK_SUBAGENT": 0}'
+fork_case fork-one '.env = {"CLAUDE_CODE_FORK_SUBAGENT": "1"}'
+fork_case fork-empty '.env = {"CLAUDE_CODE_FORK_SUBAGENT": ""}'
+fork_case fork-null '.env = {"CLAUDE_CODE_FORK_SUBAGENT": null}'
+fork_case fork-env-string '.env = "oops"'
+fork_case fork-env-array '.env = []'
+
 # Without jq the registration can't be read, so the check fails (the gate needs jq too).
 nojq="$tmp/nojq-bin"
 mkdir -p "$nojq"

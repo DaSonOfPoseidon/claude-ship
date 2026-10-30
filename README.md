@@ -148,6 +148,16 @@ For orchestrated mode, also register the hint hook:
 {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "~/.claude/hooks/orchestrate-hint.sh"}]}]}}
 ```
 
+The PR loop (orchestrated mode) also needs `CLAUDE_CODE_FORK_SUBAGENT` set to `"0"` in the settings' `env`. Under
+Claude Code's fork mode a subagent's Agent call returns at once, so the implementer doesn't get `ship-codex`'s
+report as its result (claude-ship #160). Other users of the gate don't need it.
+
+```json
+{"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}}
+```
+
+`./install.sh` prints an info line when the setting is missing.
+
 After a PR merges, run `./install.sh` again to deploy it. The installed files (the ship agents included), the gate's state in
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because
 changes to it go through the same review as any other repo.
