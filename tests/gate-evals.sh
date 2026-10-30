@@ -31,6 +31,7 @@ case \$p in
 esac
 [ -e "\$f" ] || exit 1
 cat "\$f"
+[ ! -e "\$f.rc" ] || exit \$(cat "\$f.rc")
 EOT
 chmod +x "$tmp/bin/claude"
 cp "$tmp/bin/claude" "$tmp/claude.main"
@@ -125,6 +126,22 @@ mkcase garbage code "$want_x5"
 printf 'not json' >"$tmp/canned/garbage.find.json"
 mkcase verr code "$want_x5"
 finder verr 0.5 "[$(f x.sh 5 P2)]"
+# Failed or unreadable runs were still paid for: their error rows keep the cost (a `<file>.rc` is the fake's exit status).
+mkcase errcost code "$want_x5"
+finder errcost 0.75 "[$(f x.sh 5 P2)]"
+echo 1 >"$tmp/canned/errcost.find.json.rc"
+mkcase timeout code "$want_x5"
+finder timeout 0.5 '[]'
+echo 124 >"$tmp/canned/timeout.find.json.rc"
+mkcase garbagecost code "$want_x5"
+echo '{"total_cost_usd":0.25,"structured_output":{}}' >"$tmp/canned/garbagecost.find.json"
+mkcase vcost code "$want_x5"
+finder vcost 0.5 "[$(f x.sh 5 P2)]"
+verifier vcost 0.125 '[{"index":0,"verdict":"confirmed","reason":"r"}]'
+echo 1 >"$tmp/canned/vcost.verify.json.rc"
+mkcase vgarbage code "$want_x5"
+finder vgarbage 0.5 "[$(f x.sh 5 P2)]"
+echo '{"total_cost_usd":0.0625,"structured_output":{}}' >"$tmp/canned/vgarbage.verify.json"
 mkcase badpatch code "$want_x5"
 printf 'diff --git a/nope b/nope\n--- a/nope\n+++ b/nope\n@@ -1 +1 @@\n-a\n+b\n' >"$tmp/cases/badpatch/change.diff"
 mkcase nobase code "$want_x5"
@@ -203,6 +220,22 @@ errored err finder "failed (exit 1)"
 errored garbage finder "findings"
 errored verr verifier "failed (exit 1)"
 score verr finder "ok 1 0 0 0 0.5"
+# An error row keeps the cost of the run that failed (not the finder's cost on a verifier error), setup errors cost 0.
+errored errcost finder "failed (exit 1)"
+errored timeout finder "timed out"
+errored garbagecost finder "findings"
+errored vcost verifier "failed (exit 1)"
+errored vgarbage verifier "verdicts"
+for spec in "errcost finder 0.75" "timeout finder 0.5" "garbagecost finder 0.25" "vcost verifier 0.125" "vgarbage verifier 0.0625" \
+	"err finder 0" "badpatch setup 0"; do
+	# shellcheck disable=SC2086 # three words
+	set -- $spec
+	got=$(jq -r --arg c "$1" --arg s "$2" '.rows[] | select(.case == $c and .stage == $s) | .cost_usd' "$tmp/out.json")
+	[ "$got" = "$3" ] || {
+		echo "FAIL ($1 $2): the error row's cost is '$got', want $3"
+		fail=1
+	}
+done
 errored badpatch setup "doesn't apply"
 errored wrongkind setup "kind"
 errored badline setup "x.sh:99"
@@ -225,13 +258,15 @@ total() {
 		fail=1
 	fi
 }
-# Finder: 15 scored cases (0.5 each) and err and garbage as errors, which cost nothing and score nothing.
-total finder sonnet "17 2 0 14 9 1 4 5 7.5"
+# Finder: 17 scored cases at 0.5 and five errors (err and garbage cost nothing and score nothing; errcost 0.75, timeout
+# 0.5 and garbagecost 0.25 cost what the failed runs cost).
+total finder sonnet "22 5 0 16 11 1 4 5 10"
 total docs-check haiku "1 0 0 1 1 0 0 0 0.125"
-# Verifier: 12 runs at 0.25, two repeats of a finder that found nothing (cost 0), and verr's failed run as an error.
-total verifier haiku "15 1 0 13 7 1 5 4 3"
-if ! jq -e '.cost_usd == 10.625' "$tmp/out.json" >/dev/null; then
-	echo "FAIL: the grand total cost is $(jq .cost_usd "$tmp/out.json"), want 10.625"
+# Verifier: 12 runs at 0.25, two repeats of a finder that found nothing (cost 0), and three errors (verr 0, vcost 0.125,
+# vgarbage 0.0625).
+total verifier haiku "17 3 0 13 7 1 5 4 3.1875"
+if ! jq -e '.cost_usd == 13.3125' "$tmp/out.json" >/dev/null; then
+	echo "FAIL: the grand total cost is $(jq .cost_usd "$tmp/out.json"), want 13.3125"
 	fail=1
 fi
 
@@ -348,28 +383,72 @@ if [ -n "$(ls "$tmp/tmpdir")" ]; then
 	fail=1
 fi
 
-# An interrupted run is cleaned up too: the slow case holds the runner in its reviewer while it is terminated.
+# --prompt-dir must hold every prompt (and the lib): a missing one is a setup error before any case runs, whichever the
+# case needs, not a reviewer that runs without its instructions.
+for missing in review-prompt.md review-docs-prompt.md review-verify-prompt.md review-lib.sh; do
+	rm -rf "$tmp/hooks3"
+	mkdir "$tmp/hooks3"
+	cp "$root"/hooks/* "$tmp/hooks3/"
+	rm "$tmp/hooks3/$missing"
+	run --check --case caught --prompt-dir "$tmp/hooks3"
+	if [ "$rc" != 2 ] || ! grep -q "$missing" "$tmp/err"; then
+		echo "FAIL: --prompt-dir without $missing: exit $rc (want 2), message: $(cat "$tmp/err")"
+		fail=1
+	fi
+done
+# And the prompt builders fail on a template they can't read, so the gate blocks instead of sending a bare prompt.
+(
+	# shellcheck disable=SC1091
+	. "$root/hooks/review-lib.sh"
+	mkdir "$tmp/nohooks"
+	dir=$tmp/nohooks
+	kind=code
+	build_prompt "$tmp/p.md" && echo "FAIL: build_prompt succeeded without review-prompt.md" && exit 1
+	build_verify_prompt "$tmp/v.md" '[]' x && echo "FAIL: build_verify_prompt succeeded without review-verify-prompt.md" && exit 1
+	exit 0
+) || fail=1
+
+# An interrupted run stops its reviewer at once and cleans up: the slow case holds the runner in a reviewer that would
+# run for a minute, and a TERM has to end it and the runner within seconds, leaving no worktree or temp directory.
 mkcase slow code "$want_x5"
 cat >"$tmp/bin/claude" <<EOT
 #!/bin/sh
+echo \$\$ >"$tmp/claude.pid"
 cat >/dev/null
-sleep 2
+sleep 60
 printf '{"structured_output":{"findings":[]}}'
 EOT
 chmod +x "$tmp/bin/claude"
 TMPDIR=$tmp/tmpdir PATH=$tmp/bin:$PATH sh "$root/tests/evals/run.sh" --repo "$repo" --cases-dir "$tmp/cases" --case slow >/dev/null 2>&1 &
 pid=$!
 tries=0
-while ! ls -d "$tmp"/tmpdir/gate-evals.*/wt >/dev/null 2>&1 && [ "$tries" -lt 20 ]; do
+while [ ! -s "$tmp/claude.pid" ] && [ "$tries" -lt 30 ]; do
 	sleep 1
 	tries=$((tries + 1))
 done
-if ! ls -d "$tmp"/tmpdir/gate-evals.*/wt >/dev/null 2>&1; then
-	echo "FAIL (interrupt): the runner never made its worktree"
+if [ ! -s "$tmp/claude.pid" ]; then
+	echo "FAIL (interrupt): the reviewer never started"
 	fail=1
 fi
+start=$(date +%s)
 kill -TERM "$pid"
 wait "$pid"
+rc=$?
+took=$(($(date +%s) - start))
+if [ "$rc" != 143 ] || [ "$took" -gt 15 ]; then
+	echo "FAIL (interrupt): the runner exited $rc after $took s (want 143, within seconds)"
+	fail=1
+fi
+tries=0
+while kill -0 "$(cat "$tmp/claude.pid")" 2>/dev/null && [ "$tries" -lt 5 ]; do
+	sleep 1
+	tries=$((tries + 1))
+done
+if kill -0 "$(cat "$tmp/claude.pid")" 2>/dev/null; then
+	echo "FAIL (interrupt): the reviewer is still running"
+	kill -KILL "$(cat "$tmp/claude.pid")" 2>/dev/null
+	fail=1
+fi
 if [ "$(git -C "$repo" worktree list | wc -l)" -ne 1 ] || [ -n "$(ls "$tmp/tmpdir")" ]; then
 	echo "FAIL (interrupt): the runner left a worktree or temp directory behind"
 	git -C "$repo" worktree list

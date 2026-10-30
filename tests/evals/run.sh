@@ -102,6 +102,13 @@ repo=$(cd "$repo" && pwd)
 	exit 2
 }
 promptdir=$(cd "$promptdir" && pwd)
+# Every prompt the stages use must be there: a reviewer would otherwise run with no instructions.
+for f in review-prompt.md review-docs-prompt.md review-verify-prompt.md; do
+	[ -r "$promptdir/$f" ] || {
+		echo "run.sh: no $f in $promptdir" >&2
+		exit 2
+	}
+done
 [ -d "$cases" ] || {
 	echo "run.sh: no cases directory $cases" >&2
 	exit 2
@@ -142,9 +149,37 @@ cleanup() {
 	git -C "$repo" worktree prune >/dev/null 2>&1
 	rm -rf "$work"
 }
+# kill_tree <pid>: TERM to the process and everything below it (the case's subshell, its `timeout` and `claude`).
+kill_tree() {
+	tree=$(ps -A -o pid= -o ppid= | awk -v root="$1" '
+		{ parent[$1] = $2; ids[NR] = $1 }
+		END {
+			mark[root] = 1
+			do {
+				changed = 0
+				for (i = 1; i <= NR; i++) {
+					if (!(ids[i] in mark) && (parent[ids[i]] in mark)) { mark[ids[i]] = 1; changed = 1 }
+				}
+			} while (changed)
+			for (id in mark) print id
+		}')
+	# shellcheck disable=SC2086 # a list of pids
+	[ -z "$tree" ] || kill -TERM $tree 2>/dev/null
+}
+# A shell runs its trap only after the foreground command returns, so the case runs in the background and the runner
+# waits on it: a signal then ends the wait at once and the trap stops the case and its reviewer (whose tokens would
+# otherwise be spent to the end) before the cleanup.
+child=
+interrupted() {
+	if [ -n "$child" ]; then
+		kill_tree "$child"
+		wait "$child" 2>/dev/null
+	fi
+	exit "$1"
+}
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'interrupted 130' INT
+trap 'interrupted 143' TERM
 
 # The gate's own functions, schemas and prompts, from --prompt-dir. Cost rows go to a temporary file.
 costs=$work/review-costs.jsonl
@@ -186,8 +221,11 @@ run_case() (
 			'{case: $case, source: $src, stage: $stage, model: (if $model == "" then null else $model end), status: $status,
 			  error: (if $error == "" then null else $error end), cost_usd: $cost} + ($score // {})' >>"$rows"
 	}
+	# An error row keeps the cost of its stage ($stage_cost, set once a reviewer has run): a failed or unreadable run
+	# was still paid for. Setup errors cost nothing.
+	stage_cost=0
 	broken() {
-		row "${2:-setup}" "${3:-}" error "$1"
+		row "${2:-setup}" "${3:-}" error "$1" "$stage_cost"
 		exit 0
 	}
 	case $name in
@@ -280,6 +318,7 @@ EOF
 	run_claude "$stage" "$model" "$prompt" "$findings_schema" "$out" "$secs" evals "$head"
 	rc=$?
 	cost=$(cost_of "$out")
+	stage_cost=$cost
 	if [ "$rc" -ne 0 ]; then
 		case $rc in
 		124) broken "the $stage reviewer timed out after $secs s" "$stage" "$model" ;;
@@ -301,10 +340,13 @@ EOF
 	fi
 	vprompt=$work/$name.verify.md
 	vout=$work/$name.verifier.json
+	# The finder's cost is in its own row; from here on errors carry the verifier's.
+	stage_cost=0
 	build_verify_prompt "$vprompt" "$findings" "$diff_text" || broken "couldn't write the verifier's prompt" verifier "$mverifier"
 	run_claude verifier "$mverifier" "$vprompt" "$verify_schema" "$vout" "$secs" evals "$head"
 	rc=$?
 	vcost=$(cost_of "$vout")
+	stage_cost=$vcost
 	if [ "$rc" -ne 0 ]; then
 		case $rc in
 		124) broken "the verifier timed out after $secs s" verifier "$mverifier" ;;
@@ -320,7 +362,10 @@ EOF
 )
 
 for name in $list; do
-	run_case "$name"
+	run_case "$name" &
+	child=$!
+	wait "$child"
+	child=
 	# The worktree goes as soon as its case ends.
 	if [ -e "$work/wt" ]; then
 		git -C "$repo" worktree remove --force "$work/wt" >/dev/null 2>&1 || rm -rf "$work/wt"

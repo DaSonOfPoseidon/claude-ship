@@ -237,7 +237,8 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
 - The reviewer's prompts, schemas, run and verdict rules are in `hooks/review-lib.sh`, which the gate sources and
   `tests/evals/run.sh` uses too, so the evals measure what the gate sends (see Changing prompts or models). It is
   deployed and protected like the gate. A shell that fails to source a file exits with a status Claude Code lets
-  through, so the gate checks that it can read the lib first, and blocks when it can't.
+  through, so the gate checks that it can read the lib first, and blocks when it can't. It blocks too when a prompt
+  file can't be read, since a prompt built without the reviewer's instructions would still look built.
 - The reviewers share one time budget, `REVIEW_GATE_BUDGET` (default 2200 s) counted from the gate's start: each run
   gets `min(1100 s, what is left)`, and none starts with fewer than `REVIEW_GATE_MIN_SECS` (default 120 s) left; the
   gate then blocks with "ran out of time". Two reviewers at 1100 s each would otherwise outlast the hook's timeout
@@ -277,7 +278,10 @@ bug is *caught* when a matching finding has its severity, a *wrong severity* whe
 one, and *missed* when none match. A finding that matches nothing is a *false positive*; two findings on one bug are
 one catch. Each case is scored after the finder and again after the verifier (the findings it rejected with a
 `file:line` citation dropped, as the gate does). A reviewer that fails, times out or returns nothing readable makes the
-case an *error*, counted apart from *missed*, since a flaky run says nothing about the prompt. A case whose `base` isn't
+case an *error*, counted apart from *missed*, since a flaky run says nothing about the prompt (its row still carries
+the cost of the failed run, so totals show what a failing configuration spends). A `--prompt-dir` that lacks the lib
+or a prompt is a setup error before any case runs. `INT` or `TERM` stops the running reviewer at once and removes the
+worktree and temp directory. A case whose `base` isn't
 in the clone (a shallow checkout) is skipped. The runner prints a line per case and stage, then totals per stage and
 model with their cost; `--json` prints the same as JSON. It exits 0 whatever the score. `--check` only sets the cases up
 (valid `case.json`, the diff applies, the kind matches, the expected lines exist, the prompt builds) and exits 1 when a

@@ -168,3 +168,18 @@ review finds a new class.
 - **A doc must not widen an opt-in beyond its marker.** `skills/ship/SKILL.md` said any workspace that isn't a
   GitHub repo gets the local loop, while the hook and `orchestrate.md` start it only on `- mode: local` or a user
   request (claude-ship #159). State each opt-in once, with its exact marker, and have other docs point to it.
+- **A shell runs a trap only after its foreground command returns.** The eval runner trapped `TERM` and then ran each
+  case in the foreground, so a terminated run let the reviewer finish (and a verifier start) before cleaning up,
+  spending tokens nobody wanted (claude-ship #163). Run the long command in the background, `wait` on it (a signal ends
+  `wait` at once), and have the trap stop the command and everything under it (`ps -A -o pid= -o ppid=` walks the
+  tree, since `timeout` puts its child in another process group) before it exits. Test it with a signal sent while the
+  reviewer sleeps, and assert the reviewer is gone.
+- **An error path must keep what the success path records.** The runner's error rows dropped the cost of a reviewer run
+  that failed, timed out or returned nothing readable, so a failing configuration looked cheaper than it was
+  (claude-ship #163). Give every path that writes a row the same fields, with what was measured before the failure, and
+  test each failure (exit status, timeout, unreadable output) for the field.
+- **A function's status is its last command's, including a group that writes a file.** `build_prompt` was a `{ cat
+  template; …; echo; } >out` group, so a template it couldn't read left a prompt without the reviewer's instructions and
+  a status of 0 (claude-ship #163). Test that the inputs are readable before the group, fail the build on a failed
+  `cat`, and make the caller treat a failed build as a block or an error. Check the inputs a caller names up front too
+  (`--prompt-dir` needs every prompt, not only the lib).
