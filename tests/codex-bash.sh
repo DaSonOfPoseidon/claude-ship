@@ -298,19 +298,19 @@ grep -q 'codex-round.sh' "$tmp/err" || {
 	echo "FAIL: a denial doesn't name the allowed forms"
 	fail=1
 }
-# A denied poll of a background wait says what to do instead: end the turn and wait for the notification. Only
+# A denied poll of a background wait says what to do instead: call the wait again in the foreground. Only
 # those commands say so (a denial of anything else doesn't mention it), and every form stays denied.
 for poll in 'sleep 60' 'cat /x/out' 'tail -f /x/out' 'head /x/out' 'sleep 60; cat /x/out' 'cat /x/out | tail'; do
 	expect 2 "$poll"
-	grep -q "don't poll: end your turn and wait for codex-wait.sh's completion notification" "$tmp/err" || {
-		echo "FAIL: the denial of '$poll' doesn't tell the agent to wait for the notification"
+	grep -q "don't poll: run codex-wait.sh again in the foreground" "$tmp/err" || {
+		echo "FAIL: the denial of '$poll' doesn't tell the agent to wait in the foreground"
 		fail=1
 	}
 done
 for other in 'rm x' 'git log' "$ship/codex-wait.sh" 'gh pr merge 12' 'catalog x' 'sleeping 60'; do
 	expect 2 "$other"
-	if grep -q 'notification' "$tmp/err"; then
-		echo "FAIL: the denial of '$other' mentions the notification"
+	if grep -q "don't poll" "$tmp/err"; then
+		echo "FAIL: the denial of '$other' mentions polling"
 		fail=1
 	fi
 done
