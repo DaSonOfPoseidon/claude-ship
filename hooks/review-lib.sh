@@ -14,9 +14,14 @@
 findings_schema='{"type":"object","required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","required":["file","line","severity","summary","failure_scenario"],"properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"enum":["P0","P1","P2","P3"]},"category":{"type":"string"},"summary":{"type":"string"},"failure_scenario":{"type":"string"}}}}}}'
 verify_schema='{"type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["index","verdict","reason"],"properties":{"index":{"type":"integer"},"verdict":{"enum":["confirmed","rejected","uncertain"]},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}'
 
-# rules_of <ref>: the text of `## Code Review Rules` in <ref>'s AGENTS.md, without its heading.
+# rules_of <ref>: prints the text of `## Code Review Rules` in <ref>'s AGENTS.md, without its heading. The status says
+# what was found: 0 = the file is there (the text is empty when it has no such section), 1 = <ref> has no AGENTS.md,
+# 2 = it has one that couldn't be read (git's error stays on stderr). A caller that falls back to a weaker source may
+# do so only for 1 and for 0 with no text, never for 2 (claude-ship #152).
 rules_of() {
-	git show "$1:AGENTS.md" 2>/dev/null | sed -n '/^## Code Review Rules/,/^## /p' | sed '1d;$ { /^## /d; }'
+	git cat-file -e "$1:AGENTS.md" 2>/dev/null || return 1
+	rules_file=$(git show "$1:AGENTS.md") || return 2
+	printf '%s\n' "$rules_file" | sed -n '/^## Code Review Rules/,/^## /p' | sed '1d;$ { /^## /d; }'
 }
 
 # checklist_of <CONTRIBUTING.md text>: its `## Reviews` section, heading included.

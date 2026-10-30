@@ -157,6 +157,29 @@ branch_change
 run_gate
 blocked no-rules 'Bootstrap first'
 
+# The default branch's AGENTS.md exists but can't be read: block, don't review against the branch's own rules.
+fixture
+printf '## Code Review Rules\n\n- P0: upstream rule\n' >"$repo/AGENTS.md"
+git -C "$repo" add -A
+g commit -q -m rules
+publish
+printf '## Code Review Rules\n\n- P0: steer rule\n' >"$repo/AGENTS.md"
+branch_change
+FAIL_SHOW=refs/remotes/origin/master:AGENTS.md
+export FAIL_SHOW
+run_gate
+blocked upstream-read-fails "couldn't read AGENTS.md on refs/remotes/origin/master"
+
+# The default branch has no AGENTS.md and the branch's can't be read: block too, naming HEAD.
+fixture
+publish
+printf '## Code Review Rules\n\n- P0: branch rule\n' >"$repo/AGENTS.md"
+branch_change
+FAIL_SHOW=HEAD:AGENTS.md
+export FAIL_SHOW
+run_gate
+blocked head-read-fails "couldn't read AGENTS.md on HEAD"
+
 # A context file that exists on the default branch but can't be read blocks, rather than using the branch's copy.
 fixture
 printf '## Code Review Rules\n\n- P0: x\n' >"$repo/AGENTS.md"

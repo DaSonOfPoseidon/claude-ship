@@ -762,9 +762,21 @@ if [ -z "$branch_changed" ]; then
 fi
 
 # The project's review rules: the default branch's copy (a branch can't weaken its own review), else the
-# branch's, which is how the bootstrap PR that adds them gets reviewed.
-rules=$(rules_of "$upstream")
-[ -n "$rules" ] || rules=$(rules_of HEAD)
+# branch's, which is how the bootstrap PR that adds them gets reviewed. Only a missing file or section falls back:
+# an AGENTS.md that exists but can't be read blocks, since a read failure that fell back would review the branch
+# against its own, possibly weakened, rules (rules_of's status 2, claude-ship #152).
+for rules_ref in "$upstream" HEAD; do
+	if rules=$(rules_of "$rules_ref"); then
+		rules_rc=0
+	else
+		rules_rc=$?
+	fi
+	if [ "$rules_rc" = 2 ]; then
+		echo "Blocked: couldn't read AGENTS.md on $rules_ref for the review rules. Retry the push." >&2
+		exit 2
+	fi
+	[ -z "$rules" ] || break
+done
 if [ -z "$rules" ]; then
 	echo "Blocked: $slug has CLAUDE_AUTONOMOUS on but no \`## Code Review Rules\` in AGENTS.md. Bootstrap first: run the ship skill's bootstrap step, then push." >&2
 	exit 2

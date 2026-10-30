@@ -36,7 +36,10 @@ review finds a new class.
   status and hiding stderr (`2>/dev/null`) does the same: the gate's PR and thread lookups, and the `git log` and
   `git diff` inside its prompt, read a failed call as "no PR", "no threads" or an empty diff and skipped the
   check (claude-ship #106). Assign the call, test its status with `|| { …; exit 2; }`, and do it before the file
-  that quotes it is written.
+  that quotes it is written. It matters most when the empty result picks a *weaker fallback*: `rules_of`'s
+  `git show … 2>/dev/null | sed` made an unreadable default-branch AGENTS.md look like "no rules" and reviewed the
+  branch against its own (claude-ship #152). Tell "missing" (`git cat-file -e`) from "failed" (`git show`'s status),
+  fall back only on the first and block on the second.
 - **Options and environment before a subcommand change what it does.** `git -c push.default=matching push`,
   `git --git-dir x push`, `GIT_DIR=x git push` and `env … git push` all push something other than what a check
   of `git push`'s own arguments sees (claude-ship #3, five gate rounds). Check the whole command, and block
