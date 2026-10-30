@@ -108,7 +108,7 @@ actions are written.
 
 | State | When |
 |---|---|
-| `merged <pr>`, `pr-open <pr>`, `pr-closed <pr>` | `gh pr list --head <branch> --state all` has a PR: an open one if any, else the newest. Closed means closed unmerged |
+| `merged <pr>`, `pr-open <pr>`, `pr-closed <pr>` | `gh pr list --head <branch> --state all` has a PR from this repository (a fork's PR from a same-named branch is dropped by `isCrossRepository`, and a PR without that field is exit 1): an open one if any, else the newest. Closed means closed unmerged. The orchestrator stops, not finishes, on `merged` with an `unpushed:` line |
 | `pushed` | on origin, no PR (`ahead: <n>` commits over the default branch; `unpushed: <n>` if the local branch is further along) |
 | `local <n>` | only a local branch, `<n>` commits ahead of origin's default branch |
 | `diverged` | no PR, and local and origin each have commits the other lacks (`unpushed:` and `origin-only:` give the counts). With a PR the state is the PR's and a `diverged: yes` line is added |

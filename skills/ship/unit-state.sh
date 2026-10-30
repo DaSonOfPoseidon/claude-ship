@@ -104,11 +104,15 @@ fi
 ahead=0
 [ -z "$tip" ] || ahead=$(count "$base" "$tip")
 
-# The PRs on the branch, newest first (gh's order). An open one is the unit's; else the newest.
-gh pr list -R "$slug" --head "$branch" --state all --json number,state --limit 5 >"$tmp/prs" 2>"$tmp/err" ||
+# The PRs on the branch, newest first (gh's order). --head filters by branch name only, so a fork's PR from a
+# branch of the same name comes back too: isCrossRepository drops those, and a PR without the field is an error
+# (it could be a fork's). Of the unit's own PRs, an open one is the unit's; else the newest.
+gh pr list -R "$slug" --head "$branch" --state all --json number,state,isCrossRepository --limit 30 >"$tmp/prs" 2>"$tmp/err" ||
 	die "gh pr list failed: $(head -n 3 "$tmp/err")"
-pick=$(jq -r 'if type == "array" then (map(select(.state == "OPEN")) + .)[0] // empty | [.state, (.number | tostring)] | join(" ") else error("not a list") end' "$tmp/prs" 2>/dev/null) ||
-	die "gh pr list printed no JSON list"
+pick=$(jq -r 'if type == "array" and all(.[]; .isCrossRepository | type == "boolean")
+	then map(select(.isCrossRepository == false)) | (map(select(.state == "OPEN")) + .)[0] // empty | [.state, (.number | tostring)] | join(" ")
+	else error("not a list of PRs with isCrossRepository") end' "$tmp/prs" 2>/dev/null) ||
+	die "gh pr list printed no JSON list of PRs with isCrossRepository"
 state=
 if [ -n "$pick" ]; then
 	prnum=${pick#* }

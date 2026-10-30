@@ -68,10 +68,10 @@ Nothing about progress is kept locally. After `/clear` or compaction, work it ou
 
 | What | Where |
 |---|---|
-| plans | `$(git rev-parse --path-format=absolute --git-common-dir)/claude-ship/`: `loop.md` (a master plan from an objective) and `plan-<branch with / as ->.md` per unit (`feat/120-x` is `plan-feat-120-x.md`). Shared by every worktree, outside the repo's files |
+| plans | `$(git rev-parse --path-format=absolute --git-common-dir)/claude-ship/`: `loop.md` (a master plan from an objective) and `plan-<slug>.md` per unit, where `<slug>` is the branch with `%` written `%25`, then `+` written `%2B`, then `/` written `+` (the rule Local mode uses for workspace paths, so `feat/api/auth` is `plan-feat+api+auth.md` and `feat/api-auth` is `plan-feat+api-auth.md`; writing `/` as `-` gave `feat/a-b` and `feat-a/b` one file). Whatever opens a plan file checks that its `- **Branch:**` field is the unit's branch. A plan written under the old rule (`plan-feat-120-x.md`) is still read when the new name doesn't exist and its Branch field matches; rename it when you next touch the unit. Shared by every worktree, outside the repo's files |
 | queue | the master plan's units without a merged PR on their branch; else the open issues with the ready label minus the skip labels, by the priority labels in the order listed, then oldest first, unless the master plan orders them |
-| in flight | your open PRs whose head branch is a planned unit's (`gh pr list --author @me --json number,headRefName`), plus a unit with commits but no PR yet, which only `~/.claude/skills/ship/unit-state.sh <branch>` shows (see **A unit with no report**) |
-| done | merged PRs on those branches |
+| in flight | your open PRs whose head branch is a planned unit's (`gh pr list --author @me --json number,headRefName,isCrossRepository`, ignoring cross-repository PRs: a fork's PR can have the same branch name), plus a unit with commits but no PR yet, which only `~/.claude/skills/ship/unit-state.sh <branch>` shows (see **A unit with no report**) |
+| done | merged PRs on those branches (not a fork's) |
 
 The loop is built to keep going across automatic compaction, not only across `/clear`. After a summary, re-derive
 the state as **Resuming** says before acting, including `ListAgents` for a live implementer or `ship-codex` agent,
@@ -194,6 +194,7 @@ is the plan file's `- **Branch:**` field) and take the first row of this table t
 | exit 1 (git or gh failed) or exit 2 (the plan's branch isn't a valid name) | tell the user what it printed, and don't guess a state |
 | `dirty: yes` or `dirty: unknown` | stop and ask: the worktree holds unfinished work (the same stop as **Replacing an implementer**, step 2) |
 | `state: pr-closed <pr>` or `state: diverged`, or a `diverged: yes` line | stop and ask: closed unmerged, or local and origin disagree, and only the user picks which to keep |
+| `state: merged <pr>` with an `unpushed:` line | stop and ask: commits made after the last push never reached the merged PR, and removing the worktree or the plan would lose them |
 | `state: merged <pr>` | the unit is done: go to step 6 for its follow-ups (a `worktree:` line is removed as **Replacing an implementer** step 2 says) |
 | `state: pr-open <pr>` with an `unpushed:` line | the PR lacks those commits: do what the `local`/`pushed` row below says, but tell the new implementer "continue from `pushed`: PR <pr> is already open", so it pushes and runs the Codex rounds instead of opening a PR |
 | `state: pr-open <pr>` | **Resuming** step 2: pick the PR up at its state (no live agent on it, so replace the implementer if `worktree:` is missing) |

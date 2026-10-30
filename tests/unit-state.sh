@@ -13,7 +13,7 @@ echo "\$*" >>"$tmp/calls"
 case "\$*" in
 'repo view --json nameWithOwner --jq .nameWithOwner') echo o/r ;;
 'repo view o/r --json defaultBranchRef --jq .defaultBranchRef.name') echo main ;;
-'pr list -R o/r --head '*' --state all --json number,state --limit 5')
+'pr list -R o/r --head '*' --state all --json number,state,isCrossRepository --limit 30')
 	[ -f "$tmp/pr.err" ] && { cat "$tmp/pr.err" >&2; exit 1; }
 	head=\${*#*--head }
 	head=\${head%% --state*}
@@ -177,19 +177,19 @@ git -C "$work" switch -q -c feat/pr main
 commit "$work" 1
 git -C "$work" push -q origin feat/pr
 git -C "$work" switch -q main
-printf '[{"number":12,"state":"OPEN"}]\n' >"$tmp/pr.feat_pr.json"
+printf '[{"number":12,"state":"OPEN","isCrossRepository":false}]\n' >"$tmp/pr.feat_pr.json"
 run feat/pr
 want 'open PR' 0 'state: pr-open 12
 ahead: 1'
-printf '[{"number":14,"state":"MERGED"},{"number":12,"state":"CLOSED"}]\n' >"$tmp/pr.feat_pr.json"
+printf '[{"number":14,"state":"MERGED","isCrossRepository":false},{"number":12,"state":"CLOSED","isCrossRepository":false}]\n' >"$tmp/pr.feat_pr.json"
 run feat/pr
 want 'merged PR' 0 'state: merged 14
 ahead: 1'
-printf '[{"number":13,"state":"CLOSED"},{"number":12,"state":"MERGED"}]\n' >"$tmp/pr.feat_pr.json"
+printf '[{"number":13,"state":"CLOSED","isCrossRepository":false},{"number":12,"state":"MERGED","isCrossRepository":false}]\n' >"$tmp/pr.feat_pr.json"
 run feat/pr
 want 'newest PR closed' 0 'state: pr-closed 13
 ahead: 1'
-printf '[{"number":13,"state":"CLOSED"},{"number":12,"state":"OPEN"}]\n' >"$tmp/pr.feat_pr.json"
+printf '[{"number":13,"state":"CLOSED","isCrossRepository":false},{"number":12,"state":"OPEN","isCrossRepository":false}]\n' >"$tmp/pr.feat_pr.json"
 run feat/pr
 want 'an open PR wins over a newer closed one' 0 'state: pr-open 12
 ahead: 1'
@@ -199,7 +199,7 @@ want 'no PR' 0 'state: pushed
 ahead: 1'
 # A merged PR whose branch is gone from origin: merged, whatever the stale local branch holds.
 git -C "$origin" update-ref -d refs/heads/feat/pr
-printf '[{"number":15,"state":"MERGED"}]\n' >"$tmp/pr.feat_pr.json"
+printf '[{"number":15,"state":"MERGED","isCrossRepository":false}]\n' >"$tmp/pr.feat_pr.json"
 run feat/pr
 want 'merged, branch deleted on origin' 0 'state: merged 15
 ahead: 1'
@@ -211,18 +211,49 @@ git -C "$work" push -q origin feat/div
 git -C "$work" reset -q --hard main
 commit "$work" 1
 git -C "$work" switch -q main
-printf '[{"number":20,"state":"OPEN"}]\n' >"$tmp/pr.feat_div.json"
+printf '[{"number":20,"state":"OPEN","isCrossRepository":false}]\n' >"$tmp/pr.feat_div.json"
 run feat/div
 want 'open PR, diverged' 0 'state: pr-open 20
 unpushed: 1
 origin-only: 1
 diverged: yes'
 
+# A PR from a fork with the same branch name is not the unit's: --head filters by branch name only.
+git -C "$work" switch -q -c feat/fork main
+commit "$work" 1
+git -C "$work" push -q origin feat/fork
+git -C "$work" switch -q main
+printf '[{"number":30,"state":"MERGED","isCrossRepository":true}]\n' >"$tmp/pr.feat_fork.json"
+run feat/fork
+want 'only a fork PR' 0 'state: pushed
+ahead: 1'
+printf '[{"number":32,"state":"OPEN","isCrossRepository":true},{"number":31,"state":"CLOSED","isCrossRepository":false}]\n' >"$tmp/pr.feat_fork.json"
+run feat/fork
+want 'a newer fork PR next to the unit PR' 0 'state: pr-closed 31
+ahead: 1'
+# A PR without the field can't be told from a fork's.
+printf '[{"number":33,"state":"OPEN"}]\n' >"$tmp/pr.feat_fork.json"
+run feat/fork
+want 'PR without isCrossRepository' 1 ''
+rm "$tmp/pr.feat_fork.json"
+
+# Merged, but a commit made after the last push never reached the PR: both facts are printed.
+git -C "$work" switch -q -c feat/late main
+commit "$work" 1
+git -C "$work" push -q origin feat/late
+commit "$work" 1
+git -C "$work" switch -q main
+printf '[{"number":40,"state":"MERGED","isCrossRepository":false}]\n' >"$tmp/pr.feat_late.json"
+run feat/late
+want 'merged with an unpushed commit' 0 'state: merged 40
+ahead: 2
+unpushed: 1'
+
 # A PR number that isn't a number is not a result.
-printf '[{"number":"1;id","state":"OPEN"}]\n' >"$tmp/pr.feat_div.json"
+printf '[{"number":"1;id","state":"OPEN","isCrossRepository":false}]\n' >"$tmp/pr.feat_div.json"
 run feat/div
 want 'non-numeric PR number' 1 ''
-printf '[{"number":3,"state":"WEIRD"}]\n' >"$tmp/pr.feat_div.json"
+printf '[{"number":3,"state":"WEIRD","isCrossRepository":false}]\n' >"$tmp/pr.feat_div.json"
 run feat/div
 want 'unknown PR state' 1 ''
 rm "$tmp/pr.feat_div.json"
