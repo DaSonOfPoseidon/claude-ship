@@ -353,6 +353,16 @@ expect_review 2 'printf "git push\n" | xargs env' none
 expect_review 2 'printf "git push\n" | xargs sudo' none
 expect_review 2 'printf "git push\n" | xargs env FOO=1' none
 expect_review 2 'echo "git push"; sort --compress-prog=/tmp/x f' none
+expect_review 2 'echo "git push"; printf "%s\0" --compress-program=/tmp/h /tmp/in | xargs -0 sort' none
+expect_review 2 'echo "git push"; find . -name x -exec sort {} +' none
+expect_review 2 'echo "git push"; echo a | xargs printf' none
+expect_review 0 'echo "git push"; echo a | xargs cat; sort -u f | printf "%s\n" a' none
+# Declarations that evaluate text: a nameref runs a subscript when it is assigned through.
+expect_review 2 'declare -n ref='\''a[$(git push)]'\''; ref=1' none
+expect_review 2 'echo "git push"; declare -nr ref=x' none
+expect_review 2 'echo "git push"; typeset -n ref=x' none
+expect_review 2 'echo "git push"; f(){ local -n r=x; }' none
+expect_review 0 'echo "git push"; declare -r ref=x; declare -x other=y' none
 # A path named like a listed tool or wrapper is a script, not that tool.
 expect_review 2 'printf '\''git push'\'' > ./cat; chmod +x ./cat; ./cat' none
 expect_review 2 '/tmp/ls "git push"' none

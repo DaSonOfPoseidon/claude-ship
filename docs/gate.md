@@ -89,8 +89,9 @@ can't hide a push. Also unknown:
   `sh -c` or `eval` string that is dynamic, doesn't parse or nests deeper than 3; `xargs` or a wrapper behind it that
   is left with nothing to run (`xargs env`), since the input supplies the command;
 - text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `let`, `[[ a -eq b ]]`,
-  `[[ -v x ]]`), an array subscript, and the options that make a listed tool run something (`printf -v`,
-  `sort --compress-program` and its abbreviations).
+  `[[ -v x ]]`, `declare -i`, a nameref made with `declare -n`), an array subscript, and the options that make a
+  listed tool run something (`printf -v`, `sort --compress-program` and its abbreviations; `printf` and `sort` behind
+  `xargs` or `find -exec` too, whose options the command line doesn't show).
 
 Function bodies, `$(…)` and backticks, process substitutions and the `$(…)` in an unquoted heredoc are all in the tree,
 so `f(){ git push; }; f` and `cat <<EOF` with `$(git push)` are `gg`; a quoted heredoc body is data. A pipe or a

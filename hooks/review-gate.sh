@@ -305,9 +305,10 @@ def calls:
 # (an unlisted wrapper, an interpreter, `ssh`, a script) counts as unknown, like a word it can not read.
 def ggsafe: test("^(cat|echo|printf|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|tee|ls|stat|diff|cmp|jq|mkdir|mktemp|touch|cp|mv|rm|ln|chmod|pwd|cd|pushd|popd|true|false|:|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|xxd|od|uname|whoami|id|hostname)$");
 # Tools on that list with an option that runs a program (sort --compress-program, which getopt lets one abbreviate)
-# or names a variable (printf -v with a subscript). rg is not listed: its --pre and --hostname-bin run programs.
-def ggbad($c; $a):
-	($c == "printf" and any($a[]; test("^-v")))
+# or names a variable (printf -v with a subscript); behind xargs or find -exec their options are not all visible. rg is not listed: its --pre and --hostname-bin run programs.
+def ggbad($c; $a; $x):
+	(($c == "printf" or $c == "sort") and $x)
+	or ($c == "printf" and any($a[]; test("^-v")))
 	or ($c == "sort" and any($a[]; test("^--co")));
 # One command after its wrappers: gg when it is git or gh, ggdyn when it may run one, nothing when it can not. The
 # strings that sh -c and eval run are events of `calls` (str), parsed again by the caller.
@@ -316,7 +317,7 @@ def ggev($e):
 	| if ($c | test("^(git|gh)$")) then {k: "gg"}
 	elif ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x or $c == "zsh" or ($a | any(test("^(--(rcfile|init-file|login|interactive)(=.*)?|-[a-zA-Z]*[il][a-zA-Z]*)$"))) then {k: "ggdyn"} else (shellstr($a) | select(.k == "dyn") | {k: "ggdyn"}) end)
 	elif $c == "eval" then (if $e.x then {k: "ggdyn"} else empty end)
-	elif ($c | ggsafe) and (ggbad($c; $a) | not) then empty
+	elif ($c | ggsafe) and (ggbad($c; $a; $e.x) | not) then empty
 	else {k: "ggdyn"} end;
 # A path that ends in the name of a wrapper, a shell or a listed tool (./cat, /tmp/env) is a script that may be anything,
 # not that tool, so it is unknown. git and gh by path stay git and gh (ggev).
@@ -335,7 +336,7 @@ def ggcalls:
 	end;
 # Nodes that run text without being a command, or change what a name runs (an assignment to PATH): an indirect or prompt
 # expansion (`${!x}`, `${x@P}`), arithmetic, which
-# evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`, `[[ a -eq b ]]`, `declare -i`),
+# evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`, `[[ a -eq b ]]`, `declare -i`, a nameref, `declare -n`),
 # and an array subscript. Plain numbers are fine.
 def ggnum: ([.. | objects | select(.Type == "Lit") | .Value] | all(test("^([0-9]+|0[xX][0-9a-fA-F]+)$")))
 	and (any(.. | objects; .Type == "ParamExp") | not);
@@ -345,7 +346,7 @@ def ggnode:
 	elif (.Type == "ArithmExp" or .Type == "ArithmCmd" or .Type == "LetClause" or .Type == "CStyleLoop") then (if ggnum then empty else {k: "ggdyn"} end)
 	elif .Type == "BinaryTest" and ((.Op | tostring) | test("^-(eq|ne|lt|le|gt|ge)$")) then {k: "ggdyn"}
 	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
-	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*i"))) then {k: "ggdyn"}
+	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*[in]"))) then {k: "ggdyn"}
 	elif has("Index") and .Index != null then {k: "ggdyn"}
 	elif (.Name? | type) == "object" and (.Name.Value? // "" | ggenvname) then {k: "ggdyn"}
 	else empty end;
