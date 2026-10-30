@@ -72,7 +72,10 @@ is_anc() {
 }
 
 base=$(git rev-parse --verify -q "refs/remotes/origin/$default^{commit}") || die "no origin/$default after the fetch"
-localsha=$(git rev-parse --verify -q "refs/heads/$branch^{commit}" 2>/dev/null || true)
+# rev-parse --verify -q exits 1 for a missing ref; anything else is a failure, not "no local branch".
+rc=0
+localsha=$(git rev-parse --verify -q "refs/heads/$branch^{commit}" 2>/dev/null) || rc=$?
+[ "$rc" -le 1 ] || die "git rev-parse refs/heads/$branch failed"
 originsha=
 [ -z "$onorigin" ] || originsha=$(git rev-parse --verify -q "refs/remotes/origin/$branch^{commit}") || die "no origin/$branch after the fetch"
 
@@ -137,7 +140,8 @@ esac
 
 # The worktree that has the branch (the plan's implementer's, or the main checkout). Its path is only printed.
 git worktree list --porcelain >"$tmp/wt" 2>"$tmp/err" || die "git worktree list failed: $(head -n 3 "$tmp/err")"
-wtpath=$(awk -v ref="refs/heads/$branch" '/^worktree / { p = substr($0, 10) } $0 == ("branch " ref) { print p; exit }' "$tmp/wt" | tr -d '[:cntrl:]')
+awk -v ref="refs/heads/$branch" '/^worktree / { p = substr($0, 10) } $0 == ("branch " ref) { print p; exit }' "$tmp/wt" >"$tmp/wtpath" || die "reading the worktree list failed"
+wtpath=$(tr -d '[:cntrl:]' <"$tmp/wtpath")
 if [ -n "$wtpath" ]; then
 	echo "worktree: $wtpath"
 	if st=$(git -C "$wtpath" status --porcelain 2>/dev/null); then
