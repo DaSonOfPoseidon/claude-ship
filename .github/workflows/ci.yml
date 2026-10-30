@@ -18,6 +18,9 @@ jobs:
           fetch-depth: 0
       - name: shellcheck
         run: shellcheck --shell=sh --severity=warning install.sh hooks/*.sh scripts/*.sh skills/ship/*.sh tests/*.sh tests/evals/*.sh
+      - name: shfmt
+        # Where install.sh puts it, so the gate's tests find the parser (claude-ship #135).
+        run: mkdir -p "$HOME/.claude/bin" && sh scripts/fetch-shfmt.sh "$HOME/.claude/bin/shfmt"
       - name: tests
         run: for t in tests/*.sh; do sh "$t" || exit 1; done
       - name: actionlint

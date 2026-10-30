@@ -450,6 +450,27 @@ optional: a missing one only prints an info line. So does a missing `"env": {"CL
 (only the string `"0"` counts): the PR loop needs it, because under fork mode a subagent's Agent call returns at
 once (#160).
 
+After the files, it runs `scripts/fetch-shfmt.sh` from main's archive to put shfmt at `$dest/bin/shfmt` (#135). A
+failure prints `couldn't install shfmt` and makes the exit non-zero, but the rest of the install still runs, so the
+gate and the skill are deployed either way.
+
+## `scripts/fetch-shfmt.sh`
+
+`scripts/fetch-shfmt.sh <dest-file>` installs shfmt v3.14.1, the shell parser the gate's Bash checks will use (#135),
+on Linux x86_64 or aarch64/arm64 (anything else exits 1). `install.sh` calls it for `~/.claude/bin/shfmt`, and CI
+for the same path before its tests.
+
+- **Pinned hash.** mvdan/sh publishes no checksum file, so the script holds a sha256 per asset, computed by
+  downloading each official asset and running `sha256sum` on it. A download that doesn't match is discarded: exit 1,
+  an existing `<dest-file>` untouched, no temp file left. There is no option to skip or override the check, and the
+  tests swap the pins in a sed-edited copy of the script instead.
+- **Atomic.** The download goes to a temp file next to `<dest-file>`, so the final `mv` replaces it in one step,
+  and the file is never piped into a shell. Only `https` is followed (`--proto`, `--proto-redir`).
+- **Already current.** A `<dest-file>` with the pinned hash is left alone and nothing is downloaded, so re-running
+  `install.sh` costs no network.
+- **Exit codes.** 0 installed or current; 1 unsupported machine, no `sha256sum`/`shasum`, download failure or
+  mismatch; 2 usage (no or extra arguments), since `set -u` would have said 1, which reads as a result.
+
 ## `action.yml` and the workflows
 
 The status script is the action's own copy, at the ref the caller names (`@v1`, a tag moved on release), so
