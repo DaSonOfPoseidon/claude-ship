@@ -9,24 +9,31 @@
 #   ~/.claude/skills/ship/codex-request.sh <pr> <owner/repo> <full sha>
 #   [CODEX_WAIT_SECS=<n>] ~/.claude/skills/ship/codex-wait.sh <pr>
 #   ~/.claude/skills/ship/codex-findings.sh <pr>
-#   ~/.claude/skills/ship/ci-failures.sh <pr> [owner/repo [--wait]]
+#   [CI_WAIT_POLLS=<n>] ~/.claude/skills/ship/ci-failures.sh <pr> [owner/repo [--wait]]
 #   ~/.claude/skills/ship/codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json
 #   gh pr view <pr> ... | gh pr checks <pr> ...    without --web
 # and a Write of $HOME/.claude/state/claude-ship/triage-<owner>+<repo>-<n>.json (a fixed directory, so no checkout
 # path, spaces included, is in the command).
+# A Bash call with run_in_background set to anything but false or null is denied (claude-ship #171): the agent
+# waits in the foreground, since a wait it backgrounds ends its turn and hands its parent an interim result.
 set -u
 
 # poll is set when the command starts with sleep, cat, tail or head: the agent is polling instead of running
 # codex-wait.sh in the foreground, which it never needs to do. It calls the wait again and never ends its turn
 # before the wait returns a result (agents/ship-codex.md, claude-ship #147).
 poll=
+# bg is set when the call asks to run in the background: the agent runs it in the foreground instead.
+bg=
 
 deny() {
 	echo "ship-codex may only run ~/.claude/skills/ship/codex-round.sh <pr> [owner/repo], codex-request.sh <pr> <owner/repo> <sha>," \
-		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>, codex-findings.sh <pr>, ci-failures.sh <pr> [owner/repo [--wait]], codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json," \
+		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>, codex-findings.sh <pr>, [CI_WAIT_POLLS=<n>] ci-failures.sh <pr> [owner/repo [--wait]], codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json," \
 		"gh pr view|checks <pr> (no --web), as one plain command, and Write that triage file ($1)." >&2
 	if [ -n "$poll" ]; then
 		echo "To wait for codex-wait.sh: don't poll: run codex-wait.sh again in the foreground, and never end your turn before it returns a result." >&2
+	fi
+	if [ -n "$bg" ]; then
+		echo "Run it in the foreground (no run_in_background), and never end your turn before it returns a result." >&2
 	fi
 	exit 2
 }
@@ -117,6 +124,12 @@ case ${1:-} in
 sleep | cat | tail | head) poll=1 ;;
 esac
 
+# Run in the background only when the field is absent, null or false; a string, a number or anything else denies.
+printf '%s' "$input" | jq -e '(.tool_input.run_in_background // false) == false' >/dev/null 2>&1 || {
+	bg=1
+	deny "run_in_background"
+}
+
 # Only these characters: no quote, escape, expansion, redirect, list or glob character can reach the shell, so the
 # words below are the words the command runs. (The ~ of the script path is the shell's home directory.)
 case $cmd in
@@ -128,7 +141,8 @@ esac
 set -- $cmd
 [ $# -ge 2 ] || deny "too short"
 
-# The only environment: the wait's own cap, and only before the wait.
+# The only environment: the wait's own cap, and only before the wait; or the CI poll count, and only before the
+# CI read.
 # shellcheck disable=SC2088 # the literal ~ is what the agent writes; the shell expands it
 ship='~/.claude/skills/ship'
 # shellcheck disable=SC2088 # as above
@@ -141,6 +155,13 @@ CODEX_WAIT_SECS=*)
 	shift
 	[ $# -ge 2 ] || deny "too short"
 	[ "$1" = "$ship/codex-wait.sh" ] || deny "CODEX_WAIT_SECS is for codex-wait.sh only"
+	;;
+CI_WAIT_POLLS=*)
+	polls=${1#CI_WAIT_POLLS=}
+	isnum "$polls" || deny "CI_WAIT_POLLS must be a number"
+	shift
+	[ $# -ge 2 ] || deny "too short"
+	[ "$1" = "$ship/ci-failures.sh" ] || deny "CI_WAIT_POLLS is for ci-failures.sh only"
 	;;
 esac
 prog=$1
