@@ -15,9 +15,9 @@
 # path, spaces included, is in the command).
 set -u
 
-# poll is set when the command starts with sleep, cat, tail or head: the agent is polling the output of a background
-# codex-wait.sh, which it never needs to do. It ends its turn and waits for the completion notification
-# (agents/ship-codex.md).
+# poll is set when the command starts with sleep, cat, tail or head: the agent is polling instead of running
+# codex-wait.sh in the foreground, which it never needs to do. It calls the wait again and never ends its turn
+# before the wait returns a result (agents/ship-codex.md, claude-ship #147).
 poll=
 
 deny() {
@@ -25,7 +25,7 @@ deny() {
 		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>, codex-findings.sh <pr>, codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json," \
 		"gh pr view|checks <pr> (no --web), as one plain command, and Write that triage file ($1)." >&2
 	if [ -n "$poll" ]; then
-		echo "To wait for codex-wait.sh: don't poll: end your turn and wait for codex-wait.sh's completion notification." >&2
+		echo "To wait for codex-wait.sh: don't poll: run codex-wait.sh again in the foreground, and never end your turn before it returns a result." >&2
 	fi
 	exit 2
 }

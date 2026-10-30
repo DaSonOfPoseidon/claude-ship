@@ -110,9 +110,9 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
      flow** below.
    - `codex: error` with `ship-codex` having ended early (its error says the wait was still running or was
-     denied a `sleep`/`cat`, so no round was lost): the review is still going. Use the **fallback flow**'s wait
-     yourself, and don't start another `ship-codex` or request again. (Its wait is meant to end its turn and
-     wait for the completion notification, #142.)
+     denied a `sleep`/`cat`, so no round was lost): the review is still going. This should no longer happen,
+     since `ship-codex` now waits in the foreground and ends its turn only with its report (#142, #147). If it
+     does, use the **fallback flow**'s wait yourself, and don't start another `ship-codex` or request again.
 5. **Fallback flow (the implementer couldn't start `ship-codex`).** It requested round 1 and stopped. Then:
    - Run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command (nothing chained after it),
      with the exit codes as in the ship skill's step 3.4. Since your own checkout isn't on the PR's branch,
@@ -174,7 +174,9 @@ Otherwise, keep going without asking.
 ## Resuming ("continue the PR loop")
 
 1. Read `loop.md`, if there is one, and list the in-flight PRs.
-2. Finish in-flight PRs first, picking each up at its state:
+2. Finish in-flight PRs first, picking each up at its state. Before starting any `ship-codex` or implementer
+   for a PR, check `ListAgents` for a live `ship-codex` or implementer on that PR; if one exists, wait for it
+   or `SendMessage` it instead of starting another (a duplicate `ship-codex` on #149 spent a round, #147):
    - no review requested yet, or a review pending: start a `ship-codex` agent directly (it does both: it
      requests only if no request for the head is out, then waits), with `pr`, `slug`, `sha` (the PR's head,
      `gh pr view <pr> --json headRefOid -q .headRefOid`), `worktree` (from `git worktree list`; if no

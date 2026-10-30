@@ -73,10 +73,12 @@ wait for the review yourself and the orchestrator sees only your final report.
    - `replied`: the thread ids you replied to since its last round (none in round 1);
    - `mode: resolve-only`, only in the no-commit case below.
 
-   It returns a report with an `outcome:`. Wait for it. If what comes back first has no `outcome:` line, or
-   says it is still waiting, that is not its report: wait for its completion notification and act only on a
-   report with an `outcome:`. Never start a second `ship-codex` for this PR while one is running. Don't request
-   or wait for Codex any other way, and never post `@codex review` by hand.
+   It waits for Codex in the foreground (up to 20 minutes) and returns one report with an `outcome:` as the
+   Agent result. If what comes back has no `outcome:` line, or says it is still waiting, that is not its
+   report (claude-ship #147): don't hand back, and don't start a second `ship-codex`. Resume it with
+   SendMessage ("send your final report"), wait for that result, and act only on a report with an `outcome:`.
+   Never start a second `ship-codex` for this PR while one is running. Don't request or wait for Codex any
+   other way, and never post `@codex review` by hand.
 3. Act on the outcome:
 
    | `outcome:` | What to do |

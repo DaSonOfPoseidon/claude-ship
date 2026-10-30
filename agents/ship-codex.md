@@ -34,7 +34,7 @@ implementer already replied to), `mode: resolve-only` (see **Resolve only**) or 
   - `~/.claude/skills/ship/codex-round.sh <pr> <slug>`
   - `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>`
   - `~/.claude/skills/ship/codex-wait.sh <pr>`, optionally with `CODEX_WAIT_SECS=<n>` before it (the only
-    environment variable allowed; the round doesn't need it)
+    environment variable allowed; step 4 sets it to 300)
   - `~/.claude/skills/ship/codex-findings.sh <pr>`
   - `~/.claude/skills/ship/codex-triage.sh <pr> <triage file (Bash)>`
   - `gh pr view <pr> ...` and `gh pr checks <pr> ...` (add `-R <slug>`), without `--web`
@@ -60,32 +60,32 @@ With `mode: resolve-only` or `mode: triage-only`, skip to **Resolve only** or **
    the wait would return at once. Write the triage file (see **Triage file**) with one
    `{"thread": "<id>", "outcome": "resolve"}` entry per id, and run `codex-triage.sh`. If that is denied or
    fails, report `outcome: error` with the `denied:` and `done:` lines (see **Report**) and stop.
-4. Wait: `~/.claude/skills/ship/codex-wait.sh <pr>`, one call with its default cap of 1200 s, run on purpose in
-   the background (`run_in_background: true`), alone, nothing chained after it. Then **end your turn without
-   any report text** and wait for its completion notification. The wait takes up to 20 minutes and the
-   notification is what tells you it is done, so:
-   - Never poll: no `sleep`, `cat`, `tail` or `head`, and no rereading the output file, while it runs (the hook
-     denies them, and a denial is not a failure of the round).
-   - Never report before the notification arrives. A report you send early is the round's result as far as the
-     implementer is concerned, and it ends your run: an `outcome: error` sent because the wait "hadn't
-     finished" was wrong on PR #141 (claude-ship #142).
-   - When the notification arrives, Read the output file it names (the Read tool is allowed once the job has
-     ended) for the status line, and take the exit code from the notification.
-   - If the call returns directly, with its output and exit code and no background task, use them as they are
-     and don't wait for a notification.
+4. Wait, in the foreground, in chunks: `CODEX_WAIT_SECS=300 ~/.claude/skills/ship/codex-wait.sh <pr>` (Bash
+   `timeout: 360000`, no `run_in_background`), alone, nothing chained after it. Each call waits up to 5 minutes
+   and ends on its own, well before the Bash limit. Call it at most 4 times in a row (chunks 1 to 4, 20 minutes
+   in all), with no other command between two calls.
+   - **Never end your turn, and never send report text, until a call gives a result in the table below.** The
+     implementer's Agent call returns the moment your turn ends, so a report sent early is the round's result as
+     far as it is concerned (an `outcome: error` sent because the wait "hadn't finished" was wrong on PR #141,
+     claude-ship #142), and a "still waiting" message hands the real report to the orchestrator instead of the
+     implementer (#147). Exit 1 on chunks 1 to 3 is not a result: call again.
+   - Never poll: no `sleep`, `cat`, `tail` or `head`, and no rereading output (the hook denies them, and a
+     denial is not a failure of the round).
    - Send exactly one final report per run, after this step's result is in.
 
-   Read its exit code:
-   - 0: it printed the status line. Check that it ends with `(<sha>)`; if it names another commit, the PR moved:
-     `outcome: error`, `stopped because: the PR head is now <that sha>`.
-   - 1: still pending after the cap: `outcome: timeout`.
-   - 2: `outcome: error` with the message.
-   - 3: a stall, a request Codex never acknowledged, or a completion nobody asked for, so only a new request
-     clears it. Once per head: go back to
-     step 1 (the request step applies the cap: exit 4 is `outcome: round-cap`), then step 2 again for the new
-     round (a stalled or unacknowledged request isn't counted, so the round stays; a "finished more than once" one is, so the
-     round rises and its column applies), then wait again from step 4. A second exit 3 for this head:
-     `outcome: stalled`.
+   Read the exit code of the last call (a pending one prints `Timed out: pending: ...` on stderr):
+
+   | Exit | Meaning | Chunks 1 to 3 | Chunk 4 |
+   |---|---|---|---|
+   | 0 | it printed the status line | check that it ends with `(<sha>)`; if it names another commit, the PR moved: `outcome: error`, `stopped because: the PR head is now <that sha>`. Otherwise go to step 5 | same |
+   | 1 | still pending at the chunk's cap | call again (the next chunk) | `outcome: timeout` |
+   | 2 | usage error, or the status script failed | `outcome: error` with the message | same |
+   | 3 | a stall, a request Codex never acknowledged, or a completion nobody asked for, so only a new request clears it | once per head: go back to step 1 (the request step applies the cap: exit 4 is `outcome: round-cap`), then step 2 again for the new round (a stalled or unacknowledged request isn't counted, so the round stays; a "finished more than once" one is, so the round rises and its column applies), then wait again from step 4 with chunk 1. A second exit 3 for this head: `outcome: stalled` | same |
+
+   If a call is moved to the background anyway (its result says the command is running in the background), that
+   is the only time to wait for a completion notification: end your turn without report text, and when it
+   arrives, Read the output file it names for the status line and take the exit code from the notification.
+   A call that returns directly with its output and exit code needs no notification.
 5. `gh pr checks <pr> -R <slug>`: `ci: pass` if all pass, `fail` if any failed, `pending` otherwise (its non-zero exit is
    the result, not an error).
 6. `codex-findings.sh <pr>`: one block per unresolved Codex thread: `<thread id> <P0..P3 or P?> <path>:<line>`,

@@ -111,8 +111,12 @@ review finds a new class.
   it replaced a review that was still running (claude-ship #139). Ask the status script instead of re-deriving it.
 - **An agent that reports before its background job finishes hands over a wrong result.** `ship-codex` moved
   `codex-wait.sh` to the background, tried to poll it (denied), and sent `outcome: error` to the implementer
-  while the review was still running (claude-ship #142). Tell the agent to end its turn, send no report text
-  and wait for the completion notification, and tell its caller that a result without an `outcome:` isn't the report.
+  while the review was still running (claude-ship #142). Its fix, ending the turn to wait for the notification,
+  was wrong too: a subagent's Agent call returns when its turn ends, so the implementer got an interim result and
+  handed back, and the real report landed with the orchestrator (claude-ship #147; PRs #146 and #150). A
+  subagent that ends its turn while its own work is still running hands its parent an interim result, so nested
+  agents must block in the foreground, in chunks under the tool's timeout, and send one report at the end. Tell
+  the caller too that a result without an `outcome:` isn't the report, and to resume the agent for it.
 - **A new script is committed without its execute bit.** Written with an editor, it lands as `100644`, and
   `install.sh` copies modes as they are, so a hook registered as a command fails with `Permission denied`
   while tests that run it with `sh` pass (claude-ship #69). Commit scripts as `100755`
