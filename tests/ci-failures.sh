@@ -191,6 +191,23 @@ printf '[{"name":"codex-review-lint","state":"FAILURE","bucket":"fail","link":"h
 run 1 o/r
 want 'a check named like the review' 0 'codex-review-lint  https://ci.example.com/y'
 
+# A cancelled check is not green: it is listed (without a log fetch) so it never reads as "no failed checks".
+cancel='{"name":"unit","state":"CANCELLED","bucket":"cancel","link":"https://github.com/o/r/actions/runs/100/job/200","workflow":"CI"}'
+printf '[%s,%s]\n' "$cancel" "$pass" >"$tmp/checks.json"
+run 1 o/r
+want 'cancelled check' 0 'CI / unit  https://github.com/o/r/actions/runs/100/job/200
+  (cancelled: no failed-step log; rerun it, or find what cancelled it)'
+notcalled 'cancelled check' 'run view'
+printf '[%s,%s]\n' "$cancel" "$failext" >"$tmp/checks.json"
+run 1 o/r
+want 'cancelled beside a failure' 0 'CI / unit  https://github.com/o/r/actions/runs/100/job/200
+  (cancelled: no failed-step log; rerun it, or find what cancelled it)
+deploy/preview  https://ci.example.com/build/7'
+# A skipped check is fine.
+printf '[{"name":"opt","state":"SKIPPED","bucket":"skipping","link":"","workflow":"CI"}]\n' >"$tmp/checks.json"
+run 1 o/r
+want 'skipped check' 0 'no failed checks'
+
 # --wait polls until nothing is pending (the review status aside), then prints the result.
 printf '[%s,%s]\n' "$cr_pend" "$pass" >"$tmp/checks.json"
 run 1 o/r --wait

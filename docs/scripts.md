@@ -67,7 +67,7 @@ exit status would turn an empty result into "no findings".
 ## `skills/ship/ci-failures.sh`
 
 Sends CI failures to the implementer instead of the main session (#118). `ci-failures.sh <pr> [owner/repo] [--wait]`
-reads `gh pr checks --json name,state,bucket,link,workflow` and prints one block per check whose `bucket` is `fail`:
+reads `gh pr checks --json name,state,bucket,link,workflow` and prints one block per check whose `bucket` is `fail` (or `cancel`: not green, listed with a `(cancelled ...)` line and no log fetch):
 `<workflow> / <name>  <link>`, and for a GitHub Actions job (`/actions/runs/<run>/job/<job>`, both ids numbers) the
 last 60 lines of `gh run view <run> --job <job> --log-failed`, indented, with the job and step columns, timestamps,
 colours and carriage returns removed. Any other failed check (an external status, or a link whose ids aren't

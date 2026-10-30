@@ -2,7 +2,7 @@
 # Lists a PR's failed CI checks, compactly, so the implementer fixes CI without the main session reading logs.
 # One block per failed check: "<workflow> / <name>  <link>", then, for a GitHub Actions job, the last 60 lines of
 # its failed-step log, indented, without colours or timestamps. Other checks (external statuses): name and link.
-# Then "no failed checks" when none failed, and "pending: <n> checks still running" if any. The `codex-review`
+# A cancelled check is listed with the failed ones (it is not green; no log). Then "no failed checks" when none failed, and "pending: <n> checks still running" if any. The `codex-review`
 # status is the review, not CI (pending until Codex has reviewed, failed while a thread is open), so it is
 # ignored. With --wait it first polls until no check is pending (CI_WAIT_POLLS polls, 18, CI_WAIT_INTERVAL
 # seconds apart, 30: 9 minutes, under a 10-minute Bash timeout). Exit 0 when it printed a result, 3 when --wait
@@ -70,15 +70,21 @@ us=$(printf '\037')
 # One line per failed check: workflow, name, link, separated by the unit separator (not whitespace, so an empty
 # workflow stays a field). Control characters become spaces first, so a name can't add lines, separators or
 # escape sequences to the output.
-jq -r --arg r "$review" '.[] | select(.bucket == "fail" and .name != $r)
-	| [.workflow, .name, .link] | map((. // "") | gsub("[[:cntrl:]]"; " ")) | join("\u001f")' "$tmp/checks" >"$tmp/failed"
+# A cancelled check is not green either, so it is listed with the failed ones (bucket is gh's own word, not text).
+jq -r --arg r "$review" '.[] | select((.bucket == "fail" or .bucket == "cancel") and .name != $r)
+	| [.workflow, .name, .link, .bucket] | map((. // "") | gsub("[[:cntrl:]]"; " ")) | join("\u001f")' "$tmp/checks" >"$tmp/failed"
 failed=0
-while IFS=$us read -r workflow name link; do
+while IFS=$us read -r workflow name link bucket; do
 	failed=$((failed + 1))
 	if [ -n "$workflow" ]; then
 		echo "$workflow / $name  $link"
 	else
 		echo "$name  $link"
+	fi
+	# A cancelled job has no failed step, so there is no log to fetch.
+	if [ "$bucket" = cancel ]; then
+		echo "  (cancelled: no failed-step log; rerun it, or find what cancelled it)"
+		continue
 	fi
 	# An Actions job link ends in /actions/runs/<run>/job/<job>; both ids must be numbers, or the check is
 	# treated as external and its link is never passed to gh.
