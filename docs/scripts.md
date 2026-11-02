@@ -206,7 +206,10 @@ round by setting `CODEX_ROUND_CAP`.
 
 Applies a round's triage in one call, so the orchestrator spends one turn on it instead of one per reply, issue
 and resolve (each turn re-reads its whole context, #71). It is run by whoever triages: in orchestrated mode the
-orchestrator, since subagents can't resolve threads (#100), from the checkout `p3-issue.sh` should read.
+orchestrator, since subagents can't resolve threads (#100). Usage: `codex-triage.sh <pr> <triage.json> [owner/repo]`.
+With the repository it runs from any checkout of it (claude-ship #140): `ship-codex` can't `cd`, so it runs in
+whatever checkout its parent was in. It passes the PR to `p3-issue.sh`, so the milestone comes from GitHub and not
+from the cwd's branch.
 
 - **Input** is a JSON array written with the Write tool, so reply text never passes through shell quoting. Each
   entry has `thread`, `outcome` (`not-valid`, `issue`, `fixed` or `resolve`), `reply` (required except for
@@ -232,7 +235,10 @@ orchestrator, since subagents can't resolve threads (#100), from the checkout `p
 
 ## `skills/ship/codex-wait.sh`
 
-Runs `codex-status.sh` with `DRY_RUN=1` every 60 seconds. A status that only a new request clears (stalled, not
+Usage: `codex-wait.sh <pr> [owner/repo]`. Runs `codex-status.sh` with `DRY_RUN=1` every 60 seconds. With the
+repository it sets `REPO` for it, so nothing reads the cwd (`ship-codex` can't `cd`, claude-ship #140); without it
+`codex-status.sh` asks `gh` for the cwd's repository. `codex-findings.sh <pr> [owner/repo]` has the same optional
+argument. A status that only a new request clears (stalled, not
 acknowledged, or finished more than once) ends the wait with exit 3, so it isn't read as "not done yet" until the cap. Any failure
 of the status script ends the wait with its error.
 
@@ -334,7 +340,12 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
   repo doesn't have are dropped, and one that differs from a repo label only in case is filed under the repo's
   spelling. The type fallback goes by the labels that will actually be applied.
 - **Milestone**, only with `CLAUDE_P3_MILESTONE=auto`: the branch's open PR's, else the one milestone of the
-  issues its commit subjects fix (`fixes #N`), else none.
+  issues its commit subjects fix (`fixes #N`), else none. The gate calls `p3-issue.sh <owner/repo> <finding.json>`
+  from the pushing checkout, so the branch is that checkout's. An optional third argument, the PR number, reads
+  both from GitHub instead (`gh pr view`: the PR's own milestone, else the one milestone of the issues named by
+  `fixes/closes/resolves #N` in its commits' messages, subject and body), so it gives the same answer from any
+  checkout of the repo (claude-ship #140; `codex-triage.sh` passes it). The label map is read from
+  `origin/<default>` either way, which is the same in every checkout of the repo.
 - **Never lost to its labels.** If filing fails, it retries without the milestone, then without labels.
 
 ## `hooks/orchestrate-hint.sh`
@@ -402,14 +413,16 @@ hook decides, not what Claude Code does with it.
   written with `~/` exactly (not `$HOME`, an absolute path, `./`, `..` or `env`/`sh`), or `gh`, or the one
   environment prefix below.
 - **Allowed, as one plain command.** `codex-round.sh <pr> [owner/repo]`, `codex-request.sh <pr> <owner/repo>
-  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `[CI_WAIT_POLLS=<1-10>] ci-failures.sh <pr> [owner/repo [--wait]]`, `codex-triage.sh <pr> <file>`, and
-  `gh pr view|checks <pr> ...`. `--wait` is the one option `ci-failures.sh` takes, and only as its third word,
+  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr> [owner/repo]`, `codex-findings.sh <pr> [owner/repo]`, `[CI_WAIT_POLLS=<1-10>] ci-failures.sh <pr> [owner/repo [--wait]]`, `codex-triage.sh <pr> <file> [owner/repo]`, and
+  `gh pr view|checks <pr> ...`. The repository is optional on the wait, findings and triage commands because the agent
+  can't `cd` and so may run in any checkout of the repo: it passes the slug to every script so none reads the cwd
+  (claude-ship #140). Each takes at most that one slug, checked like the others, and nothing else. `--wait` is the one option `ci-failures.sh` takes, and only as its third word,
   after the repository (`ci-failures.sh 12 --wait` and `ci-failures.sh 12 o/r --wait extra` deny). `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
   with no part starting with `-`, no part that is `.`, and no `..` anywhere, a sha is 40 lowercase hex characters. Nothing else may precede or follow: any other variable
   (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, `CODEX_WAIT_SECS` only before the wait, and `CI_WAIT_POLLS`
   (1 to 10, no leading zero: 10 polls fit the 10-minute Bash timeout) only before `ci-failures.sh`; only one of the
   two may be given.
-- **A poll is denied with a hint.** The agent runs `CODEX_WAIT_SECS=300 codex-wait.sh <pr>` in the foreground,
+- **A poll is denied with a hint.** The agent runs `CODEX_WAIT_SECS=300 codex-wait.sh <pr> <slug>` in the foreground,
   up to 4 calls in a row, and never ends its turn before one gives a result, so its report reaches the
   implementer and not the orchestrator (claude-ship #147). A command that starts with `sleep`, `cat`, `tail` or
   `head` still denies like any other, but the reason adds "don't poll: run codex-wait.sh again in the foreground,

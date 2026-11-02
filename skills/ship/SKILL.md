@@ -100,11 +100,12 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    0. Otherwise, with 3 rounds already
    used (`CODEX_ROUND_CAP`) it posts nothing and exits 4. In orchestrated mode a
    `ship-codex` agent runs steps 2 to 4 for the implementer (`orchestrate.md`).
-4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command
+4. Wait without polling turns: run `~/.claude/skills/ship/codex-wait.sh <pr> [owner/repo]` alone in a background command
    (Bash `run_in_background`), with nothing chained after it: no `;`, `&&` or `|`. Anything chained after it
    delays the notification (a stall sat unnoticed on OBDCracker #208). Check CI separately once it exits.
    You're notified when it exits. It prints the status once it's no longer `pending` for HEAD, and exits 2
-   on any error from `codex-status.sh` (fix that, don't retry blindly).
+   on any error from `codex-status.sh` (fix that, don't retry blindly). Without the repository it asks `gh` for
+   the current checkout's; `codex-findings.sh <pr> [owner/repo]` is the same.
    - **Exit 3**: only a new request clears the status. Run step 3 again, once per HEAD. If that one ends in
      exit 3 too, stop and tell the user. A new request ends any earlier review, so old requests never need
      deleting. Exit 3 prints one of three statuses:
@@ -150,7 +151,8 @@ right-hand column.
 `[{"thread": "<id>", "outcome": "not-valid" | "issue" | "fixed" | "resolve", "reply": "<text>", "issue":
 {"file": "<path>", "title": "<path>: <summary>", "body": "<finding>"}}]` (`issue` only for that outcome; `reply`
 is not needed for `resolve`; thread ids as `codex-findings.sh` prints them). Then run
-`~/.claude/skills/ship/codex-triage.sh <pr> <that file>` from the PR's checkout. For each entry it files the
+`~/.claude/skills/ship/codex-triage.sh <pr> <that file> [owner/repo]` from the PR's checkout (or, with the
+repository, from any checkout of it: the milestone then comes from the PR on GitHub). For each entry it files the
 issue (adding its link to the reply), posts the reply and resolves the thread; a `resolve` entry only resolves
 the thread, for one that already has its reply (an implementer replied to it). Include a fixed thread only once
 its fix is committed, so the reply can name the commit. It validates the whole file before any call and stops
