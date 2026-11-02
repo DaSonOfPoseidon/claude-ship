@@ -161,7 +161,7 @@ commits: <sha> <subject>  (one per line)
 codex: <last ship-codex outcome> round <n>  (omit if it never ran)
 ci: pass | fail | pending  (the last ship-codex report's `ci:`; omit if it never ran)
 stop: / denied: / done: / file: <those lines of the last ship-codex report, word for word>  (omit if none)
-replied: <thread id> <sha>  (fallback flow only: one per thread you replied to; omit otherwise)
+replied: <thread id> <sha>  (fallback flow, or a `codex: no final report` hand-back: one per thread you replied to; omit otherwise)
 checks: <command> → pass/fail
 gate: passed after <n> blocks | blocked: <finding summary>
 deviations: <anything you did beyond the plan, or none>
