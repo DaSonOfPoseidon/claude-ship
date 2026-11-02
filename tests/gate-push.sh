@@ -259,7 +259,7 @@ expect_review 0 'mkdir -p "$d" && cd "$d" && cat > x <<'\''EOF'\''
 git push && gh pr create
 EOF' none
 expect_review 0 'for f in a b; do cat "$f"; echo "gh api $f"; done' none
-expect_review 0 'sudo cat /etc/hosts "git push"; env A=1 echo "git push"; timeout 5 grep "git push" f' none
+expect_review 0 'sudo cat /etc/hosts "git push"; env a=1 echo "git push"; timeout 5 grep "git push" f' none
 expect_review 0 "bash -c 'echo \"git push\"'" none
 expect_review 0 'echo "git push" >&2' none
 # A real gh call still gets every text check: a heredoc body for `gh issue comment` with quoting it can't read
@@ -339,7 +339,7 @@ expect_review 2 'export PATH=.:$PATH; echo "git push"; cat x' none
 expect_review 2 'PATH=. ; echo "git push"; cat x' none
 expect_review 2 'echo "git push"; sudo PATH=. cat x' none
 expect_review 2 'echo "git push"; LD_PRELOAD=./x.so cat x' none
-expect_review 0 'echo "git push"; FOO=1 cat x; PATHX=1 cat x' none
+expect_review 0 'echo "git push"; foo=1 cat x; patx=1 cat x' none
 # Options that make a tool run a program, shells that read startup code, and wrappers that run what they are handed
 # (codex round 1 of #191).
 expect_review 2 'printf "#!/bin/sh\n git push\n" > /tmp/h; chmod +x /tmp/h; rg --hostname-bin=/tmp/h --hyperlink-format=default x f' none
@@ -378,6 +378,48 @@ expect_review 2 'echo "git push"; sudo ./sh x' none
 expect_review 2 'echo "git push"; xargs /tmp/echo' none
 expect_review 0 'echo "see docs/ls for git push"; cat docs/cat.md' none
 expect_review 2 'echo "git push" ; node -e '\''x'\''' none
+# Round 3 of #191: xargs hands arguments the tree can't see to the command, and `find` runs them as `-exec` predicates;
+# a variable that loads code into a tool; a printf that assigns; options that run a program (#190).
+expect_review 2 'printf "%s\0" -exec sh -c "git push" ";" | xargs -0 find . -maxdepth 0 -exec true ";"' none
+expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 nice find . -maxdepth 0' none
+expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 timeout 5 find .' none
+expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 /usr/bin/find .' none
+expect_review 2 'echo "git push"; find . -maxdepth 0 -exec xargs find . -exec true ";" ";"' none
+expect_review 0 'echo "git push"; printf "%s\n" a | xargs grep -l x; find . -name x -exec cat {} +' none
+expect_review 2 'echo "git push"; PERL5OPT=-MReviewHook PERL5LIB=/tmp shasum /dev/null' none
+expect_review 2 'echo "git push"; PERL5OPT=-Mx cat x' none
+expect_review 2 'echo "git push"; PYTHONSTARTUP=/tmp/x md5sum f' none
+expect_review 2 'echo "git push"; env RUBYOPT=-rx cat f' none
+expect_review 2 'echo "git push"; NODE_OPTIONS=--require=/tmp/x cat f' none
+expect_review 2 'echo "git push"; GIT_SSH_COMMAND=x cat f' none
+expect_review 2 'echo "git push"; export PERL5LIB=/tmp; cat f' none
+expect_review 2 'echo "git push"; IFS=x cat f' none
+expect_review 2 'echo "git push"; PS4='\''$(git push)'\'' cat f' none
+expect_review 2 'echo "git push"; for PERL5OPT in a; do :; done' none
+expect_review 2 'echo "git push"; : ${PATH:=.}; cat f' none
+expect_review 2 'echo "git push"; readonly PATH=.; cat f' none
+expect_review 2 'echo "git push"; Foo=1 cat f' none
+expect_review 0 'echo "git push"; LC_ALL=C sort f; env TZ=UTC date; lower=1 cat f; : ${x:=1} ${y=2}; for i in a; do :; done' none
+expect_review 2 'echo "git push"; printf '\''%n'\'' PATH' none
+expect_review 2 'echo "git push"; printf -- '\''%hhn'\'' PATH' none
+expect_review 2 'echo "git push"; printf '\''%1$n'\'' PATH' none
+expect_review 2 'echo "git push"; printf '\''x%5ny'\'' PATH' none
+expect_review 2 'echo "git push"; printf -vPATH x' none
+expect_review 0 'echo "git push"; printf '\''%s %d%%n\n'\'' a 1; printf "100%% sure\n"' none
+expect_review 2 'echo "git push"; read PATH' none
+expect_review 2 'echo "git push"; hash -p /tmp/x cat; cat' none
+expect_review 2 'echo "git push"; enable -f /tmp/x.so x' none
+expect_review 2 'echo "git push"; alias cat=x' none
+expect_review 2 'echo "git push"; getopts a PATH' none
+expect_review 2 'echo "git push"; mapfile PATH </dev/null' none
+expect_review 2 'echo "git push"; unset PATH; cat' none
+expect_review 2 'echo "git push"; set -x; cat' none
+expect_review 2 'echo "git push"; sort --compress-program=/tmp/x f' none
+expect_review 2 'echo "git push"; sort --compress=/tmp/x f' none
+expect_review 2 'echo "git push"; sort --co /tmp/x f' none
+expect_review 2 'echo "git push"; rg --pre /tmp/x a f' none
+expect_review 2 'echo "git push"; rg --pre-glob x a f' none
+expect_review 0 'echo "git push"; sort -u -k2 --reverse --output=o f' none
 expect_review 2 'echo "git push" ; flock l true' none
 
 # The reviewers share one time budget (claude-ship #103): REVIEW_GATE_BUDGET seconds from the gate's start, each

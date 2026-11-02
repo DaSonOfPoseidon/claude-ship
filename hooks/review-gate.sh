@@ -305,10 +305,11 @@ def calls:
 # (an unlisted wrapper, an interpreter, `ssh`, a script) counts as unknown, like a word it can not read.
 def ggsafe: test("^(cat|echo|printf|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|tee|ls|stat|diff|cmp|jq|mkdir|mktemp|touch|cp|mv|rm|ln|chmod|pwd|cd|pushd|popd|true|false|:|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|xxd|od|uname|whoami|id|hostname)$");
 # Tools on that list with an option that runs a program (sort --compress-program, which getopt lets one abbreviate)
-# or names a variable (printf -v with a subscript); behind xargs or find -exec their options are not all visible. rg is not listed: its --pre and --hostname-bin run programs.
+# or names a variable (printf -v, and a %n conversion, which stores into the variable its argument names); behind xargs
+# or find -exec their options are not all visible. rg is not listed: its --pre and --hostname-bin run programs.
 def ggbad($c; $a; $x):
 	(($c == "printf" or $c == "sort") and $x)
-	or ($c == "printf" and any($a[]; test("^-v")))
+	or ($c == "printf" and any($a[]; test("^-v") or (gsub("%%"; "") | test("%[^a-zA-Z%]*[hlLjzqt]*n"))))
 	or ($c == "sort" and any($a[]; test("^--co")));
 # One command after its wrappers: gg when it is git or gh, ggdyn when it may run one, nothing when it can not. The
 # strings that sh -c and eval run are events of `calls` (str), parsed again by the caller.
@@ -322,9 +323,14 @@ def ggev($e):
 # A path that ends in the name of a wrapper, a shell or a listed tool (./cat, /tmp/env) is a script that may be anything,
 # not that tool, so it is unknown. git and gh by path stay git and gh (ggev).
 def ggpath: contains("/") and (bn | test("^(env|command|builtin|exec|nohup|nice|time|timeout|stdbuf|setsid|sudo|doas|xargs|find|sh|bash|dash|zsh|ksh|ash|eval)$") or ggsafe);
-# A variable that changes which program a listed name runs (`PATH=. cat`, `env PATH=x cat`, `export PATH=...`).
-def ggenvname: test("^(PATH|LD_[A-Z_]+|BASH_ENV|ENV)$");
-def ggenv: test("^(PATH|LD_[A-Z_]+|BASH_ENV|ENV)=");
+# A variable that changes which program a listed name runs, or loads code into it or into the shell (`PATH=. cat`,
+# `env PERL5OPT=-Mx shasum`, `export LD_PRELOAD=...`, `IFS`, `BASH_ENV`, `PS4`, `GIT_*`, `NODE_OPTIONS`...). The list of
+# those never ends, so it is the other way round: only a variable known to be harmless is. That is a lower-case name (the
+# environment variables tools read are upper-case; the zsh ones that are tied to PATH and the like are left out) and the
+# locale and terminal ones. Any other name makes the command unknown.
+def ggnameok: test("^([a-z_][a-z0-9_]*|LC_[A-Z]+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|)$")
+	and (test("^(path|fpath|cdpath|manpath|mailpath|module_path|watch|psvar|histchars)$") | not);
+def ggenv: test("^[A-Za-z_][A-Za-z0-9_]*\\+?=") and (sub("\\+?=.*$"; "") | ggnameok | not);
 def ggcalls:
 	(.Args? // []) as $args | [$args[] | wv] as $w
 	| if ($w | length) == 0 then empty
@@ -332,7 +338,10 @@ def ggcalls:
 	elif any($w[]; . != null and (ggpath or ggenv)) then {k: "ggdyn"}
 	elif any($w[]; . == null) then (if ($w[0] | bn) as $c | ($c | ggsafe) and ($c | test("^(printf|sort)$") | not) then empty else {k: "ggdyn"} end)
 	else (eff($w; false) as $effs
-		| if $effs == null or ($effs == [] and any($w[]; bn == "xargs")) then {k: "ggdyn"} else ($effs[] | ggev(.)) end)
+		| if $effs == null or ($effs == [] and any($w[]; bn == "xargs")) then {k: "ggdyn"}
+		# xargs adds arguments to the end of the command, and find takes them as predicates (-exec sh -c ...).
+		elif any($w[]; bn == "xargs") and any($w[]; bn == "find") then {k: "ggdyn"}
+		else ($effs[] | ggev(.)) end)
 	end;
 # Nodes that run text without being a command, or change what a name runs (an assignment to PATH): an indirect or prompt
 # expansion (`${!x}`, `${x@P}`), arithmetic, which
@@ -348,7 +357,8 @@ def ggnode:
 	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
 	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and (([.Value.Parts[]? | .Type] | any(. != "Lit")) or ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*[in]")))) then {k: "ggdyn"}
 	elif has("Index") and .Index != null then {k: "ggdyn"}
-	elif (.Name? | type) == "object" and (.Name.Value? // "" | ggenvname) then {k: "ggdyn"}
+	elif (.Name? | type) == "object" and (.Name.Value? // "" | ggnameok | not) then {k: "ggdyn"}
+	elif .Type == "ParamExp" and ((.Exp.Op? // "") | test("^:?=$")) and (.Param.Value? // "" | ggnameok | not) then {k: "ggdyn"}
 	else empty end;
 if .Type != "File" then "bad"
 else

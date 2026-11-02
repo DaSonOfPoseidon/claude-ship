@@ -80,17 +80,22 @@ can't hide a push. Also unknown:
 
 - a word that is a path ending in the name of a listed tool, a wrapper or a shell (`./cat`, `/tmp/env`, `/bin/cat`): a
   script of that name may be anything (only `git` and `gh` by path count as themselves);
-- an assignment to `PATH`, `LD_*`, `BASH_ENV` or `ENV`, in the command, behind `env` or `sudo`, or by `export`: the
-  name of a listed tool may then run a script the command wrote;
+- an assignment to any variable not known to be harmless (in the command, behind `env` or `sudo`, by `export`,
+  `declare`, `readonly`, `for`, `${x:=…}`): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`,
+  `GIT_*` and the rest of the variables that load code or change what a name runs never end, so it is an
+  allowlist: a lower-case name (not zsh's `path`, `fpath`, `cdpath`, …) and `LC_*`, `LANG`, `LANGUAGE`, `TZ`, `TERM`,
+  `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;
 - a dynamic command word (`$x push`, `$(echo git) push`, `$'…'`); a dynamic argument is fine only for a listed tool
   (`cat "$f"`);
 - a wrapper it can't unwrap, a shell run without `-c` (stdin, a script, `bash -s`, `bash <<EOF`), a shell that reads startup code
   (`zsh`, or `--rcfile`, `--init-file`, `--login`, `-i`, `-l`, which run before the `-c` string), `source`, `.`, and an
   `sh -c` or `eval` string that is dynamic, doesn't parse or nests deeper than 3; `xargs` or a wrapper behind it that
-  is left with nothing to run (`xargs env`), since the input supplies the command;
+  is left with nothing to run (`xargs env`), since the input supplies the command, and `xargs` with `find` (the input
+  becomes `find` predicates: `-exec sh -c …`);
 - text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `let`, `[[ a -eq b ]]`,
   `[[ -v x ]]`, `declare -i`, a nameref made with `declare -n`), an array subscript, and the options that make a
-  listed tool run something (`printf -v`, `sort --compress-program` and its abbreviations; `printf` and `sort` behind
+  listed tool run something or assign (`printf -v`, a `printf` conversion `%n`, `sort --compress-program` and its
+  abbreviations; `printf` and `sort` behind
   `xargs` or `find -exec` too, whose options the command line doesn't show).
 
 Function bodies, `$(…)` and backticks, process substitutions and the `$(…)` in an unquoted heredoc are all in the tree,
