@@ -319,7 +319,9 @@ Files a finding as an issue. The finding goes in a JSON file rather than on the 
 reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
 
 - **Labels** come from `CLAUDE_P3_LABELS`, plus every rule in `.github/claude-ship/p3-labels` that matches the
-  finding's file, read from the default branch (a branch can't change how its own findings are filed). Labels the
+  finding's file, read from the default branch (a branch can't change how its own findings are filed). A matching
+  rule that names an `area:` label replaces the areas of the earlier rules (so a path gets one area, an override
+  goes after the broad rule, and a broad rule listed after it wins); other labels add up. Labels the
   repo doesn't have are dropped, and one that differs from a repo label only in case is filed under the repo's
   spelling. The type fallback goes by the labels that will actually be applied.
 - **Milestone**, only with `CLAUDE_P3_MILESTONE=auto`: the branch's open PR's, else the one milestone of the

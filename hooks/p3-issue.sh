@@ -24,9 +24,11 @@ if main=$(gh repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.na
 	base=refs/remotes/origin/$main
 fi
 
-# One label per line.
+# One label per line. $labels is the base (CLAUDE_P3_LABELS); $maplabels is what the map adds, where a matching rule
+# that names an area replaces the area of every earlier rule (the map's header comment, README).
 labels=$(var CLAUDE_P3_LABELS) || labels=review:p3
 labels=$(printf '%s\n' "$labels" | tr ',' '\n')
+maplabels=
 if [ -n "$base" ]; then
 	map=$(git show "$base:.github/claude-ship/p3-labels" 2>/dev/null)
 	set -f
@@ -36,12 +38,27 @@ if [ -n "$base" ]; then
 		esac
 		# shellcheck disable=SC2254 # the rule's glob is a pattern
 		case $file in
-		$glob) labels=$(printf '%s\n%s\n' "$labels" "$add" | tr ',' '\n') ;;
+		$glob)
+			new=$(printf '%s\n' "$add" | tr ',' '\n')
+			if printf '%s\n' "$new" | grep -Eiq '^[[:space:]]*area:'; then
+				# Drops the earlier areas, and any label this rule adds again so that it takes this rule's
+				# place in the order. Case is ignored, as tidy() settles the spelling later.
+				maplabels=$(printf '%s\n' "$maplabels" | NEW=$new awk '
+					function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return tolower(s) }
+					BEGIN {
+						n = split(ENVIRON["NEW"], a, "\n")
+						for (i = 1; i <= n; i++) again[trim(a[i])] = 1
+					}
+					{ t = trim($0); if (t ~ /^area:/ || t in again) next; print }')
+			fi
+			maplabels=$(printf '%s\n%s\n' "$maplabels" "$new")
+			;;
 		esac
 	done <<EOF
 $map
 EOF
 	set +f
+	labels=$(printf '%s\n%s\n' "$labels" "$maplabels")
 fi
 listed=
 known=$(gh label list -R "$slug" --limit 1000 --json name --jq '.[].name' 2>/dev/null) && listed=1

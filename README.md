@@ -107,7 +107,9 @@ gh variable set CLAUDE_ORCHESTRATE --body true -R <owner/repo>                  
 P3 issues (the gate's, and Codex findings the skill defers) are filed by `hooks/p3-issue.sh` with
 `CLAUDE_P3_LABELS` (default `review:p3`) plus labels by the finding's file, from
 `.github/claude-ship/p3-labels` on the default branch. One rule per line, `<glob> <label>[,<label>...]`; every
-matching rule adds its labels, and `*` spans `/`:
+matching rule adds its labels, except that a matching rule's `area:` label replaces the area of every earlier
+rule, so a path gets one area and an override goes after the broad rule (listed before it, the broad rule wins).
+`*` spans `/`:
 
 ```
 crates/core/*   area:core

@@ -1,6 +1,7 @@
 # Labels for P3 issues by the finding's file (hooks/p3-issue.sh): <glob> <label>[,<label>...]
-# Every path needs an area, and the last rule gives all of them a priority and a status, so the PR loop's queue
-# (open status:ready issues by priority) picks the issue up. tests/p3-issue.sh checks it for every tracked file.
+# A later rule's area replaces an earlier one, so an override goes after the broad rule. Every path needs an
+# area, and the last rule gives all of them a priority and a status, so the PR loop's queue (open status:ready
+# issues by priority) picks the issue up. tests/p3-issue.sh checks it for every tracked file.
 hooks/*                  area:gate
 tests/gate-*             area:gate
 tests/evals/*            area:gate
