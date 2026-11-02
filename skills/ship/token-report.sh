@@ -64,7 +64,7 @@ trap 'rm -rf "$tmp"' EXIT
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # window <pr> <true|false> <file>: appends the PR's own window to <file>; the second argument says whether the PR
-# was asked for (the report prints only those, but all the author's PRs compete for every request).
+# was asked for (the report prints only those, but the repo's other PRs compete for every request).
 window() {
 	info=$(gh pr view "$1" -R "$repo" --json title,state,author,createdAt,mergedAt,closedAt,commits) || {
 		echo "token-report.sh: gh pr view $1 failed" >&2
@@ -121,14 +121,27 @@ prevend() {
 prevend "$tmp/windows" "$tmp/windows2"
 
 # The other PRs compete for every request too (see the jq below), so they get windows the same way, each read
-# with `gh pr view`. Only PRs that end at or after the earliest prevEnd can overlap a window of an asked PR; one
-# that ended before can't hold a request of any of them. A PR whose author is deleted is left out: its earlier
-# PRs can't be listed, so it has no widened window (an asked one is an error, in `window`).
+# with `gh pr view`, but only those that can overlap a window of an asked PR (#129), bounded on both sides:
+# - below: one that ended before the earliest prevEnd can't hold a request of any of them. No bound when an
+#   asked PR has no earlier PR ($lo is "").
+# - above: one that starts after the latest end of the asked PRs ($hi; "9999" while one is still open) can't
+#   either. Its start is not only its creation, though: its window widens back to the end of its own author's
+#   previous PR, so a PR created later but whose previous PR ended before $hi is kept. (The list has no commit
+#   dates, so a first commit authored before the creation isn't seen; that window is not widened by it here.)
+# A PR whose author is deleted is left out: its earlier PRs can't be listed, so it has no widened window (an
+# asked one is an error, in `window`).
 jq -r -n --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/list" '
 	($w | map(.pr)) as $asked
 	| ($w | map(.prevEnd) | min) as $lo
-	| [$l[0][] | select(.author != "") | select(.number as $n | $asked | index($n) == null)
-		| select((.mergedAt // .closedAt // "9999")[0:19] >= $lo) | .number] | unique[]' >"$tmp/others.n" || exit 1
+	| ($w | map(if .status == "open" then "9999" else .end end) | max) as $hi
+	| $l[0] as $L
+	| [$L[] | select(.author != "") | select(.number as $n | $asked | index($n) == null)
+		| . as $p
+		| ($p.createdAt[0:19]) as $c
+		| ([$L[] | select(.author == $p.author and .number != $p.number)
+			| (.mergedAt // .closedAt) | select(type == "string") | .[0:19] | select(. < $c)] | max // "") as $pe
+		| select((.mergedAt // .closedAt // "9999")[0:19] >= $lo)
+		| select($c <= $hi or $pe < $hi) | .number] | unique[]' >"$tmp/others.n" || exit 1
 : >"$tmp/windowsO"
 while IFS= read -r n; do
 	window "$n" false "$tmp/windowsO"
@@ -198,7 +211,7 @@ done
 # PR's own window, but never to after start0. Work after the last merge belongs to no window. A request inside
 # some PR's own window goes to the latest-started of those; only a request in none goes to the latest-started
 # widened window, so widening never takes work from an overlapping PR. Every window is built and every request
-# assigned across all the PRs that could matter (the asked ones and the author's others, read above), by the
+# assigned across all the PRs that could matter (the asked ones and the repo's others that could overlap, read above), by the
 # same rules; only then are the asked PRs' rows kept, and a request won by a PR not asked for is dropped. So a
 # PR's row is the same whichever other PRs are asked for.
 jq -r -s --slurpfile w "$tmp/windowsAll" --slurpfile g "$tmp/gate" --arg repo "$repo" --argjson prices "$prices" '

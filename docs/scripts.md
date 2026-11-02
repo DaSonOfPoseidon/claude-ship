@@ -252,9 +252,14 @@ window goes to the latest-started of those; only a request in none goes to the l
 widening never takes work from an overlapping PR. All this is done across every PR that could matter, not just
 the PRs asked for or their authors': the PRs competing for a request are the repo's, whoever wrote them (one
 `gh pr list`, newest 200; a full page prints a warning, since older PRs are then missing). That is the asked PRs
-plus the others that end at or after the earliest previous-PR end (each read with `gh pr view`, since the list has
-no commit dates; one whose author is deleted is left out), all with the same window rules. Only the asked PRs' rows are printed, and a request won by another PR is dropped, so a PR's
-row is the same whichever other PRs are asked for (`tests/token-report.sh` checks this directly). A failed or odd
+plus the others that could overlap an asked window (each read with `gh pr view`, since the list has no commit
+dates; one whose author is deleted is left out), all with the same window rules. "Could overlap" is bounded on
+both sides (#129). Below: a PR that ended before the earliest previous-PR end of the asked PRs is left out (no
+bound when an asked PR has no earlier PR). Above: a PR created after the latest end of the asked PRs (no bound
+while one is open) is left out too, unless the end of its own author's previous PR is before that latest end,
+because its window widens back to that end and can take a request from an asked PR. Both bounds come from the
+list alone, so a first commit authored before its PR's creation isn't seen by them. Only the asked PRs' rows are
+printed, and a request won by another PR is dropped, so a PR's row is the same whichever other PRs are asked for (`tests/token-report.sh` checks this directly). A failed or odd
 `gh pr list`, or a PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would reach
 the window back to the session's start. A whole subagent transcript belongs to the PR whose window holds its last
 request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
@@ -268,7 +273,7 @@ in the total's requests and cost. A run with `cost_usd: null` makes its row and 
 failed (`rc` not 0) still counts. A row is the PR's when its repo is this one (compared without case: the gate logs the slug as spelled in the push
 URL, `gh` gives GitHub's) and either its `head` is one of the
 PR's commits (from the `gh pr view` call that reads the window, no extra call) or its head is no commit of any PR
-read (the asked ones and the author's others) and its `date` is in the PR's own window (the widening doesn't
+read (the asked ones and the others read) and its `date` is in the PR's own window (the widening doesn't
 apply: the gate runs at a push), which catches heads since rewritten by an amend or rebase. Where own windows
 overlap the latest-started takes it, as for requests, and a head that is another PR's commit never counts by
 window. A missing log means no gate rows. A line that isn't JSON or lacks `repo`, `head`, `stage` or `date` is

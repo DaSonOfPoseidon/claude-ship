@@ -515,6 +515,61 @@ total 2 1250000 0 0 0 $5.00
 peak main context: 1000000 tokens'
 grep -q 'newest 200' "$tmp/err" || { echo 'FAIL: no warning for the full pr list'; cat "$tmp/err"; fail=1; }
 
+# PRs that start after every asked window can't hold one of its requests, so they aren't read (#129), even when
+# the asked PR has no earlier PR to bound the other side. Alice's PR 200 (10:00..12:00) is her first; her next
+# three start after it ends. The fake gh logs each `pr view`: only PR 200 is read, and the row is the same.
+fresh
+pr 200 'first' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 201 'l1' 2026-10-01T13:00:00Z 2026-10-01T14:00:00Z
+pr 202 'l2' 2026-10-01T15:00:00Z 2026-10-01T16:00:00Z
+pr 203 'l3' 2026-10-01T17:00:00Z 2026-10-01T18:00:00Z
+for n in 200 201 202 203; do pauthor "$n" alice; done
+plist '200|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z|alice' '201|2026-10-01T13:00:00Z|2026-10-01T14:00:00Z|2026-10-01T14:00:00Z|alice' '202|2026-10-01T15:00:00Z|2026-10-01T16:00:00Z|2026-10-01T16:00:00Z|alice' '203|2026-10-01T17:00:00Z|2026-10-01T18:00:00Z|2026-10-01T18:00:00Z|alice'
+line "$D/s.jsonl" m1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+run 200
+check 'later PRs are not read' 0 'PR #200 first (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+[ "$(cat "$GH_DIR/views")" = 200 ] || { echo 'FAIL: want only PR 200 read with gh pr view'; cat "$GH_DIR/views"; fail=1; }
+
+# An asked PR that is still open has no end: the other PRs are not cut off from above.
+plist '200|2026-10-01T10:00:00Z||' '201|2026-10-01T13:00:00Z|2026-10-01T14:00:00Z|2026-10-01T14:00:00Z|alice'
+pr 200 'first' 2026-10-01T10:00:00Z ''
+pauthor 200 alice
+: >"$GH_DIR/views"
+run 200
+check 'an open PR is asked' 0 'PR #200 first (2026-10-01T10:00:00 → open)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+grep -qx 201 "$GH_DIR/views" || { echo 'FAIL: want PR 201 read when the asked PR is open'; cat "$GH_DIR/views"; fail=1; }
+
+# The upper bound is per PR, not per creation date: Bob's PR 206 starts after Alice's PR 205 (10:00..12:00) ends,
+# but his previous PR (204) ended at 08:00, so 206's window reaches back to the session's first request (09:00)
+# and takes it from 205 (the later-started takes a tie). 205's row is the same asked alone or with 206, so 206
+# must be read even though it was created after 205 ended.
+fresh
+pr 204 'x' 2026-10-01T07:00:00Z 2026-10-01T08:00:00Z
+pr 205 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 206 'c' 2026-10-01T14:00:00Z 2026-10-01T15:00:00Z
+pauthor 204 bob
+pauthor 205 alice
+pauthor 206 bob
+plist '204|2026-10-01T07:00:00Z|2026-10-01T08:00:00Z|2026-10-01T08:00:00Z|bob' '205|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z|alice' '206|2026-10-01T14:00:00Z|2026-10-01T15:00:00Z|2026-10-01T15:00:00Z|bob'
+line "$D/s.jsonl" n0 2026-10-01T09:00:00.000Z claude-opus-5-5 1000000 0 0 0
+line "$D/s.jsonl" n1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" n2 2026-10-01T14:30:00.000Z claude-opus-5-5 250000 0 0 0
+run 205
+check 'a later PR that widens back is read' 0 'PR #205 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+same 205 206
+
 # `gh pr list` failing exits 1 with its message and prints no table (it is not read as "no earlier PRs").
 fresh
 pr 67 'y' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
