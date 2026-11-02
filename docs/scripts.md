@@ -221,8 +221,10 @@ orchestrator, since subagents can't resolve threads (#100), from the checkout `p
   threads it fixed, so the orchestrator puts those in the same file as `resolve` entries: only
   `resolveReviewThread` runs for them, and any `reply` on them is ignored.
 - **Stops at the first failed call**, printing `done:` (the threads finished) and `failed:` (the thread and
-  step) to stderr, exit 1. A failed reply may have posted and a failed resolve leaves a posted reply, so check
-  the thread before rerunning with the finished threads removed from the file.
+  step, or `recheck (workflow)`) to stderr, exit 1. A failed reply may have posted and a failed resolve leaves a
+  posted reply, so check the thread before rerunning with the finished threads removed from the file. When
+  `failed:` is `recheck (workflow)`, every thread is already done: run only `gh workflow run codex-review.yml -R
+  <slug> -f pr=<pr>` again (or push a commit), never the triage file, which would be empty and exit 2.
 - **Ends with the status recheck** (`gh workflow run codex-review.yml`) only when no entry is `fixed`: a fix
   means a push and a new request, which recheck it anyway. A `resolve` entry doesn't count, because its fix was
   pushed before the thread was resolved, so the push-triggered run saw it open; without the recheck the status

@@ -169,9 +169,10 @@ overwrite a file you haven't read). It is a JSON array, and `codex-triage.sh` va
 For the `issue` threads, plus a `resolve` entry per `replied` id not already resolved in step 3, run
 `codex-triage.sh <pr> <triage file (Bash)>` once. It files the issues, replies and resolves, and rechecks the
 status itself. It stops at the first failed call and prints `done:` (the threads finished) and `failed:` (the
-thread and step) on stderr. If it is denied or fails, don't try again another way: report what it printed (see
-**Report**), because a failed call may have done part of its work and the orchestrator must not replay the file
-as it is.
+thread and step, or `recheck (workflow)`) on stderr. If it is denied or fails, don't try again another way: report
+what it printed (see **Report**), because a failed call may have done part of its work and the orchestrator must
+not replay the file as it is. When `failed:` is `recheck (workflow)` every thread is done: the orchestrator reruns
+only the workflow command, never the file.
 
 ## Report (14 lines or fewer, not counting the `ci-failures:` block)
 

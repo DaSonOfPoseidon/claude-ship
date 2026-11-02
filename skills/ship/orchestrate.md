@@ -127,12 +127,14 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      user (a stuck runner). `round-cap` and `timeout` need no new request unless the user asks.
    - `denied:` lines: the agent's triage write or call was denied, or `codex-triage.sh` failed part-way (auto
      mode denies subagents some calls, #100). `file:` names the triage file, `done:` the threads the script
-     finished, and `denied:` quotes its `failed:` line (the thread and step that failed). A failed call may
-     have done part of its work, so never rerun the file as it is. Read the file, remove the `done:` threads'
-     entries, then check the failed thread for a half-applied reply or filed issue (its replies, and
-     `gh issue list` for the finding), as the ship skill's step 4 says, and remove or adjust that entry too.
-     Then run `~/.claude/skills/ship/codex-triage.sh <pr> <file>` once on what is left, from the implementer's
-     worktree (`cd <worktree> && …`, since `p3-issue.sh` reads the branch). If the Write itself was denied and
+     finished, and `denied:` quotes its `failed:` line (the thread and step that failed). If that line is
+     `failed: recheck (workflow)`, every thread is done and only the status recheck failed: never rerun the
+     file (it would be empty), run only `gh workflow run codex-review.yml -R <slug> -f pr=<pr>` again. For a
+     thread failure, a failed call may have done part of its work, so never rerun the file as it is. Read the
+     file, remove the `done:` threads' entries, then check the failed thread for a half-applied reply or filed
+     issue (its replies, and `gh issue list` for the finding), as the ship skill's step 4 says, and remove or
+     adjust that entry too. Then run `~/.claude/skills/ship/codex-triage.sh <pr> <file>` once on what is left,
+     from the implementer's worktree (`cd <worktree> && …`, since `p3-issue.sh` reads the branch). If the Write itself was denied and
      there is no file, write one from `codex-findings.sh` and the ship skill's step 4 table. You triage by hand
      only these.
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
