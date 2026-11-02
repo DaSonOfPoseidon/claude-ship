@@ -24,11 +24,23 @@ usage() {
 	exit 2
 }
 [ "$#" -gt 0 ] || usage
+# `asked` is the PR numbers, one per line: a PR given twice counts once (#166), in the order first given, and
+# leading zeros are dropped first (010 is 10), or the window and its requests would be counted twice.
+asked=
 for pr in "$@"; do
 	case $pr in
 	'' | *[!0-9]*) usage ;;
 	esac
+	while :; do
+		case $pr in
+		0?*) pr=${pr#0} ;;
+		*) break ;;
+		esac
+	done
+	asked="$asked $pr"
 done
+# shellcheck disable=SC2086 # PR numbers: digits only
+asked=$(printf '%s\n' $asked | awk '!seen[$0]++')
 
 # Claude Code names a project's transcript dir after its path with every non-alphanumeric turned into `-`.
 # The git common dir is the main checkout's, so this works from a worktree too.
@@ -75,7 +87,8 @@ window() {
 			end: $e.end[0:19], status: $e.status, commits: [.commits[]?.oid | select(type == "string")]}' >>"$3" || exit 1
 }
 : >"$tmp/windows"
-for pr in "$@"; do
+# shellcheck disable=SC2086 # PR numbers: digits only
+for pr in $asked; do
 	window "$pr" true "$tmp/windows"
 done
 

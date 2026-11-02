@@ -76,7 +76,16 @@ if [ -n "$since" ]; then
 		echo "gate-stats.sh: no PRs created since $since" >&2
 	fi
 else
-	printf '%s\n' "$@" >"$tmp/prs"
+	# A PR given twice counts once (#166), in the order first given. Leading zeros are dropped first: 010 is 10.
+	for pr in "$@"; do
+		while :; do
+			case $pr in
+			0?*) pr=${pr#0} ;;
+			*) break ;;
+			esac
+		done
+		printf '%s\n' "$pr"
+	done | awk '!seen[$0]++' >"$tmp/prs"
 fi
 prs=$(cat "$tmp/prs")
 

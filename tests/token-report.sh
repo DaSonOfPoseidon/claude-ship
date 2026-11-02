@@ -182,6 +182,12 @@ cp "$tmp/out" "$tmp/out.main"
 run -C "$tmp/wt" 10
 check 'from a worktree' 0 "$(cat "$tmp/out.main")"
 
+# A PR given twice (or with leading zeros: 010 is 10) is reported once (#166).
+run 10 10
+check 'a repeated PR' 0 "$(cat "$tmp/out.main")"
+run 010 10 0010
+check 'a PR repeated with leading zeros' 0 "$(cat "$tmp/out.main")"
+
 # --- overlapping windows: a main request goes to the later-started PR only.
 fresh
 pr 20 'one' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z

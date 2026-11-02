@@ -193,6 +193,12 @@ cp "$tmp/out" "$tmp/out.main"
 run -C "$tmp/wt" 10
 check 'from a worktree' 0 "$(cat "$tmp/out.main")"
 
+# A PR given twice (or with leading zeros: 010 is 10) counts once, in the same row and the same total.
+run 10 10
+check 'a repeated PR' 0 "$(cat "$tmp/out.main")"
+run 010 10 0010
+check 'a PR repeated with leading zeros' 0 "$(cat "$tmp/out.main")"
+
 # --- matching: a.sh:50 flagged; a Codex thread 10 lines away is caught, 11 lines away is missed; a thread with
 # no line (null line and originalLine) or no path is missed; originalLine stands in for a null line; a thread of
 # another author is not Codex's; a different file with the same line is no match.
