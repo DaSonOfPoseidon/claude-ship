@@ -17,15 +17,14 @@ review finds a new class.
   old check (docs/gate.md › Tamper protection). The push, PR and `gh api` checks sit behind the same tree: a command
   that runs no git or gh skips them (docs/gate.md › Command reading), and "runs no git" means every command in the
   tree is on a list of tools known not to run their arguments, not that the tree names no git.
-- **A command's name is not the program it runs.** The runs-git filter trusted a listed name (`cat`, `echo`) by its
-  last path part, so `./cat` and `/tmp/ls` passed as the tools, and by the bare word, so `PATH=. cat` ran a script the
-  same command wrote (claude-ship #135). Trust a name only when it is a bare word and nothing in the command
-  (an assignment to any variable not on a short allowlist of harmless names, since `PATH`, `PERL5OPT`, `IFS`,
-  `BASH_ENV`, `NODE_OPTIONS` and the rest never end; assignments are not only `name=value`: a loop variable, `select`,
-  `coproc`, `${x:=…}`, `read`, `printf -v` and a `{name}>file` redirect all set one; a function of that name) can change what it resolves to. A listed
-  tool is trusted with its options too: `rg --pre` and `--hostname-bin` and `sort --compress-program` (also
-  abbreviated) run a program, `printf '%n'` assigns a variable, `bash --rcfile … -ic true` runs a file before its `-c`
-  string, `xargs env` runs whatever its input says and `xargs find` takes it as `-exec` predicates, so none of those is judged by the visible arguments alone (codex, #191).
+- **A command's name is not the program it runs, and a list of what is dangerous never ends.** The runs-git filter
+  first trusted a long list of names and then patched each bypass: `./cat` and `/tmp/ls` (a path is a script), `PATH=. cat`,
+  then `PERL5OPT=… shasum`, `xargs find`, `printf '%n'`, `{PATH}>f`, `declare -a a='($(…))'`, `exec -l bash` (claude-ship
+  #135, #191), one codex round each. What is left is a short list: the bare name of a plain external read-only tool, every
+  word literal, no option that runs a program (`sort --compress-program`, abbreviated too); a wrapper, a shell, a builtin
+  that assigns, runs code or replaces the shell, a file-changing tool, a dynamic word and any variable assignment outside
+  a short allowlist are unknown (docs/gate.md › Command reading). When a trusted tool turns out to run something, remove
+  it from the list rather than adding a check for that one form.
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
   `>&2` as a descriptor duplication when any non-alphanumeric followed, so `>&2.txt` (bash: a write to the file
   `2.txt`) and `>&1/x` passed; so did `&>/dev/null.log` (no terminator at all) and `>/dev/null,x` (the `/dev/…`

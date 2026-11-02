@@ -250,17 +250,17 @@ expect_review 0 'grep -n "gh api" hooks/review-gate.sh' none
 expect_review 0 "printf '%s\\n' 'gh pr create' >/tmp/y" none
 expect_review 0 'echo "gh api -X DELETE repos/a/b"' none
 expect_review 0 'sort -u f; echo "git push"' none
-expect_review 0 'echo "git push"; bash -c '\''true'\''; bash -ec '\''true'\''; printf "%s\n" "git push" | xargs echo' none
-expect_review 0 'echo $((1+2)) "git push"; echo $x' none
-expect_review 0 'cat <<EOF | tee /tmp/y
+expect_review 2 'echo "git push"; bash -c '\''true'\''; bash -ec '\''true'\''; printf "%s\n" "git push" | xargs echo' none
+expect_review 2 'echo $((1+2)) "git push"; echo $x' none
+expect_review 2 'cat <<EOF | tee /tmp/y
 git push origin HEAD, $HOME `date`
 EOF' none
-expect_review 0 'mkdir -p "$d" && cd "$d" && cat > x <<'\''EOF'\''
+expect_review 2 'mkdir -p "$d" && cd "$d" && cat > x <<'\''EOF'\''
 git push && gh pr create
 EOF' none
-expect_review 0 'for f in a b; do cat "$f"; echo "gh api $f"; done' none
-expect_review 0 'sudo cat /etc/hosts "git push"; env a=1 echo "git push"; timeout 5 grep "git push" f' none
-expect_review 0 "bash -c 'echo \"git push\"'" none
+expect_review 2 'for f in a b; do cat "$f"; echo "gh api $f"; done' none
+expect_review 2 'sudo cat /etc/hosts "git push"; env a=1 echo "git push"; timeout 5 grep "git push" f' none
+expect_review 2 "bash -c 'echo \"git push\"'" none
 expect_review 0 'echo "git push" >&2' none
 # A real gh call still gets every text check: a heredoc body for `gh issue comment` with quoting it can't read
 # blocks, as before.
@@ -329,7 +329,7 @@ expect_review 2 'for ((i=0;i<3;i++)); do echo "git push"; done' none
 expect_review 2 'echo ${x:1:n} "git push"' none
 expect_review 2 'declare -i x; echo "git push"' none
 expect_review 2 '(( n=1 )); echo "git push"' none
-expect_review 0 'echo ${x:1:2} "git push"; (( 1+1 )); echo $((0x1f + 2))' none
+expect_review 2 'echo ${x:1:2} "git push"; (( 1+1 )); echo $((0x1f + 2))' none
 expect_review 2 'a[$(git push)]=1' none
 expect_review 2 'echo "git push" ; ./run.sh' none
 # A variable that changes which program a listed name runs makes the name unknown too.
@@ -356,7 +356,7 @@ expect_review 2 'echo "git push"; sort --compress-prog=/tmp/x f' none
 expect_review 2 'echo "git push"; printf "%s\0" --compress-program=/tmp/h /tmp/in | xargs -0 sort' none
 expect_review 2 'echo "git push"; find . -name x -exec sort {} +' none
 expect_review 2 'echo "git push"; echo a | xargs printf' none
-expect_review 0 'echo "git push"; echo a | xargs cat; sort -u f | printf "%s\n" a' none
+expect_review 2 'echo "git push"; echo a | xargs cat; sort -u f | printf "%s\n" a' none
 # Declarations that evaluate text: a nameref runs a subscript when it is assigned through.
 expect_review 2 'declare -n ref='\''a[$(git push)]'\''; ref=1' none
 expect_review 2 'echo "git push"; declare -nr ref=x' none
@@ -367,7 +367,7 @@ expect_review 2 'echo "git push"; declare '\''-i'\'' ref=x' none
 expect_review 2 'echo "git push"; declare $f ref=x' none
 expect_review 2 'echo "git push"; declare -$f ref=x' none
 expect_review 2 'echo "git push"; export "$v"' none
-expect_review 0 'echo "git push"; declare -r ref=x; declare -x other=y; export plain' none
+expect_review 2 'echo "git push"; declare -r ref=x; declare -x other=y; export plain' none
 # A path named like a listed tool or wrapper is a script, not that tool.
 expect_review 2 'printf '\''git push'\'' > ./cat; chmod +x ./cat; ./cat' none
 expect_review 2 '/tmp/ls "git push"' none
@@ -385,7 +385,7 @@ expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 nic
 expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 timeout 5 find .' none
 expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 /usr/bin/find .' none
 expect_review 2 'echo "git push"; find . -maxdepth 0 -exec xargs find . -exec true ";" ";"' none
-expect_review 0 'echo "git push"; printf "%s\n" a | xargs grep -l x; find . -name x -exec cat {} +' none
+expect_review 2 'echo "git push"; printf "%s\n" a | xargs grep -l x; find . -name x -exec cat {} +' none
 expect_review 2 'echo "git push"; PERL5OPT=-MReviewHook PERL5LIB=/tmp shasum /dev/null' none
 expect_review 2 'echo "git push"; PERL5OPT=-Mx cat x' none
 expect_review 2 'echo "git push"; PYTHONSTARTUP=/tmp/x md5sum f' none
@@ -399,18 +399,20 @@ expect_review 2 'echo "git push"; for PERL5OPT in a; do :; done' none
 expect_review 2 'echo "git push"; : ${PATH:=.}; cat f' none
 expect_review 2 'echo "git push"; readonly PATH=.; cat f' none
 expect_review 2 'echo "git push"; Foo=1 cat f' none
-expect_review 0 'echo "git push"; LC_ALL=C sort f; env TZ=UTC date; lower=1 cat f; : ${x:=1} ${y=2}; for i in a; do :; done' none
+expect_review 0 'echo "git push"; LC_ALL=C sort f; TZ=UTC date; lower=1 cat f; for i in a; do echo i; done' none
+expect_review 2 'echo "git push"; : ${x:=1}' none
+expect_review 2 'echo "git push"; echo ${y=2}' none
 expect_review 2 'echo "git push"; cat {PATH}</dev/null' none
 expect_review 2 'echo "git push"; exec {PERL5OPT}>/dev/null' none
 expect_review 2 'echo "git push"; coproc PATH { :; }' none
 expect_review 2 'echo "git push"; select PATH in a b; do :; done' none
-expect_review 0 'echo "git push"; cat {fd}</dev/null; coproc job { :; }; cat 2>/dev/null' none
+expect_review 0 'echo "git push"; cat {fd}</dev/null; coproc job { true; }; cat 2>/dev/null' none
 expect_review 2 'echo "git push"; printf '\''%n'\'' PATH' none
 expect_review 2 'echo "git push"; printf -- '\''%hhn'\'' PATH' none
 expect_review 2 'echo "git push"; printf '\''%1$n'\'' PATH' none
 expect_review 2 'echo "git push"; printf '\''x%5ny'\'' PATH' none
 expect_review 2 'echo "git push"; printf -vPATH x' none
-expect_review 0 'echo "git push"; printf '\''%s %d%%n\n'\'' a 1; printf "100%% sure\n"' none
+expect_review 2 'echo "git push"; printf '\''%s %d%%n\n'\'' a 1; printf "100%% sure\n"' none
 expect_review 2 'echo "git push"; read PATH' none
 expect_review 2 'echo "git push"; hash -p /tmp/x cat; cat' none
 expect_review 2 'echo "git push"; enable -f /tmp/x.so x' none
@@ -425,6 +427,64 @@ expect_review 2 'echo "git push"; sort --co /tmp/x f' none
 expect_review 2 'echo "git push"; rg --pre /tmp/x a f' none
 expect_review 2 'echo "git push"; rg --pre-glob x a f' none
 expect_review 0 'echo "git push"; sort -u -k2 --reverse --output=o f' none
+# Round 4 of #191, and the decision to stop patching one case at a time: the safe list is plain external read-only
+# tools with literal arguments. A declaration builtin, exec, eval, a shell, a wrapper, printf, a file-changing tool or a
+# dynamic argument makes the command unknown.
+expect_review 2 'declare -a a='\''($(git push origin HEAD))'\''' none
+expect_review 2 'echo "git push"; typeset -a a='\''($(x))'\''' none
+expect_review 2 'echo "git push"; local -a a=x' none
+expect_review 2 'echo "git push"; declare -r ref=x' none
+expect_review 2 'echo "git push"; export plain' none
+expect_review 2 'echo "git push"; readonly plain=1' none
+expect_review 2 'printf '\''git push origin HEAD\n'\'' > "$HOME/.bash_profile"; exec -l bash -c true' none
+expect_review 2 'echo "git push"; exec -l bash -c true' none
+expect_review 2 'echo "git push"; exec cat f' none
+expect_review 2 'echo "git push"; eval true' none
+expect_review 2 'echo "git push"; source /tmp/x' none
+expect_review 2 'echo "git push"; . /tmp/x' none
+expect_review 2 'echo "git push"; trap true EXIT' none
+expect_review 2 'echo "git push"; let x=1' none
+expect_review 2 'echo "git push"; shopt -s nullglob' none
+expect_review 2 'echo "git push"; builtin echo x' none
+expect_review 2 'echo "git push"; command -p cat x' none
+expect_review 2 'echo "git push"; command cat x' none
+expect_review 2 'echo "git push"; env cat x' none
+expect_review 2 'echo "git push"; nice cat x' none
+expect_review 2 'echo "git push"; nohup cat x' none
+expect_review 2 'echo "git push"; timeout 5 cat x' none
+# `time` is a keyword: the command behind it is what is judged.
+expect_review 0 'echo "git push"; time cat x' none
+expect_review 2 'echo "git push"; sudo cat x' none
+expect_review 2 'echo "git push"; stdbuf -o0 cat x' none
+expect_review 2 'echo "git push"; setsid cat x' none
+expect_review 2 'echo "git push"; xargs echo x' none
+expect_review 2 'echo "git push"; find . -name x' none
+expect_review 2 'echo "git push"; printf x' none
+expect_review 2 'echo "git push"; printf "%s\n" x' none
+expect_review 2 'echo "git push"; pushd /tmp' none
+expect_review 2 'echo "git push"; tee f' none
+expect_review 2 'echo "git push"; mkdir -p d' none
+expect_review 2 'echo "git push"; touch f' none
+expect_review 2 'echo "git push"; cp a b' none
+expect_review 2 'echo "git push"; mv a b' none
+expect_review 2 'echo "git push"; rm f' none
+expect_review 2 'echo "git push"; chmod +x f' none
+expect_review 2 'echo "git push"; ln -s a b' none
+expect_review 2 'echo "git push"; mktemp' none
+expect_review 2 'echo "git push"; : x' none
+expect_review 2 'echo "git push"; cat "$f"' none
+expect_review 2 'echo "git push"; sort $opt f' none
+expect_review 2 'echo "git push"; cat *.md' none
+expect_review 2 'echo "git push"; echo $x' none
+expect_review 2 'echo "git push"; cat $(echo f)' none
+expect_review 2 'echo "git push"; bash -c true' none
+expect_review 2 'echo "git push"; sh -c "echo x"' none
+expect_review 2 'echo "git push"; sed s/a/b/ f' none
+expect_review 2 'echo "git push"; awk 1 f' none
+expect_review 2 'echo "git push"; test -f f' none
+expect_review 2 'echo "git push"; [ -f f ]' none
+expect_review 0 'echo "git push"; cat f; grep -n "gh api" f | wc -l; head -3 f | sort -u | uniq | cut -d: -f1; ls -la; diff a b; jq . f; date; pwd; true; false' none
+expect_review 0 'echo "git push" 2>&1 >/dev/null; stat f; basename /a/b; wc -l < f; sleep 1; seq 3; id -u; uname -a' none
 expect_review 2 'echo "git push" ; flock l true' none
 
 # The reviewers share one time budget (claude-ship #103): REVIEW_GATE_BUDGET seconds from the gate's start, each

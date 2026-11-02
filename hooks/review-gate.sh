@@ -188,11 +188,11 @@ prot_re="(~|$home_re)/\\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)|\
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
 #   {k: "wr", t}        a write redirect to the literal target t
 #   {k: "lw", t}        a literal word t that names a protected path
-#   {k: "gg"}           a command whose effective word is git or gh
-#   {k: "ggdyn"}        a command that may run git or gh, or text that is run without being a command (see runs_gitgh)
+#   {k: "ggdyn"}        a command that is not a plain read-only tool with literal words, or text that is run without being
+#                       a command (see runs_gitgh)
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
 # kept as text); anything else is dynamic. The output, for the loop below: the verdict (block, dyn, pass, or bad when the
-# input is no tree) on the first line, then the message of a block; or `run` (a gg or ggdyn event) or `skip` (neither),
+# input is no tree) on the first line, then the message of a block; or `run` (a ggdyn event) or `skip` (none),
 # then the strings to parse again, one JSON string per line.
 tamper_jq='
 def bn: sub("^.*/"; "");
@@ -300,53 +300,37 @@ def calls:
 		($w[] | select(test(">+[|&]?\\s*[\"\u0027]?[^\\s;&|\"\u0027]*(" + $prot + ")")) | {k: "block", p: ., w: ">"}),
 		(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w)) end)
 	end;
-# runs_gitgh (docs/gate.md › Command reading): does the command run git or gh? Only commands that run neither skip the
-# text checks that follow. The list is of what is known not to run its arguments, so a command that is not on it
-# (an unlisted wrapper, an interpreter, `ssh`, a script) counts as unknown, like a word it can not read.
-def ggsafe: test("^(cat|echo|printf|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|tee|ls|stat|diff|cmp|jq|mkdir|mktemp|touch|cp|mv|rm|ln|chmod|pwd|cd|pushd|popd|true|false|:|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|xxd|od|uname|whoami|id|hostname)$");
-# Tools on that list with an option that runs a program (sort --compress-program, which getopt lets one abbreviate)
-# or names a variable (printf -v, and a %n conversion, which stores into the variable its argument names); behind xargs
-# or find -exec their options are not all visible. rg is not listed: its --pre and --hostname-bin run programs.
-def ggbad($c; $a; $x):
-	(($c == "printf" or $c == "sort") and $x)
-	or ($c == "printf" and any($a[]; test("^-v") or (gsub("%%"; "") | test("%[^a-zA-Z%]*[hlLjzqt]*n"))))
-	or ($c == "sort" and any($a[]; test("^--co")));
-# One command after its wrappers: gg when it is git or gh, ggdyn when it may run one, nothing when it can not. The
-# strings that sh -c and eval run are events of `calls` (str), parsed again by the caller.
-def ggev($e):
-	($e.w[0] | bn) as $c | $e.w[1:] as $a
-	| if ($c | test("^(git|gh)$")) then {k: "gg"}
-	elif ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x or $c == "zsh" or ($a | any(test("^(--(rcfile|init-file|login|interactive)(=.*)?|-[a-zA-Z]*[il][a-zA-Z]*)$"))) then {k: "ggdyn"} else (shellstr($a) | select(.k == "dyn") | {k: "ggdyn"}) end)
-	elif $c == "eval" then (if $e.x then {k: "ggdyn"} else empty end)
-	elif ($c | ggsafe) and (ggbad($c; $a; $e.x) | not) then empty
-	else {k: "ggdyn"} end;
-# A path that ends in the name of a wrapper, a shell or a listed tool (./cat, /tmp/env) is a script that may be anything,
-# not that tool, so it is unknown. git and gh by path stay git and gh (ggev).
-def ggpath: contains("/") and (bn | test("^(env|command|builtin|exec|nohup|nice|time|timeout|stdbuf|setsid|sudo|doas|xargs|find|sh|bash|dash|zsh|ksh|ash|eval)$") or ggsafe);
+# runs_gitgh (docs/gate.md › Command reading): does the command run git or gh? Only a command made wholly of plain
+# external read-only tools, each with literal arguments, skips the text checks that follow. Everything else is unknown
+# (git and gh, a wrapper, a shell, an interpreter, a builtin that assigns, runs code or replaces the shell, a tool that
+# changes files, a script, a word that is not literal), whether it runs git or not: the list of what is dangerous
+# never ended (claude-ship #191), so the list of what is trusted is short.
+def ggsafe: test("^(cat|echo|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|ls|stat|diff|cmp|jq|pwd|true|false|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|xxd|od|uname|whoami|id|hostname)$");
+# A tool on that list with an option that runs a program: sort --compress-program, which getopt lets one abbreviate.
+# rg is not listed: its --pre and --hostname-bin run programs.
+def ggbad($c; $a):
+	$c == "sort" and any($a[]; test("^--co"));
 # A variable that changes which program a listed name runs, or loads code into it or into the shell (`PATH=. cat`,
-# `env PERL5OPT=-Mx shasum`, `export LD_PRELOAD=...`, `IFS`, `BASH_ENV`, `PS4`, `GIT_*`, `NODE_OPTIONS`...). The list of
-# those never ends, so it is the other way round: only a variable known to be harmless is. That is a lower-case name (the
-# environment variables tools read are upper-case; the zsh ones that are tied to PATH and the like are left out) and the
-# locale and terminal ones. Any other name makes the command unknown.
+# `PERL5OPT=-Mx shasum`, `IFS`, `BASH_ENV`, `PS4`, `GIT_*`, `NODE_OPTIONS`...). The list of those never ends, so it is
+# the other way round: only a variable known to be harmless is. That is a lower-case name (the environment variables
+# tools read are upper-case; the zsh ones that are tied to PATH and the like are left out) and the locale and terminal
+# ones. Any other name makes the command unknown.
 def ggnameok: test("^([a-z_][a-z0-9_]*|LC_[A-Z]+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|)$")
 	and (test("^(path|fpath|cdpath|manpath|mailpath|module_path|watch|psvar|histchars)$") | not);
-def ggenv: test("^[A-Za-z_][A-Za-z0-9_]*\\+?=") and (sub("\\+?=.*$"; "") | ggnameok | not);
+# The command word is the bare name of a listed tool (not a path: ./cat is a script), and every word is literal (a
+# dynamic one may be an option that runs a program), or the command is unknown. No wrapper is unwrapped: env, sudo,
+# xargs, find, sh -c and the like are not on the list.
 def ggcalls:
 	(.Args? // []) as $args | [$args[] | wv] as $w
 	| if ($w | length) == 0 then empty
-	elif $w[0] == null then {k: "ggdyn"}
-	elif any($w[]; . != null and (ggpath or ggenv)) then {k: "ggdyn"}
-	elif any($w[]; . == null) then (if ($w[0] | bn) as $c | ($c | ggsafe) and ($c | test("^(printf|sort)$") | not) then empty else {k: "ggdyn"} end)
-	else (eff($w; false) as $effs
-		| if $effs == null or ($effs == [] and any($w[]; bn == "xargs")) then {k: "ggdyn"}
-		# xargs adds arguments to the end of the command, and find takes them as predicates (-exec sh -c ...).
-		elif any($w[]; bn == "xargs") and any($w[]; bn == "find") then {k: "ggdyn"}
-		else ($effs[] | ggev(.)) end)
-	end;
-# Nodes that run text without being a command, or change what a name runs (an assignment to PATH): an indirect or prompt
-# expansion (`${!x}`, `${x@P}`), arithmetic, which
-# evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`, `[[ a -eq b ]]`, `declare -i`, a nameref, `declare -n`, any declaration flag that is quoted or expanded),
-# and an array subscript. Plain numbers are fine.
+	elif any($w[]; . == null) then {k: "ggdyn"}
+	elif ($w[0] | ggsafe) and (ggbad($w[0]; $w[1:]) | not) then empty
+	else {k: "ggdyn"} end;
+# Nodes that run text without being a command, or change what a name runs: an indirect or prompt expansion (`${!x}`,
+# `${x@P}`), arithmetic, which evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`,
+# `[[ a -eq b ]]`), any declaration (`declare`, `typeset`, `local`, `export`, `readonly`: a quoted array initializer
+# is parsed again, a nameref runs a subscript), an array subscript, and an assignment to a variable that is not known
+# to be harmless (`x=1`, `for`, `select`, `coproc`, `${x:=…}`, a `{name}` redirect). Plain numbers are fine.
 def ggnum: ([.. | objects | select(.Type == "Lit") | .Value] | all(test("^([0-9]+|0[xX][0-9a-fA-F]+)$")))
 	and (any(.. | objects; .Type == "ParamExp") | not);
 def ggnode:
@@ -355,7 +339,7 @@ def ggnode:
 	elif (.Type == "ArithmExp" or .Type == "ArithmCmd" or .Type == "LetClause" or .Type == "CStyleLoop") then (if ggnum then empty else {k: "ggdyn"} end)
 	elif .Type == "BinaryTest" and ((.Op | tostring) | test("^-(eq|ne|lt|le|gt|ge)$")) then {k: "ggdyn"}
 	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
-	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and (([.Value.Parts[]? | .Type] | any(. != "Lit")) or ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*[in]")))) then {k: "ggdyn"}
+	elif .Type == "DeclClause" then {k: "ggdyn"}
 	elif has("Index") and .Index != null then {k: "ggdyn"}
 	elif (.Name? | type) == "object" and ((.Name | if has("Value") then .Value else ([.Parts[]? | .Value? // "?"] | join("")) end) | ggnameok | not) then {k: "ggdyn"}
 	elif (.N? | type) == "object" and ((.N.Value? // "") | test("^\\{.*\\}$")) and (.N.Value[1:-1] | ggnameok | not) then {k: "ggdyn"}
@@ -374,7 +358,7 @@ else
 		else null end) as $blk
 	| if $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
 		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end),
-			(if any($ev[]; .k == "gg" or .k == "ggdyn") then "run" else "skip" end),
+			(if any($ev[]; .k == "ggdyn") then "run" else "skip" end),
 			($ev[] | select(.k == "str") | .v | tojson) end
 end'
 # What the tree can't settle falls back to the text check: a command that names gate state or the installed gate
@@ -399,7 +383,7 @@ text_tamper() {
 }
 # Walks the tree, then the strings it runs as shell (`sh -c`, `eval`) to a depth of 3, each parsed again. A string
 # that doesn't parse, or sits deeper, is dynamic. The same walk settles runs_gitgh (docs/gate.md › Command reading):
-# gg_run stays 0 only while no tree has a git or gh command or anything that might run one.
+# gg_run stays 0 only while every command in every tree is a plain read-only tool with literal words.
 tamper_dyn=0
 gg_run=0
 printf '%s' "$cmd_all" | grep -q disableAllHooks && tamper_dyn=1

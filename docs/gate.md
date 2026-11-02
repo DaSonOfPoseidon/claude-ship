@@ -65,38 +65,37 @@ protection below). The command must parse, or the call blocks.
 
 **The filter (`runs_gitgh`).** The checks that read text (the quoting check, the `gh api` scan, the push and
 `gh pr create` checks) only matter for a command that runs git or gh, so the tree decides first. The tamper walk
-(same jq run, same wrappers, `sh -c` and `eval` strings parsed again to depth 3) also raises `gg` for a command
-whose effective word is `git` or `gh` (also by path: `/usr/bin/git`), and `ggdyn` for anything that might run one.
-With neither, the command is not a push, a PR create or a `gh api` call, so after the tamper, waiver and opt-in
+(same jq run, `sh -c` and `eval` strings parsed again to depth 3) raises `ggdyn` for every command that is not on a
+short list of plain read-only tools with literal words, which includes `git` and `gh` themselves. When no command in
+the tree raises it, the command is not a push, a PR create or a `gh api` call, so after the tamper, waiver and opt-in
 checks the gate exits 0 without the rest: a heredoc body, a quoted argument or an `echo` that merely mentions
-`git push`, `gh pr create` or `gh api -X DELETE …` no longer blocks or starts a review (#135). With `gg` or `ggdyn`
-everything runs exactly as before, text checks included, so a real `gh issue comment … <<EOF` keeps its quoting check.
+`git push`, `gh pr create` or `gh api -X DELETE …` no longer blocks or starts a review (#135). Otherwise everything runs
+exactly as before, text checks included, so a real `gh issue comment … <<EOF` keeps its quoting check.
 
-What is `ggdyn`: the filter lists what is known *not* to run its arguments (`ggsafe`: `cat`, `echo`, `printf`, `grep`,
-`wc`, `head`, `tail`, `sort`, `tee`, `ls`, `jq`, `mkdir`, `cp`, `mv`, `rm`, `cd`, …; not `sed`, `awk` or `rg`, which can
-run commands: `rg --pre`, `--hostname-bin`) and treats every other effective command as unknown, so a wrapper the gate doesn't list (`flock`, `watch`,
-`ssh`, `busybox`), an interpreter (`python3 -c`, `node`), a script (`./run.sh`, `make`) or a shell function that calls one
-can't hide a push. Also unknown:
+What is `ggdyn`: the filter trusts a short list and treats everything else as unknown (`ggsafe`), because every list of
+what is dangerous kept missing something (claude-ship #191: wrappers, `PERL5OPT`, `printf %n`, `declare -a`, `exec -l`).
+A command is trusted only when it is the bare name of a plain external read-only tool (`cat`, `echo`, `grep`, `wc`,
+`head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `ls`, `stat`, `diff`, `jq`, `date`, `basename`, `sha256sum`, … and `pwd`,
+`true`, `false`), **every** word of it is literal (a dynamic word could be an option that runs a program: `cat "$f"` and
+`echo $x` are unknown), and no option runs a program (`sort --compress-program` and every abbreviation of it). Unknown, so
+the old text checks run:
 
-- a word that is a path ending in the name of a listed tool, a wrapper or a shell (`./cat`, `/tmp/env`, `/bin/cat`): a
-  script of that name may be anything (only `git` and `gh` by path count as themselves);
-- an assignment to any variable not known to be harmless (in the command, behind `env` or `sudo`, by `export`,
-  `declare`, `readonly`, `for`, `select`, `coproc`, a `{name}` redirect, `${x:=…}`): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`,
-  `GIT_*` and the rest of the variables that load code or change what a name runs never end, so it is an
-  allowlist: a lower-case name (not zsh's `path`, `fpath`, `cdpath`, …) and `LC_*`, `LANG`, `LANGUAGE`, `TZ`, `TERM`,
-  `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;
-- a dynamic command word (`$x push`, `$(echo git) push`, `$'…'`); a dynamic argument is fine only for a listed tool
-  (`cat "$f"`);
-- a wrapper it can't unwrap, a shell run without `-c` (stdin, a script, `bash -s`, `bash <<EOF`), a shell that reads startup code
-  (`zsh`, or `--rcfile`, `--init-file`, `--login`, `-i`, `-l`, which run before the `-c` string), `source`, `.`, and an
-  `sh -c` or `eval` string that is dynamic, doesn't parse or nests deeper than 3; `xargs` or a wrapper behind it that
-  is left with nothing to run (`xargs env`), since the input supplies the command, and `xargs` with `find` (the input
-  becomes `find` predicates: `-exec sh -c …`);
-- text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `let`, `[[ a -eq b ]]`,
-  `[[ -v x ]]`, `declare -i`, a nameref made with `declare -n`), an array subscript, and the options that make a
-  listed tool run something or assign (`printf -v`, a `printf` conversion `%n`, `sort --compress-program` and its
-  abbreviations; `printf` and `sort` behind
-  `xargs` or `find -exec` too, whose options the command line doesn't show).
+- `git` and `gh` themselves, and anything that starts another program or shell: `env`, `sudo`, `nice`, `nohup`,
+  `timeout`, `stdbuf`, `setsid`, `xargs`, `find`, `command`, `builtin`, `exec`, `sh`/`bash`/`zsh -c` (the string is still
+  parsed for the tamper check), `eval`, `source`, `.`, an unlisted wrapper (`flock`, `watch`, `ssh`, `busybox`), an
+  interpreter (`python3 -c`, `node`, `sed`, `awk`, `rg`), a script (`./run.sh`, `make`) or a path (`/bin/cat`, `./cat`);
+- every builtin that assigns, runs code or replaces the shell: `declare`, `typeset`, `local`, `export`, `readonly`
+  (a quoted array initializer is parsed again, a nameref runs a subscript), `read`, `mapfile`, `printf` in any form
+  (`-v`, `%n`), `let`, `alias`, `enable`, `hash`, `trap`, `set`, `shopt`, `unset`, `cd`, `pushd`, `popd`, `[`, `test`;
+- a tool that changes files (`tee`, `cp`, `mv`, `rm`, `ln`, `chmod`, `touch`, `mkdir`, `mktemp`): only read-only tools
+  stay. A redirect (`> file`) is not a command and does not count;
+- an assignment to a variable not known to be harmless (in the command, by `for`, `select`, `coproc`, `${x:=…}` or a
+  `{name}` redirect): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`, `GIT_*` and the
+  rest never end, so it is an allowlist: a lower-case name (not zsh's `path`, `fpath`, `cdpath`, …) and `LC_*`, `LANG`,
+  `LANGUAGE`, `TZ`, `TERM`, `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;
+- text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `[[ a -eq b ]]`,
+  `[[ -v x ]]`, `${x:n}`), and an array subscript. Plain numbers are fine. `time` is a keyword: the command behind it is
+  what is judged.
 
 Function bodies, `$(…)` and backticks, process substitutions and the `$(…)` in an unquoted heredoc are all in the tree,
 so `f(){ git push; }; f` and `cat <<EOF` with `$(git push)` are `gg`; a quoted heredoc body is data. A pipe or a
