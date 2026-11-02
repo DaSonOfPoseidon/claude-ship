@@ -236,13 +236,16 @@ expect_review 2 'gh pr comment 7 --body "x" && git push origin HEAD' none
 # A command whose syntax tree runs no git or gh (only tools that don't run their arguments) never reaches the quoting,
 # `gh api` or push checks, however much its text mentions them (claude-ship #135). A heredoc body or a quoted
 # argument is data. `gh pr create` in the printf is the one that started a review before.
-expect_review 0 'cat >/tmp/x <<'\''EOF'\''
+# The two heredoc-to-file cases below are blocked as on main: codex round 5 of #191 (a P0) found that a file the command
+# writes can replace a program on PATH that a listed name then runs, so any write redirect keeps the old checks until a
+# follow-up settles a safe way to allow them.
+expect_review 2 'cat >/tmp/x <<'\''EOF'\''
 ## Plan
 
 Run `gh pr create --title "x" | tee y; (cd z)` then $HOME and git push origin HEAD;
 EOF
 wc -l /tmp/x' none
-expect_review 0 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
+expect_review 2 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
 Never run gh api -X DELETE repos/a/b here.
 EOF' none
 expect_review 0 'echo "run git push later"' none
