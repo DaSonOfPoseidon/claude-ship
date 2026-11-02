@@ -1,13 +1,23 @@
 #!/bin/sh
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
-# Files a review finding as an issue, labelled by the finding's file: p3-issue.sh <owner/repo> <finding.json>,
-# where the JSON has `file`, `title` and `body`. Run from the checkout whose branch the finding is in; prints the
-# issue's URL. The review gate files its confirmed P3s with it, and the ship skill the Codex findings it defers.
+# Files a review finding as an issue, labelled by the finding's file: p3-issue.sh <owner/repo> <finding.json> [<pr>],
+# where the JSON has `file`, `title` and `body`. Prints the issue's URL. The review gate files its confirmed P3s
+# with it, and the ship skill the Codex findings it defers. Without a PR it is run from the checkout whose branch
+# the finding is in (the gate, from the pushing checkout), and the milestone comes from that branch. With a PR it
+# reads the milestone from GitHub (the PR's, else its commits'), so it works from any checkout of the repository
+# (claude-ship #140: ship-codex can't cd).
 # Labels, milestone and fallbacks: README (Per-repo opt-in) and docs/scripts.md. Exits 1 if the JSON lacks
 # those fields or the issue can't be filed even without labels.
 set -u
 slug=$1
+pr=${3:-}
+case $pr in
+*[!0-9]*)
+	echo "p3-issue: the PR must be a number, not $pr" >&2
+	exit 1
+	;;
+esac
 file=$(jq -er .file "$2") && title=$(jq -er .title "$2") && body=$(jq -er .body "$2") || {
 	echo "p3-issue: $2 needs string fields file, title and body" >&2
 	exit 1
@@ -97,20 +107,35 @@ if ! printf '%s\n' "$labels" | grep -Eiq '^(bug|documentation|enhancement|type:.
 	tidy
 fi
 
+# fixed_milestone: reads commit messages on stdin and prints the milestone of the issues they fix (`fixes #N`), but
+# only when there is exactly one.
+fixed_milestone() {
+	found=$(grep -Eio '(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)[[:space:]]+#[0-9]+' |
+		grep -Eo '[0-9]+$' | sort -u | while read -r n; do
+		gh issue view "$n" -R "$slug" --json milestone --jq '.milestone.title // empty' 2>/dev/null
+	done | sed '/^$/d' | sort -u)
+	[ "$(printf '%s' "$found" | grep -c '')" = 1 ] && printf '%s\n' "$found"
+}
+
 milestone=
 if [ "$(var CLAUDE_P3_MILESTONE)" = auto ]; then
-	branch=$(git symbolic-ref -q --short HEAD)
-	if [ -n "$branch" ]; then
-		milestone=$(gh pr list -R "$slug" --head "$branch" --state open --json milestone \
-			--jq '.[0].milestone.title // empty' 2>/dev/null)
-	fi
-	if [ -z "$milestone" ] && [ -n "$base" ]; then
-		found=$(git log --format=%s "$base..HEAD" |
-			grep -Eio '(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)[[:space:]]+#[0-9]+' |
-			grep -Eo '[0-9]+$' | sort -u | while read -r n; do
-			gh issue view "$n" -R "$slug" --json milestone --jq '.milestone.title // empty' 2>/dev/null
-		done | sed '/^$/d' | sort -u)
-		[ "$(printf '%s' "$found" | grep -c '')" = 1 ] && milestone=$found
+	if [ -n "$pr" ]; then
+		# From GitHub only: the cwd's branch and commits can be any checkout's. A failed lookup is no milestone, as
+		# for the branch's (the issue is still filed).
+		milestone=$(gh pr view "$pr" -R "$slug" --json milestone --jq '.milestone.title // empty' 2>/dev/null)
+		if [ -z "$milestone" ]; then
+			msgs=$(gh pr view "$pr" -R "$slug" --json commits \
+				--jq '.commits[] | .messageHeadline, .messageBody' 2>/dev/null) && milestone=$(printf '%s\n' "$msgs" | fixed_milestone)
+		fi
+	else
+		branch=$(git symbolic-ref -q --short HEAD)
+		if [ -n "$branch" ]; then
+			milestone=$(gh pr list -R "$slug" --head "$branch" --state open --json milestone \
+				--jq '.[0].milestone.title // empty' 2>/dev/null)
+		fi
+		if [ -z "$milestone" ] && [ -n "$base" ]; then
+			log=$(git log --format=%s "$base..HEAD") && milestone=$(printf '%s\n' "$log" | fixed_milestone)
+		fi
 	fi
 fi
 

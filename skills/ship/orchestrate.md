@@ -133,8 +133,9 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      thread failure, a failed call may have done part of its work, so never rerun the file as it is. Read the
      file, remove the `done:` threads' entries, then check the failed thread for a half-applied reply or filed
      issue (its replies, and `gh issue list` for the finding), as the ship skill's step 4 says, and remove or
-     adjust that entry too. Then run `~/.claude/skills/ship/codex-triage.sh <pr> <file>` once on what is left,
-     from the implementer's worktree (`cd <worktree> && …`, since `p3-issue.sh` reads the branch). If the Write itself was denied and
+     adjust that entry too. Then run `~/.claude/skills/ship/codex-triage.sh <pr> <file> <slug>` once on what is left,
+     from any checkout of the repo (with the slug, `p3-issue.sh` reads the milestone from the PR on GitHub, not from
+     the cwd's branch). If the Write itself was denied and
      there is no file, write one from `codex-findings.sh` and the ship skill's step 4 table. You triage by hand
      only these.
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
@@ -156,8 +157,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      `cd <worktree> && ~/.claude/skills/ship/codex-round.sh <pr>` and only below 3
      `cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr> <slug> <head sha>`.
    - Triage with `codex-findings.sh` and the ship skill's step 4 table. **Not valid / file an issue:** write the
-     entries to a JSON file with the Write tool and run `~/.claude/skills/ship/codex-triage.sh <pr> <file>`
-     (format in the ship skill's step 4) from the worktree; it is yours to run since subagents can't resolve
+     entries to a JSON file with the Write tool and run `~/.claude/skills/ship/codex-triage.sh <pr> <file> <slug>`
+     (format in the ship skill's step 4) from any checkout of the repo; it is yours to run since subagents can't resolve
      threads (#100). When the round also sends fixes, hold these entries and run the file once after the
      implementer's report, with its replied threads added as `resolve` entries.
    - **Fix:** send the findings, with thread ids and what each fix should be, to the same implementer
@@ -237,8 +238,9 @@ Otherwise, keep going without asking.
      `gh pr view <pr> --json headRefOid -q .headRefOid`), `worktree` (from `git worktree list`; if no
      worktree has the branch, replace the implementer first, see **Replacing an implementer**) and the triage
      file in both spellings (`$HOME/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json`, and the same with
-     `~` for `home`, as `agents/ship-codex.md` describes). A request already out for the head, even in round 3,
-     is waited for, not refused. Its report's `fix:` lines go to the
+     `~` for `home`, as `agents/ship-codex.md` describes). `ship-codex` can't `cd`, so it runs from your checkout, and
+     that is fine: every script it runs gets the repo and the PR as arguments, and `worktree` is informational only
+     (claude-ship #140). A request already out for the head, even in round 3, is waited for, not refused. Its report's `fix:` lines go to the
      implementer, as in the fallback flow above
    - findings open: the head's latest review completed and left unresolved Codex threads. Tell it from a pending
      review yourself, before starting the agent: `gh pr view <pr> --json headRefOid,reviews` shows a review by

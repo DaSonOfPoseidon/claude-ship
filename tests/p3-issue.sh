@@ -16,6 +16,14 @@ case "\$1 \$2" in
 "repo view") echo main ;;
 "label list") cat "$tmp/labels" ;;
 "pr list") echo "\${PR_MS:-}" ;;
+"pr view")
+	# gh pr view <pr> -R slug --json milestone|commits --jq ...: PRV_MS is the PR's milestone, PRV_COMMITS its
+	# commit messages (one per line, the way the --jq prints them).
+	case " \$* " in
+	*" milestone "*) echo "\${PRV_MS:-}" ;;
+	*" commits "*) printf '%s\n' "\${PRV_COMMITS:-}" ;;
+	*) exit 1 ;;
+	esac ;;
 "issue view") eval "echo \"\\\${MS_\$3:-}\"" ;;
 "issue create")
 	printf '%s\n' "\$@" >"$tmp/args"
@@ -66,10 +74,11 @@ echo '* area:branch' >"$repo/.github/claude-ship/p3-labels"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q -am "fix: x (fixes #3)"
 
 # expect <file> <labels, comma-separated> <milestone or empty>: files a finding in <file> with the current
-# environment and checks the labels and milestone it was filed with.
+# environment and checks the labels and milestone it was filed with. P3_PR makes it pass the PR number, and P3_DIR
+# runs it from another checkout than the feature branch's.
 expect() {
 	jq -n --arg f "$1" '{file: $f, title: "t", body: "b > c"}' >"$tmp/finding.json"
-	if ! (cd "$repo" && PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json") >"$tmp/out" 2>"$tmp/err"; then
+	if ! (cd "${P3_DIR:-$repo}" && PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json" ${P3_PR:+"$P3_PR"}) >"$tmp/out" 2>"$tmp/err"; then
 		echo "FAIL: $1 wasn't filed"
 		sed 's/^/  /' "$tmp/err"
 		fail=1
@@ -207,6 +216,32 @@ grep -q 'retrying without it' "$tmp/err" || {
 	echo "FAIL: a closed milestone wasn't retried without it"
 	fail=1
 }
+
+# With a PR argument the milestone comes from GitHub, not from the cwd (claude-ship #140): a checkout of the
+# default branch has no feature branch and no commits ahead of it, and the milestone is found all the same. The
+# PR list has no PR for such a branch (PR_MS) and the git log has no fixes, so only the PR lookups can answer.
+git clone -q "$tmp/origin.git" "$tmp/elsewhere"
+export P3_PR=7 P3_DIR=$tmp/elsewhere
+# 1. The PR's own milestone.
+PRV_MS=X expect src/x.c review:p3,milestone:later,status:ready X
+# 2. Else the one milestone of the issues its commits fix: subject or body, each counted once.
+PRV_COMMITS='fix: x (fixes #3)' MS_3=Y expect src/x.c review:p3,milestone:later,status:ready Y
+PRV_COMMITS='fix: x
+Closes #3 and
+resolves #4' MS_3=Y MS_4=Y expect src/x.c review:p3,milestone:later,status:ready Y
+PRV_COMMITS='fix: x (fixes #3)
+fixes #3' MS_3=Y expect src/x.c review:p3,milestone:later,status:ready Y
+# Two issues in two milestones, or none, give none; the PR's own milestone still wins.
+PRV_COMMITS='fixes #3
+fixes #4' MS_3=Y MS_4=Z expect src/x.c review:p3,milestone:later,status:ready ''
+PRV_COMMITS='refactor: x' expect src/x.c review:p3,milestone:later,status:ready ''
+PRV_MS=X PRV_COMMITS='fixes #3' MS_3=Y expect src/x.c review:p3,milestone:later,status:ready X
+# The branch-based lookups are not used with a PR: the PR list's milestone (PR_MS) and the checkout's own
+# commits are ignored.
+PR_MS=X expect src/x.c review:p3,milestone:later,status:ready ''
+P3_DIR=$repo PR_MS=X expect src/x.c review:p3,milestone:later,status:ready ''
+P3_DIR=$repo MS_3=Y expect src/x.c review:p3,milestone:later,status:ready ''
+unset P3_PR P3_DIR
 
 [ "$fail" = 0 ] && echo "p3-issue: ok"
 exit "$fail"

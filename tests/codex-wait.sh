@@ -38,4 +38,25 @@ if [ "$got" != 1 ] || ! grep -q 'Timed out: pending: Waiting for Codex to review
 	echo "FAIL (want exit 1 and the pending status in the output, got exit $got): pending cap shows its status"
 	fail=1
 fi
+
+# With a slug, the status script gets REPO=<slug> and gh isn't asked which repository the cwd is, so the wait
+# doesn't depend on the cwd (claude-ship #140). Without one it sets no REPO of its own.
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\necho "gh called: $*" >>"%s/gh.log"\nexit 1\n' "$tmp" >"$tmp/bin/gh"
+chmod +x "$tmp/bin/gh"
+printf '#!/bin/sh\necho "success: repo=${REPO-unset} pr=$1 (abc)"\n' >"$tmp/codex-status.sh"
+chmod +x "$tmp/codex-status.sh"
+: >"$tmp/gh.log"
+out=$(PATH=$tmp/bin:$PATH CODEX_WAIT_SECS=1 sh "$tmp/codex-wait.sh" 5 o/r 2>&1)
+got=$?
+if [ "$got" != 0 ] || [ "$out" != 'success: repo=o/r pr=5 (abc)' ] || [ -s "$tmp/gh.log" ]; then
+	echo "FAIL (want exit 0, REPO=o/r and no gh call, got exit $got: $out)"
+	cat "$tmp/gh.log"
+	fail=1
+fi
+out=$(env -u REPO PATH="$tmp/bin:$PATH" CODEX_WAIT_SECS=1 sh "$tmp/codex-wait.sh" 5 2>&1)
+if [ "$out" != 'success: repo=unset pr=5 (abc)' ]; then
+	echo "FAIL (want no REPO without a slug, got: $out)"
+	fail=1
+fi
 exit $fail

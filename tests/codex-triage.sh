@@ -37,7 +37,7 @@ esac
 EOF
 cat >"$tmp/p3" <<EOF
 #!/bin/sh
-echo "issue \$1 \$(jq -r .title "\$2")" >>"$tmp/log"
+echo "issue \$1 pr=\$3 \$(jq -r .title "\$2")" >>"$tmp/log"
 echo "https://github.com/o/r/issues/99"
 EOF
 chmod +x "$tmp/bin/gh" "$tmp/p3"
@@ -67,7 +67,7 @@ EOF
 run
 check 'one of each outcome' 0 'reply T1
 resolve T1
-issue o/r a.sh: x
+issue o/r pr=7 a.sh: x
 reply T2
 resolve T2
 reply T3
@@ -89,7 +89,7 @@ EOF
 run
 check 'no fixed: recheck workflow runs once, last' 0 'reply T1
 resolve T1
-issue o/r t
+issue o/r pr=7 t
 reply T2
 resolve T2
 workflow workflow run codex-review.yml -R o/r -f pr=7'

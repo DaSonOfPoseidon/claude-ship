@@ -7,13 +7,15 @@
 # Allowed, as one plain command (~ is the shell's, so the path is the installed one):
 #   ~/.claude/skills/ship/codex-round.sh <pr> [owner/repo]
 #   ~/.claude/skills/ship/codex-request.sh <pr> <owner/repo> <full sha>
-#   [CODEX_WAIT_SECS=<n>] ~/.claude/skills/ship/codex-wait.sh <pr>
-#   ~/.claude/skills/ship/codex-findings.sh <pr>
+#   [CODEX_WAIT_SECS=<n>] ~/.claude/skills/ship/codex-wait.sh <pr> [owner/repo]
+#   ~/.claude/skills/ship/codex-findings.sh <pr> [owner/repo]
 #   [CI_WAIT_POLLS=<n>] ~/.claude/skills/ship/ci-failures.sh <pr> [owner/repo [--wait]]
-#   ~/.claude/skills/ship/codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json
+#   ~/.claude/skills/ship/codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json [owner/repo]
 #   gh pr view <pr> ... | gh pr checks <pr> ...    without --web
 # and a Write of $HOME/.claude/state/claude-ship/triage-<owner>+<repo>-<n>.json (a fixed directory, so no checkout
 # path, spaces included, is in the command).
+# The repository is optional so the agent can name it in every command: it can't cd, so it may run in any checkout
+# of the repo, and the scripts must not depend on the cwd (claude-ship #140).
 # A Bash call with run_in_background set to anything but false or null is denied (claude-ship #171): the agent
 # waits in the foreground, since a wait it backgrounds ends its turn and hands its parent an interim result.
 set -u
@@ -27,7 +29,7 @@ bg=
 
 deny() {
 	echo "ship-codex may only run ~/.claude/skills/ship/codex-round.sh <pr> [owner/repo], codex-request.sh <pr> <owner/repo> <sha>," \
-		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>, codex-findings.sh <pr>, [CI_WAIT_POLLS=<n>] ci-failures.sh <pr> [owner/repo [--wait]], codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json," \
+		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr> [owner/repo], codex-findings.sh <pr> [owner/repo], [CI_WAIT_POLLS=<n>] ci-failures.sh <pr> [owner/repo [--wait]], codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json [owner/repo]," \
 		"gh pr view|checks <pr> (no --web), as one plain command, and Write that triage file ($1)." >&2
 	if [ -n "$poll" ]; then
 		echo "To wait for codex-wait.sh: don't poll: run codex-wait.sh again in the foreground, and never end your turn before it returns a result." >&2
@@ -189,15 +191,17 @@ case $prog in
 	[ $# -lt 3 ] || [ "$3" = --wait ] || deny "ci-failures.sh option $3"
 	;;
 "$ship/codex-wait.sh" | "$ship/codex-findings.sh")
-	[ $# -eq 1 ] || deny "${prog##*/} takes <pr>"
+	[ $# -ge 1 ] && [ $# -le 2 ] || deny "${prog##*/} takes <pr> [owner/repo]"
 	isnum "$1" || deny "PR number $1"
+	[ $# -lt 2 ] || isslug "$2" || deny "repository $2"
 	;;
 "$ship/codex-triage.sh")
-	[ $# -eq 2 ] || deny "codex-triage.sh takes <pr> <triage file>"
+	[ $# -ge 2 ] && [ $# -le 3 ] || deny "codex-triage.sh takes <pr> <triage file> [owner/repo]"
 	isnum "$1" || deny "PR number $1"
 	# Written with ~, which the shell expands to the home directory, so a home or checkout path with a space
 	# is still one word.
 	triage_file "$2" "$ship_state" "$1" || deny "triage file $2"
+	[ $# -lt 3 ] || isslug "$3" || deny "repository $3"
 	;;
 gh)
 	[ $# -ge 3 ] || deny "too short"

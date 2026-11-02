@@ -1,7 +1,8 @@
 #!/bin/sh
 # Applies a Codex round's triage in one call: for each thread, files the issue (outcome "issue"), posts the reply
-# and resolves the thread. Run it from the checkout of the PR's branch (p3-issue.sh reads the branch), by whoever
-# triages: in orchestrated mode that is the orchestrator, since subagents can't resolve threads (#100).
+# and resolves the thread. With the repository it runs from any checkout of that repo: the PR goes to
+# p3-issue.sh, which then takes the milestone from GitHub, not from the cwd's branch (claude-ship #140). Run by
+# whoever triages (in orchestrated mode, the ship-codex agent or the orchestrator, #100).
 # Usage: codex-triage.sh <pr> <triage.json> [owner/repo]   (repo defaults to the current checkout's)
 # triage.json is a non-empty array of
 #   {"thread": "<id from codex-findings.sh>", "outcome": "not-valid" | "issue" | "fixed" | "resolve",
@@ -67,7 +68,7 @@ while [ "$i" -lt "$n" ]; do
 	url=
 	if [ "$outcome" = issue ]; then
 		jq ".[$i].issue" "$file" >"$tmp/issue.json"
-		url=$(sh "$p3" "$slug" "$tmp/issue.json") || stop "$id" issue
+		url=$(sh "$p3" "$slug" "$tmp/issue.json" "$pr") || stop "$id" issue
 		reply=$reply$(printf '\n\n%s' "$url")
 	fi
 	# A fixed thread's push is still to come and rechecks the status. A resolve entry's push already ran, with the

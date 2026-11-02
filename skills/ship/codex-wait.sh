@@ -5,14 +5,20 @@
 # fails (its error is shown, not read as "not done yet"), and 3 on a pending status that only a new request
 # clears: a stalled review, one that "finished more than once", or a request Codex never "acknowledged"
 # (docs/scripts.md).
-# Usage: codex-wait.sh <pr>   (from anywhere in the checkout; CODEX_WAIT_SECS caps the wait, default 1200)
+# Usage: codex-wait.sh <pr> [owner/repo]   (CODEX_WAIT_SECS caps the wait, default 1200). With the repository it
+# doesn't read the cwd at all, so it runs from any directory; without it, codex-status.sh asks gh for the cwd's.
 set -eu
 # A missing PR number exits 2 (usage), so a caller never reads it as a result or a timeout.
 if [ -z "${1:-}" ]; then
-	echo "usage: codex-wait.sh <pr>" >&2
+	echo "usage: codex-wait.sh <pr> [owner/repo]" >&2
 	exit 2
 fi
 pr=$1
+# codex-status.sh reads the repository from REPO, else from gh's view of the cwd.
+if [ -n "${2:-}" ]; then
+	REPO=$2
+	export REPO
+fi
 here=$(cd "$(dirname "$0")" && pwd)
 status=$here/codex-status.sh
 [ -x "$status" ] || status=$here/../../scripts/codex-status.sh
