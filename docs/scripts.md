@@ -245,15 +245,22 @@ runs from the earlier of its creation and its first commit, to the merge, else t
 unmerged, else to now (open). A closed PR must not run to now, or it would swallow every later request.
 The window then widens at the start (#80), because most of a PR's main-session work (planning, exploring,
 implementing) comes before its first commit: the start moves back to the later of the end of the author's
-previous PR (the latest merge or close before this PR's own start, among their other PRs from one
-`gh pr list --author`, newest 200) and the first request of the main transcripts that have a request in the PR's
-own window, and never to after its own start. The report shows the widened start. Work after the last merge
-isn't printed. A request inside some PR's own window goes to the latest-started of those; only a request in none
-goes to the latest-started widened window, so widening never takes work from an overlapping PR. All this is done
-across every PR that could matter, not just the PRs asked for: the asked ones plus the author's other PRs that end
-at or after the earliest previous-PR end (each read with `gh pr view`, since the list has no commit dates), all with
-the same window rules. Only the asked PRs' rows are printed, and a request won by another PR is dropped, so a PR's
-row is the same whichever other PRs are asked for (`tests/token-report.sh` checks this directly). A failed or odd
+previous PR (the latest merge or close before this PR's own start, among their other PRs in the repo) and the
+first request of the main transcripts that have a request in the PR's own window, and never to after its own
+start. The report shows the widened start. Work after the last merge isn't printed. A request inside some PR's own
+window goes to the latest-started of those; only a request in none goes to the latest-started widened window, so
+widening never takes work from an overlapping PR. All this is done across every PR that could matter, not just
+the PRs asked for or their authors': the PRs competing for a request are the repo's, whoever wrote them (one
+`gh pr list`, newest 200; a full page prints a warning, since older PRs are then missing, and is an error when
+an asked PR starts at or before the oldest listed one, since its previous PR can't then be found). That is the asked PRs
+plus the others that could overlap an asked window (each read with `gh pr view`, since the list has no commit
+dates; one whose author is deleted is left out), all with the same window rules. "Could overlap" is bounded on
+both sides (#129). Below: a PR that ended before the earliest previous-PR end of the asked PRs is left out (no
+bound when an asked PR has no earlier PR). Above: a PR created after the latest end of the asked PRs (no bound
+while one is open) is left out too, unless the end of its own author's previous PR is before that latest end,
+because its window widens back to that end and can take a request from an asked PR. Both bounds come from the
+list alone, so a first commit authored before its PR's creation isn't seen by them. Only the asked PRs' rows are
+printed, and a request won by another PR is dropped, so a PR's row is the same whichever other PRs are asked for (`tests/token-report.sh` checks this directly). A failed or odd
 `gh pr list`, or a PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would reach
 the window back to the session's start. A whole subagent transcript belongs to the PR whose window holds its last
 request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
@@ -267,7 +274,7 @@ in the total's requests and cost. A run with `cost_usd: null` makes its row and 
 failed (`rc` not 0) still counts. A row is the PR's when its repo is this one (compared without case: the gate logs the slug as spelled in the push
 URL, `gh` gives GitHub's) and either its `head` is one of the
 PR's commits (from the `gh pr view` call that reads the window, no extra call) or its head is no commit of any PR
-read (the asked ones and the author's others) and its `date` is in the PR's own window (the widening doesn't
+read (the asked ones and the others read) and its `date` is in the PR's own window (the widening doesn't
 apply: the gate runs at a push), which catches heads since rewritten by an amend or rebase. Where own windows
 overlap the latest-started takes it, as for requests, and a head that is another PR's commit never counts by
 window. A missing log means no gate rows. A line that isn't JSON or lacks `repo`, `head`, `stage` or `date` is

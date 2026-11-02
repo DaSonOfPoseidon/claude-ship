@@ -24,11 +24,23 @@ usage() {
 	exit 2
 }
 [ "$#" -gt 0 ] || usage
+# `asked` is the PR numbers, one per line: a PR given twice counts once (#166), in the order first given, and
+# leading zeros are dropped first (010 is 10), or the window and its requests would be counted twice.
+asked=
 for pr in "$@"; do
 	case $pr in
 	'' | *[!0-9]*) usage ;;
 	esac
+	while :; do
+		case $pr in
+		0?*) pr=${pr#0} ;;
+		*) break ;;
+		esac
+	done
+	asked="$asked $pr"
 done
+# shellcheck disable=SC2086 # PR numbers: digits only
+asked=$(printf '%s\n' $asked | awk '!seen[$0]++')
 
 # Claude Code names a project's transcript dir after its path with every non-alphanumeric turned into `-`.
 # The git common dir is the main checkout's, so this works from a worktree too.
@@ -52,7 +64,7 @@ trap 'rm -rf "$tmp"' EXIT
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # window <pr> <true|false> <file>: appends the PR's own window to <file>; the second argument says whether the PR
-# was asked for (the report prints only those, but all the author's PRs compete for every request).
+# was asked for (the report prints only those, but the repo's other PRs compete for every request).
 window() {
 	info=$(gh pr view "$1" -R "$repo" --json title,state,author,createdAt,mergedAt,closedAt,commits) || {
 		echo "token-report.sh: gh pr view $1 failed" >&2
@@ -75,44 +87,69 @@ window() {
 			end: $e.end[0:19], status: $e.status, commits: [.commits[]?.oid | select(type == "string")]}' >>"$3" || exit 1
 }
 : >"$tmp/windows"
-for pr in "$@"; do
+# shellcheck disable=SC2086 # PR numbers: digits only
+for pr in $asked; do
 	window "$pr" true "$tmp/windows"
 done
 
-# Each author's PRs, listed once: when each ended is where the work on the next one can start. A failed or odd
-# listing is an error, never "no earlier PRs" (the window would then reach back to the session's start).
-jq -r ".author" "$tmp/windows" >"$tmp/authors.all"
-sort -u "$tmp/authors.all" >"$tmp/authors"
-: >"$tmp/lists"
-while IFS= read -r author; do
-	list=$(gh pr list -R "$repo" --author "$author" --state all --limit 200 --json number,createdAt,mergedAt,closedAt) || {
-		echo "token-report.sh: gh pr list for $author failed" >&2
+# Every PR of the repo, whoever wrote it, listed once (#130): they all compete for every request, so a PR's row
+# can't depend on which authors' PRs are asked for. When each PR ended is also where the work on its author's
+# next one can start. A failed or odd listing is an error, never "no earlier PRs" (the window would then reach
+# back to the session's start). The list has no commit dates, so the other PRs get windows below with `gh pr view`.
+list=$(gh pr list -R "$repo" --state all --limit 200 --json number,author,createdAt,mergedAt,closedAt) || {
+	echo "token-report.sh: gh pr list failed" >&2
+	exit 1
+}
+printf '%s\n' "$list" | jq -c 'if type == "array" then map({number, author: (.author.login // ""), createdAt, mergedAt, closedAt}) else error("not a list") end' >"$tmp/list" || {
+	echo "token-report.sh: gh pr list returned something other than a list" >&2
+	exit 1
+}
+# A full page may have cut the repo's older PRs short (the list is newest first): they can't compete.
+listed=$(jq 'length' "$tmp/list") || exit 1
+if [ "$listed" -ge 200 ]; then
+	echo "token-report.sh: gh pr list returned the newest 200 PRs; older PRs don't compete for requests" >&2
+	# An asked PR that starts at or before the oldest listed one may have a previous PR the list cut off (or isn't
+	# listed itself): its window would silently reach back to the session's start, so it is an error.
+	oldest=$(jq -r '[.[].createdAt | select(type == "string") | .[0:19]] | min // ""' "$tmp/list") || exit 1
+	jq -r --arg o "$oldest" 'select(.start <= $o) | .pr' "$tmp/windows" >"$tmp/toolate" || exit 1
+	if [ -s "$tmp/toolate" ]; then
+		echo "token-report.sh: PR #$(head -n 1 "$tmp/toolate") starts before the oldest of the newest 200 PRs; its previous PR can't be found" >&2
 		exit 1
-	}
-	printf '%s\n' "$list" | jq -c --arg a "$author" 'if type == "array" then {author: $a, prs: .} else error("not a list") end' >>"$tmp/lists" || {
-		echo "token-report.sh: gh pr list for $author returned something other than a list" >&2
-		exit 1
-	}
-done <"$tmp/authors"
+	fi
+fi
 # prevend <in> <out>: adds prevEnd to each window: the latest end (merge, else close) strictly before the PR's
 # start of any other PR by its author; "" when there is none. A PR still open has no end.
 prevend() {
-	jq -c --slurpfile l "$tmp/lists" '
+	jq -c --slurpfile l "$tmp/list" '
 		. as $w
-		| . + {prevEnd: ([$l[] | select(.author == $w.author) | .prs[] | select(.number != $w.pr)
+		| . + {prevEnd: ([$l[0][] | select(.author == $w.author and .number != $w.pr)
 			| (.mergedAt // .closedAt) | select(type == "string") | .[0:19] | select(. < $w.start)] | max // "")}' \
 		"$1" >"$2" || exit 1
 }
 prevend "$tmp/windows" "$tmp/windows2"
 
-# The author's other PRs compete for every request too (see the jq below), so they get windows the same way,
-# each read with `gh pr view` (the list has no commit dates). Only PRs that end at or after the earliest
-# prevEnd can overlap a window of an asked PR; one that ended before can't hold a request of any of them.
-jq -r -n --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/lists" '
+# The other PRs compete for every request too (see the jq below), so they get windows the same way, each read
+# with `gh pr view`, but only those that can overlap a window of an asked PR (#129), bounded on both sides:
+# - below: one that ended before the earliest prevEnd can't hold a request of any of them. No bound when an
+#   asked PR has no earlier PR ($lo is "").
+# - above: one that starts after the latest end of the asked PRs ($hi; "9999" while one is still open) can't
+#   either. Its start is not only its creation, though: its window widens back to the end of its own author's
+#   previous PR, so a PR created later but whose previous PR ended before $hi is kept. (The list has no commit
+#   dates, so a first commit authored before the creation isn't seen; that window is not widened by it here.)
+# A PR whose author is deleted is left out: its earlier PRs can't be listed, so it has no widened window (an
+# asked one is an error, in `window`).
+jq -r -n --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/list" '
 	($w | map(.pr)) as $asked
 	| ($w | map(.prevEnd) | min) as $lo
-	| [$l[].prs[] | select(.number as $n | $asked | index($n) == null)
-		| select((.mergedAt // .closedAt // "9999")[0:19] >= $lo) | .number] | unique[]' >"$tmp/others.n" || exit 1
+	| ($w | map(if .status == "open" then "9999" else .end end) | max) as $hi
+	| $l[0] as $L
+	| [$L[] | select(.author != "") | select(.number as $n | $asked | index($n) == null)
+		| . as $p
+		| ($p.createdAt[0:19]) as $c
+		| ([$L[] | select(.author == $p.author and .number != $p.number)
+			| (.mergedAt // .closedAt) | select(type == "string") | .[0:19] | select(. < $c)] | max // "") as $pe
+		| select((.mergedAt // .closedAt // "9999")[0:19] >= $lo)
+		| select($c <= $hi or $pe < $hi) | .number] | unique[]' >"$tmp/others.n" || exit 1
 : >"$tmp/windowsO"
 while IFS= read -r n; do
 	window "$n" false "$tmp/windowsO"
@@ -182,7 +219,7 @@ done
 # PR's own window, but never to after start0. Work after the last merge belongs to no window. A request inside
 # some PR's own window goes to the latest-started of those; only a request in none goes to the latest-started
 # widened window, so widening never takes work from an overlapping PR. Every window is built and every request
-# assigned across all the PRs that could matter (the asked ones and the author's others, read above), by the
+# assigned across all the PRs that could matter (the asked ones and the repo's others that could overlap, read above), by the
 # same rules; only then are the asked PRs' rows kept, and a request won by a PR not asked for is dropped. So a
 # PR's row is the same whichever other PRs are asked for.
 jq -r -s --slurpfile w "$tmp/windowsAll" --slurpfile g "$tmp/gate" --arg repo "$repo" --argjson prices "$prices" '
