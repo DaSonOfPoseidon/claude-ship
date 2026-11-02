@@ -220,6 +220,162 @@ nest='ls ~/.claude/hooks'
 for _ in 1 2 3 4 5; do nest="sh -c '$(printf '%s' "$nest" | sed "s/'/'\\\\''/g")'"; done
 expect 0 "$nest"
 
+# A protected path is compared after it is resolved, not as the text it was written as (claude-ship #187): `.`, `//` and
+# `..`, a relative path after `cd`, `$HOME`, `~user`, and a glob, brace or variable below ~/.claude.
+user=$(id -un)
+depth=$(printf '%s' "$tmp" | tr -cd / | wc -c)
+up=
+i=0
+while [ "$i" -lt "$depth" ]; do
+	up=$up../
+	i=$((i + 1))
+done
+rel=${tmp#/}/home/.claude/hooks/x
+expect 2 'rm ~/.claude/./hooks/review-gate.sh'
+expect 2 'rm ~/.claude//hooks/review-gate.sh'
+expect 2 'rm ~/.claude/hooks/./review-gate.sh'
+expect 2 'rm ~/.claude/x/../hooks/review-gate.sh'
+expect 2 'echo x > ~/.claude/./hooks/review-gate.sh'
+expect 2 'echo x > ~/.claude/hooks/../hooks/x'
+expect 2 'cd ~/.claude && rm hooks/review-gate.sh'
+expect 2 'cd ~ && rm .claude/hooks/review-gate.sh'
+expect 2 'cd ~/.claude; rm hooks/review-gate.sh'
+expect 2 'cd ~/.claude/hooks && echo x > review-gate.sh'
+expect 2 'cd ~/.claude && echo x > settings.json'
+expect 2 'cd ~/.claude && cd hooks && rm review-gate.sh'
+expect 2 'cd ~/.claude && (cd hooks && rm x)'
+expect 2 "cd / && rm $rel"
+expect 2 "rm $up$rel"
+expect 2 "rm $up${tmp#/}//home/.claude/hooks/x"
+expect 2 "rm $tmp//home/.claude/hooks/x"
+expect 2 "rm $tmp/home/../home/.claude/hooks/x"
+expect 2 "echo x > $up$rel"
+expect 2 'rm "$HOME/.claude/hooks/x"'
+expect 2 'rm ${HOME}/.claude/hooks/x'
+expect 2 'rm $HOME/.claude/hooks/x'
+expect 2 'echo x > "${HOME}/.claude/hooks/x"'
+expect 2 "rm ~$user/.claude/hooks/x"
+expect 2 'rm ~nobody/.claude/hooks/x'
+expect 2 'x=hooks; rm ~/.claude/$x/review-gate.sh'
+expect 2 'rm ~/.claude/hook?/review-gate.sh'
+expect 2 'rm ~/.claude/{hooks,y}/review-gate.sh'
+expect 2 'rm ~/.claude/hooks/review-gat?.sh'
+expect 2 'x=1; echo y > ~/.claude/$x/review-gate.sh'
+expect 2 'true || cd ~/.claude; rm hooks/review-gate.sh'
+expect 2 'if true; then cd ~/.claude; fi; rm hooks/x'
+expect 2 'for d in a; do cd ~/.claude; done; rm hooks/x'
+expect 2 'f() { cd ~/.claude; }; f; rm hooks/x'
+expect 2 'cd ~/.claude || exit; rm hooks/x'
+expect 2 'cd ~/.claude && sh -c "rm hooks/x"'
+expect 2 'cd ~/.claude && eval "rm hooks/x"'
+expect 2 'cd ~/.claude && env FOO=1 rm hooks/x'
+expect 2 'cd ~/.claude && nice -n 5 rm hooks/x'
+expect 2 'cd ~/.claude && timeout 9 rm hooks/x'
+expect 2 'cd ~/.claude && sudo rm hooks/x'
+expect 2 'cd ~/.claude && command rm hooks/x'
+expect 2 'cd ~/.claude && xargs rm hooks/x'
+expect 2 'env -C ~/.claude rm hooks/x'
+expect 2 'env --chdir=~/.claude rm hooks/x'
+expect 2 'sudo -D ~/.claude rm hooks/x'
+expect 2 'cd ~/.claude/projects/x && rm ../../hooks/y'
+expect 2 'cd ~/.claude/projects && cd .. && rm hooks/x'
+expect 2 'cd ~/.claude && rm hook*/x'
+expect 2 'cd ~/.claude && rm -rf hooks'
+expect 2 'cd ~/.claude && find hooks -name x -exec rm {} +'
+expect 2 'echo $(cd ~/.claude && rm hooks/x)'
+expect 2 'cd ~/.claude && echo `rm hooks/x`'
+expect 2 'cd ~/.claude && { rm hooks/x; }'
+expect 2 'cd ~/.claude && cat hooks/x > /tmp/y'
+expect 2 'cd ~/.claude && curl -o hooks/x URL'
+expect 2 'cd ~/.claude && dd of=hooks/x'
+expect 2 'cp --target-directory=~/.claude/./hooks a'
+expect 2 'rm ~/.claude/./hooks/x ~/.claude/projects/p/memory/x.md'
+expect 2 'curl -o ~/.claude/hooks/x URL'
+expect 2 'curl -o ~/.claude/./hooks/x URL'
+expect 2 'curl --output ~/.claude/hooks/x URL'
+expect 2 'curl --output=~/.claude/hooks/x URL'
+expect 2 'curl -sSLo ~/.claude/hooks/x URL'
+expect 2 "curl -o$tmp/home/.claude/hooks/x URL"
+expect 2 'cd ~/.claude/hooks && curl -O URL'
+expect 2 'curl --remote-name --output-dir ~/.claude/hooks URL'
+expect 2 'wget -O ~/.claude/settings.json URL'
+expect 2 'wget -qO ~/.claude/hooks/x URL'
+expect 2 'wget -P ~/.claude/hooks URL'
+expect 2 'wget --directory-prefix=~/.claude/hooks URL'
+expect 2 'cd ~/.claude/hooks && wget URL'
+expect 2 'tar -C ~/.claude/hooks -xf a.tar'
+expect 2 'tar xf a.tar -C ~/.claude/hooks'
+expect 2 'tar --directory=~/.claude/hooks -xf a.tar'
+expect 2 'tar -cf ~/.claude/hooks/a.tar x'
+expect 2 'tar cf ~/.claude/bin/a.tar x'
+expect 2 'tar --create --file ~/.claude/hooks/a.tar x'
+expect 2 'cd ~/.claude/hooks && tar xf a.tar'
+expect 2 'rsync a ~/.claude/hooks/'
+expect 2 'rsync -a --delete src/ ~/.claude/hooks'
+expect 2 'scp h:a ~/.claude/bin/'
+expect 2 'echo x | sponge ~/.claude/settings.json'
+expect 2 'sponge -a ~/.claude/hooks/x'
+expect 2 "node -e 'require(\"fs\").rmSync(process.argv[1])' ~/.claude/hooks/x"
+expect 2 "ruby -e 'File.delete(ARGV[0])' ~/.claude/hooks/x"
+expect 2 "php -r 'unlink(\$argv[1]);' ~/.claude/hooks/x"
+expect 2 'git -C ~/.claude/hooks checkout .'
+expect 2 'git -C ~/.claude commit -am x'
+expect 2 'git -C ~/.claude/./skills/ship reset --hard'
+expect 2 'cd ~/.claude && git -C hooks checkout .'
+expect 2 'sed -ni s/a/b/ ~/.claude/./hooks/x'
+expect 2 'sed -i.bak s/a/b/ ~/.claude/./hooks/x'
+expect 2 'sed -s --in-place=.bak s/a/b/ ~/.claude//settings.json'
+# Nothing else changes: reads, writes elsewhere under ~/.claude, a project's own hooks directory, and a dynamic path that
+# is not below the protected files.
+expect 0 'rm ~/.claude/projects/p/memory/x.md'
+expect 0 'rm ~/.claude/projects/$x'
+expect 0 'rm ~/.claude/skills/other/x'
+expect 0 'rm ~/.claude/x/../projects/y'
+expect 0 'cd ~/.claude && cat hooks/review-gate.sh'
+expect 0 'cd ~/.claude && ls hooks && grep -n x hooks/review-gate.sh'
+expect 0 'cd ~/.claude/hooks && cat review-gate.sh'
+expect 0 'cd ~/.claude/hooks && ls'
+expect 0 'rm ./build/hooks/x'
+expect 0 'rm hooks/x'
+expect 0 'cd ~ && rm notes/.claude-old'
+expect 0 'cd ~ && rm .claude/projects/x'
+expect 0 'cd ~/.claude && rm projects/x'
+expect 0 'cd ~/.claude && cd /tmp && rm hooks/x'
+expect 0 'env -C /tmp rm hooks/x'
+expect 0 'cd ~/.claude/projects && rm ../projects/x'
+expect 0 'cd ~/.claude; cd /tmp; rm hooks/x'
+expect 0 '(cd ~/.claude && ls); rm hooks/x'
+expect 0 'rm ~/$x'
+expect 0 'rm ~/.cache/*'
+expect 0 'rm ~/.*.swp'
+expect 0 'rm /tmp/$x'
+expect 0 'rm ~nobody/x'
+expect 0 'rm $HOME/notes/x'
+expect 0 'echo ok > ~/.claude/projects/p/x'
+expect 0 'echo ok > $HOME/.claude/projects/p/x'
+expect 0 'cat ~/.claude/./hooks/review-gate.sh'
+expect 0 'ls ~/.claude//hooks'
+expect 0 'curl -o /tmp/x URL'
+expect 0 'curl -O URL'
+expect 0 'curl URL | tar -xf - -C /tmp'
+expect 0 'wget -O /tmp/x URL'
+expect 0 'tar -C /tmp -xf a.tar'
+expect 0 'tar -tf ~/.claude/hooks/a.tar'
+expect 0 'tar -C ~/.claude/hooks -cf /tmp/a.tar .'
+expect 0 'tar -czf /tmp/a.tar.gz ~/proj'
+expect 0 'rsync a /tmp/b'
+expect 0 'rsync ~/.claude/hooks/ /tmp/b'
+expect 0 'scp ~/.claude/hooks/x h:b'
+expect 0 'scp h:~/.claude/hooks/x /tmp/b'
+expect 0 'echo x | sponge /tmp/x'
+expect 0 "node -e 'console.log(1)'"
+expect 0 'node build.js'
+expect 0 'git -C ~/.claude/hooks status'
+expect 0 'git -C ~/.claude/hooks log --oneline | head'
+expect 0 'git -C ~/proj checkout .'
+expect 0 'git -C ~/.claude/projects checkout .'
+expect 0 'git status'
+
 # The parse fails closed: no shfmt, or a command it can't read, blocks the call.
 nohome=$tmp/nohome
 mkdir -p "$nohome"
@@ -269,7 +425,7 @@ expect 0 ''
 
 # write <exit code> <path>: the Write tool on the path.
 write() {
-	jq -nc --arg p "$2" '{tool_name: "Write", tool_input: {file_path: $p, content: "x"}}' |
+	jq -nc --arg p "$2" --arg d "$tmp" '{tool_name: "Write", tool_input: {file_path: $p, content: "x"}, cwd: $d}' |
 		HOME=$tmp/home PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
 	rc=$?
 	if [ "$rc" != "$1" ]; then
@@ -283,6 +439,13 @@ write 2 "$tmp/home/.claude/hooks/review-lib.sh"
 write 2 "$tmp/home/.claude/bin/shfmt"
 write 0 "$tmp/home/.claude/agents/mine.md"
 write 0 "$tmp/home/.claude/bin-notes.md"
+# The path is resolved first: `.`, `//`, `..` and a relative path spell the same file (claude-ship #187).
+write 2 "$tmp/home/.claude/./hooks/x"
+write 2 "$tmp/home/.claude//hooks/x"
+write 2 "$tmp/home/.claude/projects/../hooks/x"
+write 2 "$tmp/home/.claude/hooks/../settings.json"
+write 2 "${up}${tmp#/}/home/.claude/hooks/x"
+write 0 "$tmp/home/.claude/projects/x"
 
 [ "$fail" = 0 ] && echo "gate-tamper: ok"
 exit "$fail"

@@ -107,6 +107,14 @@ review finds a new class.
   ends the gate with exit 0, so follow a directory only when it surely runs first, and for a command that is not the push shape ask every
   directory it could push from for its opt-in instead of blocking early, which would also block repos that never opted in
   (claude-ship #135, Codex rounds 1 and 2).
+- **A path is compared as text before it is resolved.** The tamper check matched `~/.claude/hooks` as a word, so
+  `~/.claude/./hooks/x`, `~/.claude//hooks/x`, `${HOME}/…`, `~user/…`, `cd ~/.claude && rm hooks/x`, `true || cd
+  ~/.claude; rm hooks/x`, `~/.claude/$x/…` and `curl -o` into the same directory all passed (claude-ship #187). The
+  paths a command names are the files it opens, not its text: resolve each word to an absolute path first (home, `.`, `//`,
+  `..`, the working directory a `cd` leads to), and only then compare it with the protected list. The same goes for the
+  `Write` tool's path. A `cd` that may not run in order is a second candidate directory, not a replacement; a dynamic
+  part is cut at its literal start. Keep the old text comparison as well, so no spelling it blocked passes, and test the
+  everyday commands that share a prefix (`rm ~/$x`, `~/.claude/projects/…`, `cat` of a protected file).
 - **A permission that looks like it belongs to one step may serve others.** Dropping `actions/checkout` took
   `contents: read` with it, but the status script's activity lookup needed it too (claude-ship #18). Before
   removing a permission, list every API call that runs under the token, and keep each permission they need.

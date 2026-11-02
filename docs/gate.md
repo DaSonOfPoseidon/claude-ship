@@ -266,15 +266,17 @@ blocks.
 **The rule.** `tamper_jq` turns the tree into events: every simple command anywhere in it (also those inside command
 and process substitutions, and inside an unquoted heredoc body, since those run) and every statement's redirects.
 A word is *literal* when all its parts are plain text or quoted text without expansions (escapes and quotes are
-resolved, a leading `~` stays text); a variable, a substitution, a glob, a brace list or `$'...'` makes it
-*dynamic*. The protected paths are `~` or `$HOME`, then `.claude/(hooks|settings|skills/ship|agents/ship-|bin/)`,
-plus `.git/review-gate`. The command blocks when:
+resolved, a leading `~` stays text, `$HOME` and `${HOME}` alone are the home directory); a variable, a substitution,
+a glob, a brace list or `$'...'` makes it *dynamic*. The protected paths are the home directory, then
+`.claude/(hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate`. A path is compared **after it is
+resolved** (below), never as the text it was written as. The command blocks when:
 
 - a write redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, and `>&` when its word isn't a descriptor or `-`) has a
-  literal target that is protected, or
+  target that is protected once resolved, or
 - a command whose effective word is a writing tool (`rm`, `touch`, `cp`, `mv`, `ln`, `tee`, `install`, `truncate`,
-  `dd`, `chmod`, `sed` with `-i` or `--in-place`, `find … -delete`) has a protected literal word among its words
-  (a `cp` that only reads a protected source blocks too: stricter than needed, and what the text check did), or
+  `dd`, `chmod`, `sed` with `-i` or `--in-place`, `find … -delete`) has a word that resolves to a protected path
+  among its words (a `cp` that only reads a protected source blocks too: stricter than needed, and what the text
+  check did), or one of the writers below has a protected target, or
 - a literal word holds a redirect to a protected path (`awk '{ print > "…/.git/review-gate/x" }'`), or
 - a literal word is a command line that names a protected path: a writing tool starts it, or follows `;`, `&`, `|`,
   `(`, `{` or a quote, optionally after `sudo`, `env`, `nohup`, `exec`, `command`, `time`, `xargs` or `nice`
@@ -285,13 +287,50 @@ plus `.git/review-gate`. The command blocks when:
 - a string it runs as shell blocks by these rules: `sh|bash|dash|zsh|ksh|ash -c STRING` and `eval ARGS` are parsed
   again, to a depth of 3.
 
+**Resolution** (#187). The text of a path is not the file: `~/.claude/./hooks/x`, `~/.claude//hooks/x`,
+`~/.claude/y/../hooks/x`, `${HOME}/.claude/hooks/x`, `~root/.claude/hooks/x`, and `rm hooks/x` after `cd ~/.claude` are
+all the same file. So every word of a writer and every redirect target is resolved before the comparison with the
+protected list, lexically (no filesystem access, so **symlinks are out of scope**: a link to a protected directory
+passes):
+
+- `~`, `~/…`, `~<own user>`, a leading `$HOME`/`${HOME}` (also inside double quotes) are the home directory. Any other
+  `~name` has a home the gate doesn't know: it blocks a writer when the rest of the word has `/.claude/` or ends in
+  `/.claude`, and is dynamic otherwise.
+- `//`, `/./`, a trailing `/.` and `seg/..` are folded (a `..` above `/` stays at `/`), and a relative word is made
+  absolute from the working directory: the hook input's `cwd` (the `$PWD` of the gate without one), moved by the `cd`
+  and `pushd` the command runs. A `cd` that runs first (alone, or on the left of `&&`; `a && cd b && c` follows it in
+  order) sets the directory for what follows. A `cd` that may not run in order (after `||`, in an `if`, a loop, a block,
+  a function, a substitution) adds a **candidate**: the statement's relative words are resolved from the directory
+  before it and from every such target, and are protected when any of them is. A `cd` in a subshell, a pipeline or the
+  background doesn't leave it. A `cd` to something dynamic (`cd $d`, `cd -`, `popd`) makes the directory unknown, and
+  relative words stay with the fallback below; so does a `cd` inside a string run by `eval` (the string's own commands
+  start from the directory the `eval` runs in, but its `cd` doesn't carry out). More than 32 candidates become unknown
+  too. `env -C DIR` and `sudo -D DIR` add DIR as one more candidate.
+- A word with a dynamic, glob or brace part is cut at it: when the **literal start** resolves to `~/.claude`, below it, or
+  to a path whose rest could still be a protected file (`~/.claude/$x/…`, `~/.claude/hook?/…`, `~/.claude/{hooks,y}/…`,
+  `~/.claude/s*`), a writer with it blocks. `~/.claude/projects/$x` doesn't, and neither does a start of just `~/` or `/`
+  (`rm ~/$x`, `rm ~/.*.swp`): those stay with the fallback, so `rm` of a variable isn't blocked everywhere.
+- The old text comparison still counts as well, on the word as written, so nothing the text check blocked passes now
+  (`/dev/null,~/.claude/hooks/x`): a word's `NAME=VALUE` value is resolved too (`of=hooks/x`,
+  `--target-directory=~/.claude/hooks`).
+- The `Write`, `Edit`, `MultiEdit` and `NotebookEdit` path is folded the same way (relative to the same `cwd`) before the
+  protected-path check, and also checked as written.
+
+**More writers** (#187): each blocks only when its target resolves to a protected path (a download, an archive or a
+copy elsewhere passes): `curl -o|--output FILE` and `--output-dir DIR`, `curl -O|--remote-name` into the current
+directory; `wget -O FILE`, `wget -P DIR`, and `wget` into the current directory; `tar` with `-C|--directory DIR` when it
+extracts (into the current directory without one) and `-f|--file FILE` when it creates or appends (`c r u A`); `rsync`
+and `scp`, last argument (a `host:path` is remote); `sponge FILE`; `node`, `nodejs`, `ruby` and `php`, like `python`
+and `perl`; and `git -C DIR SUB` when DIR is under a protected directory or is `~/.claude` itself, unless SUB is one of
+`status`, `log`, `diff`, `show`, `rev-parse`, `ls-files`.
+
 The *effective word* is the command after leading assignments and these wrappers with their own options: `env`,
 `command`, `builtin`, `exec`, `nohup`, `nice`, `time`, `timeout`, `stdbuf`, `sudo`, `doas`, `xargs`, `setsid`; for
 `find` it's each command after `-exec`, `-execdir`, `-ok` or `-okdir`. A wrapper option the gate doesn't know
 makes the command unreadable.
 
 **The fallback.** When the tree can't settle it, the gate runs the old text check unchanged (apart from adding
-`~/.claude/bin/`): a command that names a protected path writes when it runs a writing tool or redirects anywhere
+`~/.claude/bin/`, the in-place `sed` forms and the writers above): a command that names a protected path writes when it runs a writing tool or redirects anywhere
 but another descriptor or `/dev/null`, `/dev/stdout`, `/dev/stderr`, with the raw text and the unmarked words both
 read, so a quoted `>` counts. It runs when:
 
@@ -301,7 +340,8 @@ read, so a quoted `>` counts. It runs when:
 - a writing tool's name (or `sed`, `python`, `perl`) is a later word of a command, behind a wrapper the gate doesn't
   list (`flock`, `ionice`, `watch`, `busybox`), with a protected word among the words;
 - one word of a command holds a `>` and another names a protected path (`awk '{ print > "out" }' ~/.claude/hooks/x`);
-- a `cd` or `pushd` target is protected (what follows is relative to it);
+- a `cd` or `pushd` target is protected (it settles nothing by itself: the writes that follow are resolved from it, and
+  the fallback only reads the text);
 - a shell runs without `-c` (a script, stdin, `bash <<EOF`, a pipe into `sh`), `source` or `.` runs a file, or
   `python` or `perl` runs without a protected word among its words: their scripts and stdin can write;
 - a string run as shell doesn't parse or is nested deeper than 3;
@@ -312,9 +352,11 @@ argument when no `>` comes before the protected path inside it (`gh issue create
 <PR> …"`, `git commit -m "fix: rm ~/.claude/hooks/x"`), a heredoc body, a read of a protected path piped into a
 writing tool whose own arguments aren't protected (`cat ~/.claude/hooks/x | tee /tmp/y`), or a write command and a
 read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
-What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`. What neither check covers:
-tools outside the writing-tool list (`curl -o`, `tar`, `rsync`), since the list can't be complete. What only the
-tree check misses: a string handed to a program that runs it where the tool isn't at the start of a command line
+What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`, the other spellings of a protected path
+and the writers above. What neither check covers: tools outside the writing-tool list, since the list can't be
+complete; paths a command builds or reads at run time (`ls | xargs rm`, `rm $(cat list)`, `rm $f` after `cd ~/.claude`)
+or in a script (`python3 s.py`, which only blocks when a protected path is among its arguments); `rm -r ~/.claude`
+itself; a symlink to a protected path. What only the tree check misses: a string handed to a program that runs it where the tool isn't at the start of a command line
 inside it (`git commit -m "x; cp …"` reads as a command line and blocks, but `node -e 'fs.writeFileSync("…")'`
 passes); the gate catches Claude's slips and isn't a boundary.
 
