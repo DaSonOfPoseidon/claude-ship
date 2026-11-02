@@ -427,7 +427,7 @@ expect_review 2 'echo "git push"; sort --compress=/tmp/x f' none
 expect_review 2 'echo "git push"; sort --co /tmp/x f' none
 expect_review 2 'echo "git push"; rg --pre /tmp/x a f' none
 expect_review 2 'echo "git push"; rg --pre-glob x a f' none
-expect_review 0 'echo "git push"; sort -u -k2 --reverse --output=o f' none
+expect_review 0 'echo "git push"; sort -u -k2 --reverse f' none
 # Round 4 of #191, and the decision to stop patching one case at a time: the safe list is plain external read-only
 # tools with literal arguments. A declaration builtin, exec, eval, a shell, a wrapper, printf, a file-changing tool or a
 # dynamic argument makes the command unknown.
@@ -484,6 +484,38 @@ expect_review 2 'echo "git push"; sed s/a/b/ f' none
 expect_review 2 'echo "git push"; awk 1 f' none
 expect_review 2 'echo "git push"; test -f f' none
 expect_review 2 'echo "git push"; [ -f f ]' none
+# Round 5 of #191: a write can replace a program on PATH that a listed name then runs, so any write redirect makes the
+# command unknown (except to /dev/null and descriptor duplicates), and so does any option or argument that makes a listed
+# tool write a file.
+expect_review 2 'echo '\''#!/bin/sh git push origin HEAD'\'' > /tmp/hostname; hostname' none
+expect_review 2 'echo "git push" > /tmp/f; cat f' none
+expect_review 2 'echo "git push" >> /tmp/f' none
+expect_review 2 'echo "git push" >| /tmp/f' none
+expect_review 2 'echo "git push" 2> /tmp/f' none
+expect_review 2 'echo "git push" 1>/tmp/f' none
+expect_review 2 'echo "git push" &> /tmp/f' none
+expect_review 2 'echo "git push" &>> /tmp/f' none
+expect_review 2 'echo "git push" <> /tmp/f' none
+expect_review 2 'echo "git push" >&/tmp/f' none
+expect_review 2 'echo "git push" >"$f"' none
+expect_review 2 'echo "git push"; { echo x; } > /tmp/f' none
+expect_review 2 'echo "git push"; (echo x) >/tmp/f' none
+expect_review 2 'echo "git push"; for i in a; do echo x; done > /tmp/f' none
+expect_review 2 'echo "git push"; sort -o /tmp/f f' none
+expect_review 2 'echo "git push"; sort -uo /tmp/f f' none
+expect_review 2 'echo "git push"; sort -o/tmp/f f' none
+expect_review 2 'echo "git push"; sort --output=/tmp/f f' none
+expect_review 2 'echo "git push"; sort --ou /tmp/f f' none
+expect_review 2 'echo "git push"; uniq in /tmp/out' none
+expect_review 2 'echo "git push"; uniq -c in out' none
+expect_review 2 'echo "git push"; xxd -r in /tmp/out' none
+expect_review 2 'echo "git push"; xxd f' none
+expect_review 2 'echo "git push"; base64 -o /tmp/out f' none
+expect_review 0 'echo "git push" >/dev/null; echo "git push" 2>/dev/null; echo "git push" &>/dev/null; echo "git push" >>/dev/null; echo "git push" 2>&1; echo "git push" >&2; echo "git push" >&-' none
+expect_review 0 'cat <<EOF
+git push
+EOF
+cat <<< "git push"; wc -l < f; uniq f; uniq -c f; sort -u f' none
 expect_review 0 'echo "git push"; cat f; grep -n "gh api" f | wc -l; head -3 f | sort -u | uniq | cut -d: -f1; ls -la; diff a b; jq . f; date; pwd; true; false' none
 expect_review 0 'echo "git push" 2>&1 >/dev/null; stat f; basename /a/b; wc -l < f; sleep 1; seq 3; id -u; uname -a' none
 expect_review 2 'echo "git push" ; flock l true' none

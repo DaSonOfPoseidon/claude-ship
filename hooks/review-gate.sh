@@ -305,11 +305,23 @@ def calls:
 # (git and gh, a wrapper, a shell, an interpreter, a builtin that assigns, runs code or replaces the shell, a tool that
 # changes files, a script, a word that is not literal), whether it runs git or not: the list of what is dangerous
 # never ended (claude-ship #191), so the list of what is trusted is short.
-def ggsafe: test("^(cat|echo|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|ls|stat|diff|cmp|jq|pwd|true|false|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|xxd|od|uname|whoami|id|hostname)$");
-# A tool on that list with an option that runs a program: sort --compress-program, which getopt lets one abbreviate.
-# rg is not listed: its --pre and --hostname-bin run programs.
+def ggsafe: test("^(cat|echo|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|ls|stat|diff|cmp|jq|pwd|true|false|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|od|uname|whoami|id|hostname)$");
+# A tool on that list with an option that runs a program (sort --compress-program, which getopt lets one abbreviate) or
+# an option or argument that makes it write a file (sort -o and --output, a second uniq file, base64 -o): a file it
+# writes can replace a program on PATH that a listed name then runs. rg is not listed: its --pre and --hostname-bin run
+# programs; xxd is not: `xxd -r in out` writes out.
 def ggbad($c; $a):
-	$c == "sort" and any($a[]; test("^--co"));
+	($c == "sort" and any($a[]; test("^--(co|o)") or test("^-[a-zA-Z]*o")))
+	or ($c == "uniq" and ([$a[] | select(startswith("-") | not)] | length) > 1)
+	or ($c == "base64" and any($a[]; test("^--o") or test("^-[a-zA-Z]*o")));
+# A redirect that writes a file: any of `>`, `>>`, `>|`, `<>`, `&>`, `&>>` (also behind a descriptor: `2>`) and `>&` to
+# anything but a descriptor. A literal /dev/null is the one target that is no write. Here-strings, heredocs and `<` only read.
+def ggwrite:
+	has("Op") and has("Word") and (.Op | type) == "string" and (.Op | test("^(>|>>|>\\||<>|&>|&>>|>&)$"))
+	and ((.Word | wv) as $t | if $t == null then true
+		elif $t == "/dev/null" then false
+		elif .Op == ">&" and ($t | test("^([0-9]+-?|-)$")) then false
+		else true end);
 # A variable that changes which program a listed name runs, or loads code into it or into the shell (`PATH=. cat`,
 # `PERL5OPT=-Mx shasum`, `IFS`, `BASH_ENV`, `PS4`, `GIT_*`, `NODE_OPTIONS`...). The list of those never ends, so it is
 # the other way round: only a variable known to be harmless is. That is a lower-case name (the environment variables
@@ -334,7 +346,8 @@ def ggcalls:
 def ggnum: ([.. | objects | select(.Type == "Lit") | .Value] | all(test("^([0-9]+|0[xX][0-9a-fA-F]+)$")))
 	and (any(.. | objects; .Type == "ParamExp") | not);
 def ggnode:
-	if .Type == "ParamExp" and (.Excl == true or ((.Exp.Op? // "") == "@")) then {k: "ggdyn"}
+	if ggwrite then {k: "ggdyn"}
+	elif .Type == "ParamExp" and (.Excl == true or ((.Exp.Op? // "") == "@")) then {k: "ggdyn"}
 	elif .Type == "ParamExp" and .Slice != null then (.Slice | if ggnum then empty else {k: "ggdyn"} end)
 	elif (.Type == "ArithmExp" or .Type == "ArithmCmd" or .Type == "LetClause" or .Type == "CStyleLoop") then (if ggnum then empty else {k: "ggdyn"} end)
 	elif .Type == "BinaryTest" and ((.Op | tostring) | test("^-(eq|ne|lt|le|gt|ge)$")) then {k: "ggdyn"}

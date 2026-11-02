@@ -93,6 +93,11 @@ the old text checks run:
   `{name}` redirect): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`, `GIT_*` and the
   rest never end, so it is an allowlist: a lower-case name (not zsh's `path`, `fpath`, `cdpath`, …) and `LC_*`, `LANG`,
   `LANGUAGE`, `TZ`, `TERM`, `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;
+- a write: any redirect that writes a file (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, `2>`, `>&file`) except to a literal
+  `/dev/null` or to a descriptor (`2>&1`, `>&2`), since a file written by the command can replace a program on `PATH`
+  that a listed name then runs (`echo '…' > /abs/path/hostname; hostname`); and an option or argument that makes a
+  listed tool write (`sort -o`, `--output`, a second `uniq` file, `base64 -o`; `xxd` is not listed: `xxd -r in out`).
+  Heredocs, here-strings and `<` only read. So `cat > file <<'EOF' … EOF` is unknown and keeps the old checks;
 - text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `[[ a -eq b ]]`,
   `[[ -v x ]]`, `${x:n}`), and an array subscript. Plain numbers are fine. `time` is a keyword: the command behind it is
   what is judged.

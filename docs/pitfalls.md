@@ -22,7 +22,7 @@ review finds a new class.
   then `PERL5OPT=… shasum`, `xargs find`, `printf '%n'`, `{PATH}>f`, `declare -a a='($(…))'`, `exec -l bash` (claude-ship
   #135, #191), one codex round each. What is left is a short list: the bare name of a plain external read-only tool, every
   word literal, no option that runs a program (`sort --compress-program`, abbreviated too); a wrapper, a shell, a builtin
-  that assigns, runs code or replaces the shell, a file-changing tool, a dynamic word and any variable assignment outside
+  that assigns, runs code or replaces the shell, a file-changing tool, a dynamic word, a write (any redirect to a file, `sort -o`) and any variable assignment outside
   a short allowlist are unknown (docs/gate.md › Command reading). When a trusted tool turns out to run something, remove
   it from the list rather than adding a check for that one form.
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
