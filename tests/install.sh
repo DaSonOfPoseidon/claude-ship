@@ -67,6 +67,22 @@ for f in main-installer-ran bin/shfmt hooks/review-gate.sh hooks/review-lib.sh h
 		fail=1
 	}
 done
+# Every hook an agent's frontmatter names is deployed (claude-ship #122); the list comes from the agents themselves,
+# so a new one can't be missed.
+agent_hooks=$(grep -h 'command: ~/.claude/' "$root"/agents/ship-*.md | sed 's|.*command: ~/.claude/||')
+case $agent_hooks in
+*hooks/explorer-bash.sh*) ;;
+*)
+	echo "FAIL: no agent in agents/ names hooks/explorer-bash.sh"
+	fail=1
+	;;
+esac
+for f in $agent_hooks; do
+	[ -x "$tmp/dest/$f" ] || {
+		echo "FAIL: $f, named by an agent, isn't deployed and executable"
+		fail=1
+	}
+done
 # Hooks and skill scripts are registered or run as commands, so every deployed script is executable.
 for f in "$tmp"/dest/hooks/*.sh "$tmp"/dest/skills/ship/*.sh; do
 	[ -x "$f" ] || {
@@ -105,7 +121,7 @@ run_case() {
 	rm -rf "$cdir"
 	mkdir -p "$cdir"
 	[ -f "$start" ] && cp "$start" "$cdir/settings.json"
-	CLAUDE_HOME=$cdir PATH=$case_path "$sh_bin" "$tmp/checkout/install.sh" >"$tmp/out" 2>&1
+	CLAUDE_HOME=$cdir PATH=$case_path "$sh_bin" "${install_sh:-$tmp/checkout/install.sh}" >"$tmp/out" 2>&1
 	rc=$?
 	if [ -f "$start" ]; then
 		cmp -s "$start" "$cdir/settings.json" || {
@@ -304,6 +320,34 @@ run_case shfmt-works
 expect shfmt-works 0 0
 [ -f "$tmp/case-shfmt-works/bin/shfmt" ] || {
 	echo "FAIL: shfmt-works: no bin/shfmt"
+	fail=1
+}
+
+# An agent whose frontmatter hook isn't deployed or isn't executable would run its Bash unrestricted (a missing hook
+# is a non-blocking error), so the install says so and exits 1, the files still deployed (claude-ship #122). A main
+# with two such agents: one names a hook it doesn't ship, one a hook committed without the execute bit.
+cp -R "$tmp/src" "$tmp/src2"
+for n in missing:not-shipped noexec:not-exec; do
+	printf -- '---\nname: ship-%s\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: ~/.claude/hooks/%s.sh\n---\nbody\n' "${n%%:*}" "${n#*:}" >"$tmp/src2/agents/ship-${n%%:*}.md"
+done
+printf '#!/bin/sh\n' >"$tmp/src2/hooks/not-exec.sh"
+chmod 644 "$tmp/src2/hooks/not-exec.sh"
+git -C "$tmp/src2" add -A
+git -C "$tmp/src2" commit -qm fixtures
+git clone -q --bare "$tmp/src2" "$tmp/origin2.git"
+git clone -q "$tmp/origin2.git" "$tmp/checkout2"
+install_sh="$tmp/checkout2/install.sh"
+printf '%s\n' "$both" >"$start"
+run_case agent-hook-missing
+unset install_sh
+expect agent-hook-missing 1 0
+has agent-hook-missing "ship-missing names ~/.claude/hooks/not-shipped.sh, which isn't deployed or isn't executable; its Bash runs unrestricted"
+has agent-hook-missing "ship-noexec names ~/.claude/hooks/not-exec.sh, which isn't deployed or isn't executable"
+lacks agent-hook-missing "ship-explorer names"
+lacks agent-hook-missing "ship-codex names"
+has agent-hook-missing "The gate is registered"
+[ -e "$tmp/case-agent-hook-missing/skills/ship/SKILL.md" ] || {
+	echo "FAIL: agent-hook-missing: the skill wasn't deployed"
 	fail=1
 }
 

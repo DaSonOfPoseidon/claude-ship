@@ -5,7 +5,8 @@
 # is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
 # (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after deploying, this
 # script reads that file (never writes it) and warns about a missing or outdated entry, and says when the PR
-# loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing.
+# loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
+# frontmatter was not deployed or is not executable (#122).
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
@@ -32,6 +33,26 @@ rc=0
 mkdir -p "$dest/bin"
 if ! sh "$tmp/scripts/fetch-shfmt.sh" "$dest/bin/shfmt"; then
 	echo "install: couldn't install shfmt (see above); the review gate will need it." >&2
+	rc=1
+fi
+
+# Each deployed ship agent's frontmatter hooks (ship-explorer's explorer-bash.sh, ship-codex's codex-bash.sh) are what
+# keep its Bash in bounds. A hook that is missing or not executable fails with a non-blocking error, so the agent's
+# Bash would run unrestricted (#122): check every hook a ship agent's frontmatter names.
+for agent in "$tmp"/agents/ship-*.md; do
+	name=${agent##*/}
+	name=${name%.md}
+	awk '/^---[ \t]*$/ { n++; next } n == 1 && /^[ \t]*(-[ \t]+)?command:/ { sub(/^[^:]*:[ \t]*/, ""); gsub(/["'"'"']/, ""); sub(/[ \t]+$/, ""); print }' "$agent" | while read -r hook; do
+		# shellcheck disable=SC2088 # the literal text the frontmatter holds
+		case $hook in
+		"~/.claude/"*) file=$dest/${hook#"~/.claude/"} ;;
+		*) file=$hook ;;
+		esac
+		[ -x "$file" ] && [ -f "$file" ] || echo "install: $name names $hook, which isn't deployed or isn't executable; its Bash runs unrestricted" >&2
+	done
+done >"$tmp/agent-hooks.err" 2>&1
+if [ -s "$tmp/agent-hooks.err" ]; then
+	cat "$tmp/agent-hooks.err" >&2
 	rc=1
 fi
 
