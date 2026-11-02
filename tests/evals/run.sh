@@ -284,7 +284,7 @@ run_case() (
 			if git cat-file -e "$upstream:$p" 2>/dev/null; then
 				text=$(git show "$upstream:$p") || broken "couldn't read $p at $case_base"
 				checklist=$(checklist_of "$text")
-				checklist_src="CONTRIBUTING.md on refs/remotes/origin/$main"
+				checklist_src="$p on refs/remotes/origin/$main"
 				break
 			fi
 		done

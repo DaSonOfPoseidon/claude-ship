@@ -1499,6 +1499,11 @@ run_reviewer() {
 			;;
 		esac
 	done
+	# A zero budget or minimum would let `timeout 0` through, which means no limit at all.
+	if [ "$budget" -lt 1 ] || [ "$min_secs" -lt 1 ]; then
+		echo "Blocked: REVIEW_GATE_BUDGET ('$budget') and REVIEW_GATE_MIN_SECS ('$min_secs') must each be at least 1. Fix them and retry the push." >&2
+		exit 2
+	fi
 	now=$(date +%s 2>/dev/null)
 	case $now in
 	'' | *[!0-9]*)
@@ -1507,6 +1512,7 @@ run_reviewer() {
 		;;
 	esac
 	left=$((started + budget - now))
+	# min_secs is at least 1, so this also keeps left (and so the timeout below) above 0: `timeout 0` has no limit.
 	if [ "$left" -lt "$min_secs" ]; then
 		echo "Blocked: the review ran out of time ($((now - started)) s of $budget s used before the $1 reviewer; it needs $min_secs s). Retry the push; a finished finder's result is kept." >&2
 		exit 2
@@ -1545,7 +1551,7 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 	if [ "$kind" = code ]; then
 		if ctx_file docs/CONTRIBUTING.md CONTRIBUTING.md; then
 			checklist=$(checklist_of "$ctx_text")
-			checklist_src="CONTRIBUTING.md on $ctx_ref"
+			checklist_src="$ctx_path on $ctx_ref"
 		fi
 		if ctx_file docs/pitfalls.md; then
 			pitfalls=$ctx_text
