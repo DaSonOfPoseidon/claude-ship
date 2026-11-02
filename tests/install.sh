@@ -67,6 +67,22 @@ for f in main-installer-ran bin/shfmt hooks/review-gate.sh hooks/review-lib.sh h
 		fail=1
 	}
 done
+# Every hook an agent's frontmatter names is deployed (claude-ship #122); the list comes from the agents themselves,
+# so a new one can't be missed.
+agent_hooks=$(grep -h 'command: ~/.claude/' "$root"/agents/ship-*.md | sed 's|.*command: ~/.claude/||')
+case $agent_hooks in
+*hooks/explorer-bash.sh*) ;;
+*)
+	echo "FAIL: no agent in agents/ names hooks/explorer-bash.sh"
+	fail=1
+	;;
+esac
+for f in $agent_hooks; do
+	[ -x "$tmp/dest/$f" ] || {
+		echo "FAIL: $f, named by an agent, isn't deployed and executable"
+		fail=1
+	}
+done
 # Hooks and skill scripts are registered or run as commands, so every deployed script is executable.
 for f in "$tmp"/dest/hooks/*.sh "$tmp"/dest/skills/ship/*.sh; do
 	[ -x "$f" ] || {
@@ -105,7 +121,7 @@ run_case() {
 	rm -rf "$cdir"
 	mkdir -p "$cdir"
 	[ -f "$start" ] && cp "$start" "$cdir/settings.json"
-	CLAUDE_HOME=$cdir PATH=$case_path "$sh_bin" "$tmp/checkout/install.sh" >"$tmp/out" 2>&1
+	CLAUDE_HOME=$cdir PATH=$case_path "$sh_bin" "${install_sh:-$tmp/checkout/install.sh}" >"$tmp/out" 2>&1
 	rc=$?
 	if [ -f "$start" ]; then
 		cmp -s "$start" "$cdir/settings.json" || {
@@ -198,6 +214,53 @@ gate_with --arg c "$tmp/case-abs-command/hooks/review-gate.sh" '.hooks.PreToolUs
 run_case abs-command
 expect abs-command 0 0
 
+# Claude Code runs every registered gate hook, so each one is judged and a second registration is itself a warning
+# (claude-ship #153): the verdict can't depend on the order of the entries.
+# lacks <name> <text>: the output doesn't have this text.
+lacks() {
+	grep -qF -- "$2" "$tmp/out" && {
+		echo "FAIL: $1: output has: $2"
+		sed 's/^/  /' "$tmp/out"
+		fail=1
+	}
+}
+# A stale entry that misses all three checks (matcher, timeout, onFailure).
+stale=$(jq -n --arg c "$cmd" '{matcher: "Bash", hooks: [{type: "command", command: $c, timeout: 600}]}')
+# The README entry follows the stale one.
+gate_with --argjson s "$stale" '.hooks.PreToolUse = [$s] + .hooks.PreToolUse'
+run_case stale-then-good
+expect stale-then-good 0 4
+has stale-then-good "registered 2 times"
+has stale-then-good "1st"
+lacks stale-then-good "The gate is registered"
+# The same two entries the other way round: the good one first must not hide the stale one.
+gate_with --argjson s "$stale" '.hooks.PreToolUse += [$s]'
+run_case good-then-stale
+expect good-then-stale 0 4
+has good-then-stale "registered 2 times"
+has good-then-stale "2nd"
+lacks good-then-stale "The gate is registered"
+gate_with '.hooks.PreToolUse += [.hooks.PreToolUse[0]]'
+run_case two-good
+expect two-good 0 1
+has two-good "registered 2 times"
+lacks two-good "The gate is registered"
+# Two gate hooks in one entry count too, and so does one written with the absolute path.
+gate_with '.hooks.PreToolUse[0].hooks += [.hooks.PreToolUse[0].hooks[0]]'
+run_case one-entry-two-hooks
+expect one-entry-two-hooks 0 1
+has one-entry-two-hooks "registered 2 times"
+gate_with --arg c "$tmp/case-abs-twice/hooks/review-gate.sh" '.hooks.PreToolUse[0].hooks += [.hooks.PreToolUse[0].hooks[0] | .command = $c | del(.onFailure)]'
+run_case abs-twice
+expect abs-twice 0 2
+has abs-twice "2nd"
+# Three registrations: the count, and the third one named.
+gate_with --argjson s "$stale" '.hooks.PreToolUse += [.hooks.PreToolUse[0], $s]'
+run_case three
+expect three 0 4
+has three "registered 3 times"
+has three "3rd"
+
 # The orchestrate hint is optional: an info line, the exit unchanged, and the gate's own warnings still show.
 printf '%s\n' "$gate" >"$start"
 run_case no-hint
@@ -257,6 +320,34 @@ run_case shfmt-works
 expect shfmt-works 0 0
 [ -f "$tmp/case-shfmt-works/bin/shfmt" ] || {
 	echo "FAIL: shfmt-works: no bin/shfmt"
+	fail=1
+}
+
+# An agent whose frontmatter hook isn't deployed or isn't executable would run its Bash unrestricted (a missing hook
+# is a non-blocking error), so the install says so and exits 1, the files still deployed (claude-ship #122). A main
+# with two such agents: one names a hook it doesn't ship, one a hook committed without the execute bit.
+cp -R "$tmp/src" "$tmp/src2"
+for n in missing:not-shipped noexec:not-exec; do
+	printf -- '---\nname: ship-%s\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: ~/.claude/hooks/%s.sh\n---\nbody\n' "${n%%:*}" "${n#*:}" >"$tmp/src2/agents/ship-${n%%:*}.md"
+done
+printf '#!/bin/sh\n' >"$tmp/src2/hooks/not-exec.sh"
+chmod 644 "$tmp/src2/hooks/not-exec.sh"
+git -C "$tmp/src2" add -A
+git -C "$tmp/src2" commit -qm fixtures
+git clone -q --bare "$tmp/src2" "$tmp/origin2.git"
+git clone -q "$tmp/origin2.git" "$tmp/checkout2"
+install_sh="$tmp/checkout2/install.sh"
+printf '%s\n' "$both" >"$start"
+run_case agent-hook-missing
+unset install_sh
+expect agent-hook-missing 1 0
+has agent-hook-missing "ship-missing names ~/.claude/hooks/not-shipped.sh, which isn't deployed or isn't executable; its Bash runs unrestricted"
+has agent-hook-missing "ship-noexec names ~/.claude/hooks/not-exec.sh, which isn't deployed or isn't executable"
+lacks agent-hook-missing "ship-explorer names"
+lacks agent-hook-missing "ship-codex names"
+has agent-hook-missing "The gate is registered"
+[ -e "$tmp/case-agent-hook-missing/skills/ship/SKILL.md" ] || {
+	echo "FAIL: agent-hook-missing: the skill wasn't deployed"
 	fail=1
 }
 

@@ -5,7 +5,8 @@
 # is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
 # (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after deploying, this
 # script reads that file (never writes it) and warns about a missing or outdated entry, and says when the PR
-# loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing.
+# loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
+# frontmatter was not deployed or is not executable (#122).
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
@@ -32,6 +33,26 @@ rc=0
 mkdir -p "$dest/bin"
 if ! sh "$tmp/scripts/fetch-shfmt.sh" "$dest/bin/shfmt"; then
 	echo "install: couldn't install shfmt (see above); the review gate will need it." >&2
+	rc=1
+fi
+
+# Each deployed ship agent's frontmatter hooks (ship-explorer's explorer-bash.sh, ship-codex's codex-bash.sh) are what
+# keep its Bash in bounds. A hook that is missing or not executable fails with a non-blocking error, so the agent's
+# Bash would run unrestricted (#122): check every hook a ship agent's frontmatter names.
+for agent in "$tmp"/agents/ship-*.md; do
+	name=${agent##*/}
+	name=${name%.md}
+	awk '/^---[ \t]*$/ { n++; next } n == 1 && /^[ \t]*(-[ \t]+)?command:/ { sub(/^[^:]*:[ \t]*/, ""); gsub(/["'"'"']/, ""); sub(/[ \t]+$/, ""); print }' "$agent" | while read -r hook; do
+		# shellcheck disable=SC2088 # the literal text the frontmatter holds
+		case $hook in
+		"~/.claude/"*) file=$dest/${hook#"~/.claude/"} ;;
+		*) file=$hook ;;
+		esac
+		[ -x "$file" ] && [ -f "$file" ] || echo "install: $name names $hook, which isn't deployed or isn't executable; its Bash runs unrestricted" >&2
+	done
+done >"$tmp/agent-hooks.err" 2>&1
+if [ -s "$tmp/agent-hooks.err" ]; then
+	cat "$tmp/agent-hooks.err" >&2
 	rc=1
 fi
 
@@ -62,26 +83,47 @@ check_settings() {
 	fi
 	# shellcheck disable=SC2088 # the literal text README.md registers
 	jqs() { jq --arg a '~/.claude/hooks/review-gate.sh' --arg b "$dest/hooks/review-gate.sh" "$@"; }
-	hook='first(.hooks[] | select(type == "object" and (.command == $a or .command == $b)))'
-	entry=$(jqs -c 'first(.hooks.PreToolUse[]? | select(type == "object" and any(.hooks[]?; type == "object" and (.command == $a or .command == $b))))' "$settings" 2>/dev/null) || entry=
-	if [ -z "$entry" ]; then
+	# Every hook that runs the gate, with its entry's matcher: Claude Code runs all of them, so each is judged (#153).
+	gates=$(jqs -c '[.hooks.PreToolUse[]? | select(type == "object") | . as $e | $e.hooks[]? | select(type == "object" and (.command == $a or .command == $b)) | {matcher: $e.matcher, timeout, onFailure}]' "$settings" 2>/dev/null) || gates=
+	count=$(printf '%s' "$gates" | jq -r 'length' 2>/dev/null) || count=0
+	count=${count:-0}
+	if [ "$count" = 0 ]; then
 		echo "install: the gate isn't registered in $settings (missing, not valid JSON, or no PreToolUse hook running ~/.claude/hooks/review-gate.sh), so it reviews nothing. Add this:" >&2
 		printf '%s\n' "$snippet" >&2
 		return 1
 	fi
 	warned=
-	if ! printf '%s' "$entry" | jq -e --arg m "$want_matcher" '.matcher == $m' >/dev/null 2>&1; then
-		echo "install: warning: the gate's matcher differs from README.md; use \"matcher\": \"$want_matcher\"." >&2
+	if [ "$count" -gt 1 ]; then
+		echo "install: warning: the gate is registered $count times in $settings; keep only the README entry (Claude Code runs every one, so a stale one still runs with its weaker settings)." >&2
 		warned=1
 	fi
-	if ! printf '%s' "$entry" | jqs -e --argjson w "$want_timeout" "$hook | .timeout | type == \"number\" and . >= \$w" >/dev/null 2>&1; then
-		echo "install: warning: the gate's hook needs \"timeout\": $want_timeout (it must outlast the reviewer budget)." >&2
-		warned=1
-	fi
-	if ! printf '%s' "$entry" | jqs -e --arg f "$want_failure" "$hook | .onFailure == \$f" >/dev/null 2>&1; then
-		echo "install: warning: the gate's hook needs \"onFailure\": \"$want_failure\" (else a timeout lets the push through)." >&2
-		warned=1
-	fi
+	# One line per gate hook: whether its matcher, timeout and onFailure are right.
+	verdicts=$(printf '%s' "$gates" | jq -r --arg m "$want_matcher" --argjson w "$want_timeout" --arg f "$want_failure" '.[] | [.matcher == $m, ((.timeout | type) == "number" and .timeout >= $w), .onFailure == $f] | map(tostring) | join(" ")')
+	i=0
+	while read -r ok_matcher ok_timeout ok_failure; do
+		i=$((i + 1))
+		case $i in
+		1) ord=1st ;;
+		2) ord=2nd ;;
+		3) ord=3rd ;;
+		*) ord=${i}th ;;
+		esac
+		if [ "$count" -gt 1 ]; then g="the $ord gate registration's"; else g="the gate's"; fi
+		if [ "$ok_matcher" != true ]; then
+			echo "install: warning: $g matcher differs from README.md; use \"matcher\": \"$want_matcher\"." >&2
+			warned=1
+		fi
+		if [ "$ok_timeout" != true ]; then
+			echo "install: warning: $g hook needs \"timeout\": $want_timeout (it must outlast the reviewer budget)." >&2
+			warned=1
+		fi
+		if [ "$ok_failure" != true ]; then
+			echo "install: warning: $g hook needs \"onFailure\": \"$want_failure\" (else a timeout lets the push through)." >&2
+			warned=1
+		fi
+	done <<VERDICTS
+$verdicts
+VERDICTS
 	if [ -n "$warned" ]; then
 		echo "The entry from README.md:" >&2
 		printf '%s\n' "$snippet" >&2

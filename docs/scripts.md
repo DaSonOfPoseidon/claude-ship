@@ -369,7 +369,12 @@ there, and no `settings.json` entry is needed.
   for `view` and `diff`. gh's long options can't be abbreviated, so those match exactly.
 - **Left out.** `ls`, `cat`, `wc`, `head`, `tail`: the explorer has Read, Grep and Glob, and the prose never
   listed them. A denied call tells the agent what is allowed.
-- **Fails closed.** Input that isn't JSON, has no string `tool_input.command`, or is empty denies. It does not
+- **Denies what it can't read; can't deny when it doesn't run.** Input that isn't JSON, has no string
+  `tool_input.command`, or is empty denies. A hook that fails to run at all (missing, not executable: exit 126 or
+  127) is a non-blocking error, and the agent's Bash then runs unrestricted. Claude Code's docs show `onFailure:
+  block` only for settings-style hook entries; subagent frontmatter isn't documented to take it, so the agents
+  don't rely on it. `install.sh` checks instead that every hook an agent's frontmatter names is deployed and
+  executable, and exits 1 otherwise (#122). It does not
   stop `git diff` using a `diff.external` driver from the repo's own config, which a branch can't set. Like the
   gate, it is for Claude's slips and steering, not a security boundary.
 
@@ -420,7 +425,8 @@ hook decides, not what Claude Code does with it.
 - **Fails closed.** Input that isn't JSON, has no string `tool_name`, `tool_input.command` (Bash) or
   `tool_input.file_path` (Write), or names any other tool, exits 2 with a reason the agent sees. A hook that
   fails to run at all (missing, not executable) doesn't deny: Claude Code reads that as a non-blocking error and
-  the call goes on to the normal permission check, which is not an allow. The deployed mode is tested.
+  the call goes on to the normal permission check, which is not an allow. The deployed mode is tested, and
+  `install.sh` exits 1 when a hook an agent names isn't deployed and executable (#122).
 - **The gate still sees these commands.** The pre-push gate's own hook runs on the same calls; a deny from either
   wins over this allow. Every write the agent makes is through a ship script the gate's `gh api` allowlist
   already covers.
@@ -452,10 +458,18 @@ compares the gate's entry with the README snippet from `origin/main`, so the exp
 `matcher`, `timeout` below the README's or `onFailure` other than `"block"` that differs gets a warning (exit 0)
 and the README's entry to paste. It exits 1 when the gate isn't registered at all (no file, invalid JSON, no
 `PreToolUse` hook running `~/.claude/hooks/review-gate.sh` or the absolute path in the target directory) or when
-it can't check (no `jq`; a README without the snippets, which would be a bug here). The orchestrate hint hook is
+it can't check (no `jq`; a README without the snippets, which would be a bug here). It judges every hook that runs
+the gate, not the first (#153): Claude Code runs all of them, so a stale entry still runs with its weaker settings.
+More than one gives a warning that the gate is registered N times, then the usual warnings for each one that
+differs, named 1st, 2nd, and so on; "The gate is registered" prints only for exactly one hook with no warnings. The orchestrate hint hook is
 optional: a missing one only prints an info line. So does a missing `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}`
 (only the string `"0"` counts): the PR loop needs it, because under fork mode a subagent's Agent call returns at
 once (#160).
+
+After deploying, it also checks that every hook path named in a deployed ship agent's frontmatter exists and is
+executable (`~/.claude/` read as the target directory). A missing one prints `install: <agent> names <path>, which
+isn't deployed or isn't executable; its Bash runs unrestricted` and makes the exit 1, because such a hook fails
+with a non-blocking error and the agent would run without it (#122).
 
 After the files, it runs `scripts/fetch-shfmt.sh` from main's archive to put shfmt at `$dest/bin/shfmt` (#135). A
 failure prints `couldn't install shfmt` and makes the exit non-zero, but the rest of the install still runs, so the
