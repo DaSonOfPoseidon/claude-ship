@@ -408,13 +408,17 @@ def wcheck($e; $all; $cs):
 		| wbl([$o[] | select(rprot($cs))] + [$p[] | select(dprot($cs))]
 			+ (if ($o | length) == 0 and ($p | length) == 0 and ($a | any(. == "--spider") | not) then cwdprot($cs) else [] end); "wget")
 	elif $c == "tar" then
+		# A cluster of short options (`-xvf`, or `xvf` first) is flags up to the first option that takes a value; the rest of
+		# the word, or the next word, is that value (`-xfOUT.tar` has no -O).
 		[range(0; $a | length) as $i | $a[$i] as $x
-			| select(($x | test("^-[^-]")) or ($i == 0 and ($x | test("^[A-Za-z]+$")))) | {i: $i, cl: ($x | ltrimstr("-"))}] as $cls
-		| ((($cls | any(.cl | test("x"))) or ($a | any(. == "--extract" or . == "--get"))) and (($cls | any(.cl | test("O"))) or ($a | any(. == "--to-stdout")) | not)) as $ext
-		| (($cls | any(.cl | test("[cruA]"))) or ($a | any(. == "--create" or . == "--append" or . == "--update" or . == "--concatenate"))) as $crt
-		| ([$cls[] | . as $k | ($k.cl | index("f")) as $j | select($j != null)
-			| ($k.cl[$j + 1:]) as $r | if $r != "" then $r else ($a[$k.i + 1] // empty) end] + optargs($a; ""; ["file"]) | map(select(. != "-"))) as $files
-		| (optargs($a; "C"; ["directory"])) as $dirs
+			| select(($x | test("^-[^-]")) or ($i == 0 and ($x | test("^[A-Za-z]+$"))))
+			| {i: $i} + ($x | ltrimstr("-") | capture("^(?<fl>[^fCbILTXKNgVFH]*)(?<t>[fCbILTXKNgVFH]?)(?<r>.*)$"; "s"))] as $cls
+		| (($cls | any(.fl | test("x"))) or ($a | any(. == "--extract" or . == "--get"))) as $ext0
+		| (($cls | any(.fl | test("O"))) or ($a | any(. == "--to-stdout"))) as $stdout
+		| (($cls | any(.fl | test("[cruA]"))) or ($a | any(. == "--create" or . == "--append" or . == "--update" or . == "--concatenate"))) as $crt
+		| ($ext0 and ($stdout | not)) as $ext
+		| ([$cls[] | select(.t == "f") | if .r != "" then .r else ($a[.i + 1] // empty) end] + optargs($a; ""; ["file"]) | map(select(. != "-"))) as $files
+		| ([$cls[] | select(.t == "C") | if .r != "" then .r else ($a[.i + 1] // empty) end] + optargs($a; ""; ["directory"])) as $dirs
 		| wbl((if $crt then [$files[] | select(rprot($cs))] else [] end)
 			+ (if $ext then (if ($dirs | length) > 0 then [$dirs[] | select(dprot($cs))] else cwdprot($cs) end) else [] end); "tar")
 	elif ($c == "rsync" or $c == "scp") then
