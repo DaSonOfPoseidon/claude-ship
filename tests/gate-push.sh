@@ -52,6 +52,132 @@ expect 0 'git push origin HEAD 2>&1 | tail -3 2>&1'
 expect 0 'git push origin HEAD 2>&1 | grep -v hint | head -5'
 expect 0 'git -C . push origin HEAD | cat'
 expect 0 "cd $repo && git push -u origin HEAD 2>&1 | tail -3"
+# The shape is read from the syntax tree, so quoting and line continuations don't change it: a quoted directory with
+# spaces (#39), a push continued onto a second line (#42), `--quiet` and `--verbose` (#83), and a quoted redirect
+# target (#99). Equivalent spellings pass; anything else in the command still blocks.
+cp -R "$repo" "$tmp/dir with space"
+expect 0 "cd \"$tmp/dir with space\" && git push origin HEAD"
+expect 0 "cd '../dir with space' && git push -u origin HEAD 2>&1 | tail -3"
+expect 0 'git push -u \
+origin HEAD'
+expect 0 'git push --quiet origin HEAD'
+expect 0 'git push --verbose origin HEAD'
+expect 0 "git push origin HEAD >'/dev/null'"
+expect 0 'git push origin HEAD 2>"/dev/null" | tail -1'
+expect 0 'git push origin HEAD 2>&1 | tail -3 | head -1'
+expect 0 "'git' push \"origin\" HEAD"
+expect 0 'git pu\
+sh origin HEAD'
+expect 0 'git push origin HEAD 3>&-'
+# Anything the tree doesn't describe blocks: a word that isn't literal text, an assignment, a group, a second command,
+# a redirect to a file, a here-string, a second `cd`, or a pipe into anything but tail, head, cat and grep.
+expect 2 'git push origin "$b"'
+expect 2 'git push $(echo origin) HEAD'
+expect 2 'git push origin HEAD*'
+expect 2 'git push origin {HEAD,main}'
+expect 2 'git push origin "$(echo HEAD)"'
+expect 2 'cd "$d" && git push'
+expect 2 'cd ~ && git push'
+expect 2 'cd -P . && git push'
+expect 2 'cd a b && git push'
+expect 2 'cd "" && git push'
+expect 2 'cd a && cd b && git push'
+expect 2 'cd a && git push && cd b'
+expect 2 'x=1 git push'
+expect 2 'GIT_DIR=/x git push'
+expect 2 '(git push origin HEAD)'
+expect 2 '{ git push; }'
+expect 2 'git push origin HEAD; echo'
+expect 2 'git push origin HEAD;'
+expect 2 'git push & '
+expect 2 '! git push origin HEAD'
+expect 2 'git push origin HEAD >/tmp/out'
+expect 2 'git push origin HEAD <<<x'
+expect 2 'git push origin HEAD 2>&1 >out.log'
+expect 2 'git push origin HEAD {v}>&1'
+expect 2 'git push origin HEAD |& tail'
+expect 2 'git push origin HEAD | tail -1 | tee f'
+expect 2 'git push origin HEAD | sh'
+expect 2 'git push | tee f'
+expect 2 'git push | grep "$x"'
+expect 2 'git push origin HEAD | ./tail'
+expect 2 'git push origin HEAD || true'
+expect 2 "git push '' HEAD"
+expect 2 'cat x | git push origin HEAD'
+expect 2 'if true; then git push origin HEAD; fi'
+expect 2 'git push origin HEAD
+git push origin HEAD'
+expect 2 'git push -c push.default=matching'
+expect 2 'git -c push.default=matching push'
+expect 2 'git -C . -C . push origin HEAD'
+expect 2 'git -C "$d" push origin HEAD'
+expect 2 'git --git-dir=x push origin HEAD'
+expect 2 'git push origin HEAD:other'
+# A `cd` or `-C` that may not run is no reason to look elsewhere: the push is judged where the session is, and a command
+# that is not the push shape blocks before any directory is followed (Codex round 1).
+expect 2 'if false; then cd /tmp; fi; git push origin HEAD'
+expect 2 'true || cd /tmp; git push origin HEAD'
+expect 2 'true || git -C /tmp push origin HEAD'
+expect 2 '{ cd /tmp; git push origin HEAD; }'
+# The shape rules apply where the gate does: a repo that has not opted in, or a remote that isn't GitHub's, is left alone,
+# whatever else the command runs (Codex round 2).
+mkdir -p "$tmp/offbin"
+printf '#!/bin/sh\necho false\n' >"$tmp/offbin/gh"
+chmod +x "$tmp/offbin/gh"
+expect_off() {
+	jq -nc --arg c "$2" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH=$tmp/offbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != "$1" ]; then
+		echo "FAIL (exit $rc, want $1; opted out): $2"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+expect_off 0 'git push origin HEAD && echo done'
+expect_off 0 'true || cd /tmp; git push origin HEAD'
+expect_off 0 'true || git -C /tmp push origin HEAD'
+# ...but a directory the gate can't read could be an opted-in repo, so it blocks there too, as for any command.
+expect_off 2 'cd "$d" && git push origin HEAD; echo'
+expect_off 2 'true || cd "$d"; git push origin HEAD'
+expect_off 2 'true || git -C "$d" push origin HEAD'
+# A relative `-C` after a `cd` that may not have run is asked in that `cd`'s directory too: only acme/inrepo has opted in
+# here, and it is reached as <cd target>/sub, while the session's own `sub` is another repo.
+mkdir -p "$tmp/selbin" "$tmp/inrepo"
+printf '#!/bin/sh\ncase "$*" in *acme/inrepo*) echo true ;; *) echo false ;; esac\n' >"$tmp/selbin/gh"
+chmod +x "$tmp/selbin/gh"
+git init -q -b feat "$tmp/inrepo/sub"
+git -C "$tmp/inrepo/sub" remote add origin https://github.com/acme/inrepo.git
+git init -q -b feat "$repo/sub"
+git -C "$repo/sub" remote add origin https://github.com/acme/app.git
+jq -nc --arg c "true || cd $tmp/inrepo; git -C sub push origin HEAD" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+	PATH=$tmp/selbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+rc=$?
+if [ "$rc" != 2 ] || ! grep -q 'reviews HEAD' "$tmp/err"; then
+	echo "FAIL (exit $rc, want 2 for the shape): a relative -C after a cd that may not run"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+fi
+rm -rf "$repo/sub"
+fixture /tmp/elsewhere.git
+expect 0 'git push origin HEAD && echo done'
+fixture https://github.com/acme/app.git
+expect 2 'true || cd /tmp; gh pr create --title t'
+expect 2 'if false; then cd /tmp; fi; gh pr create --title t'
+expect 2 '{ cd /tmp; gh pr create --title t; }'
+expect 2 'git push origin HEAD # x'
+expect 2 'git push origin HEAD # && rm x'
+expect 2 'git push origin HEAD
+# x'
+expect 2 '# x
+git push origin HEAD'
+expect 2 'git push --tags origin HEAD'
+# `-C` names the repo that is pushed from, quoted or not, so its state is the one that is checked.
+fixture https://github.com/acme/app.git nopass
+other=$repo
+fixture https://github.com/acme/app.git
+expect 2 "git -C $other push origin HEAD | tail -1"
+expect 2 "git -C \"$other\" push origin HEAD"
 # Quoted text that mentions a push is not a push.
 expect 0 'gh pr create --title t --body "see git push"'
 # (Blocked before the syntax-tree filter, which sees that no git runs: claude-ship #135.)

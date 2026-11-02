@@ -16,7 +16,9 @@ review finds a new class.
   from the tree, rather than as another regex, and let anything the tree can't settle fall back to the stricter
   old check (docs/gate.md › Tamper protection). The push, PR and `gh api` checks sit behind the same tree: a command
   that runs no git or gh skips them (docs/gate.md › Command reading), and "runs no git" means every command in the
-  tree is on a list of tools known not to run their arguments, not that the tree names no git.
+  tree is on a list of tools known not to run their arguments, not that the tree names no git. The push shape reads the
+  tree too (`push_jq`, claude-ship #135): an allowlist of tree shapes, with every word literal, so a quoted directory with
+  spaces and a backslash-newline are the same command as the plain one, and a text split at `;&|()` no longer decides.
 - **A command's name is not the program it runs, and a list of what is dangerous never ends.** The runs-git filter
   first trusted a long list of names and then patched each bypass: `./cat` and `/tmp/ls` (a path is a script), `PATH=. cat`,
   then `PERL5OPT=… shasum`, `xargs find`, `printf '%n'`, `{PATH}>f`, `declare -a a='($(…))'`, `exec -l bash` (claude-ship
@@ -33,7 +35,9 @@ review finds a new class.
   `,` and `:`. The terminator must also accept the end of the quoted word that contains the redirect:
   `sh -c 'cat x >/dev/null'` ends in a closing quote and was blocked once the terminator tightened. Allow one
   closing quote, but only when whitespace, a separator or the end follows it; `>&2'.txt'` and `>/dev/null'x'`
-  still write a file.
+  still write a file. The push-shape strips are gone: the tree gives a redirect's operator and its whole target word,
+  and the check compares the target with `/dev/null`, `/dev/stdout` and `/dev/stderr`, or with digits or `-` for `>&`
+  (claude-ship #135), so no terminator is left to get wrong. Keep the same tests (`>&2.txt`, `>/dev/null,x`) for it.
 - **Process rules are a table, not a list of special cases.** Patching one sentence per review finding moved
   the gap each round (OBDCracker #128, three rounds). State a rule once, as a table, and check every cell.
 - **A command interrupted midway may have done part of its work.** Check what exists (issues, commits)
@@ -63,7 +67,10 @@ review finds a new class.
   `repos/${OWNER}/${REPO}/git/refs` and `-f query="$(cat q.graphql)"` don't contain the text gh finally sends.
   `git -c "a=b c" push` hid the push itself. Split words with a left-to-right scanner (the gate's is jq) that
   keeps every quoted character distinct; four rounds of sed patches each missed a case (claude-ship #9). Treat
-  quoting you can't read as the worst case.
+  quoting you can't read as the worst case. Where the gate needs a command's shape or its arguments (the push, its `cd`
+  and its `-C`), read the syntax tree's literal words, not the scanner's text: splitting text at spaces and `;&|()` blocked
+  `cd "dir with space" && git push` and a continued line (claude-ship #39, #42) and read a quoted `/dev/null` as a file
+  (#99).
 - **A missing argument under `set -u` exits 1, which a caller may read as a result.** `codex-wait.sh` with no
   PR number looked like a 30-minute timeout (claude-ship #8). Check required arguments and exit 2 on misuse.
 - **Checking one side of a pair leaves the other open.** The push check read a refspec's source but not its
@@ -95,7 +102,11 @@ review finds a new class.
   push: a leading `cd <dir> &&`, harmless redirects (`2>&1`, `/dev/null`) and trailing pipes into read-only
   filters (`tail`, `head`, `cat`, `grep`). Run everything else in its own command first. A push that only the raw command shows
   (`sh -c "…; git push"`, `eval`) is quoted text to a word scanner but still runs, so it gets the same check;
-  only the ship skill's own `gh pr/issue create/edit/comment/close` is exempt.
+  only the ship skill's own `gh pr/issue create/edit/comment/close` is exempt. A `cd` or `git -C` that the tree shows
+  may still not run (`true || cd /tmp; git push`, `if false; then cd /tmp; fi`), and a directory that isn't a repo
+  ends the gate with exit 0, so follow a directory only when it surely runs first, and for a command that is not the push shape ask every
+  directory it could push from for its opt-in instead of blocking early, which would also block repos that never opted in
+  (claude-ship #135, Codex rounds 1 and 2).
 - **A permission that looks like it belongs to one step may serve others.** Dropping `actions/checkout` took
   `contents: read` with it, but the status script's activity lookup needed it too (claude-ship #18). Before
   removing a permission, list every API call that runs under the token, and keep each permission they need.
