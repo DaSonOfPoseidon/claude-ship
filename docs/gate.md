@@ -322,7 +322,7 @@ passes):
   protected-path check, and also checked as written.
 
 **More writers** (#187): each blocks only when its target resolves to a protected path (a download, an archive or a
-copy elsewhere passes): `curl -o|--output FILE` and `--output-dir DIR`, `curl -O|--remote-name` into the current
+copy elsewhere passes, and so do the forms that write no file: `-o -`, `tar -O`, `tar -cf -`, `wget --spider`): `curl -o|--output FILE` and `--output-dir DIR`, `curl -O|--remote-name` into the current
 directory; `wget -O FILE`, `wget -P DIR`, and `wget` into the current directory; `tar` with `-C|--directory DIR` when it
 extracts (into the current directory without one) and `-f|--file FILE` when it creates or appends (`c r u A`); `rsync`
 and `scp`, last argument (a `host:path` is remote); `sponge FILE`; `node`, `nodejs`, `ruby` and `php`, like `python`

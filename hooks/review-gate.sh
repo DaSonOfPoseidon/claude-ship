@@ -400,20 +400,20 @@ def wcheck($e; $all; $cs):
 		(protwords($all; $e.w[0]; $cs) as $pw | if ($pw | length) > 0 then {k: "block", p: ($pw[0] | disp), w: $c} else {k: "dyn"} end)
 	elif $c == "curl" then
 		(optargs($a; ""; ["output-dir"])) as $od
-		| wbl([optargs($a; "o"; ["output"])[] | select(rprot($cs))] + [$od[] | select(dprot($cs))]
+		| wbl([optargs($a; "o"; ["output"])[] | select(. != "-" and rprot($cs))] + [$od[] | select(dprot($cs))]
 			+ (if ($od | length) == 0 and ($a | any(test("^-[^-]*O") or . == "--remote-name" or . == "--remote-name-all")) then cwdprot($cs) else [] end); "curl")
 	elif $c == "wget" then
 		(optargs($a; "O"; ["output-document"]) | map(select(. != "-"))) as $o
 		| (optargs($a; "P"; ["directory-prefix"])) as $p
 		| wbl([$o[] | select(rprot($cs))] + [$p[] | select(dprot($cs))]
-			+ (if ($o | length) == 0 and ($p | length) == 0 then cwdprot($cs) else [] end); "wget")
+			+ (if ($o | length) == 0 and ($p | length) == 0 and ($a | any(. == "--spider") | not) then cwdprot($cs) else [] end); "wget")
 	elif $c == "tar" then
 		[range(0; $a | length) as $i | $a[$i] as $x
 			| select(($x | test("^-[^-]")) or ($i == 0 and ($x | test("^[A-Za-z]+$")))) | {i: $i, cl: ($x | ltrimstr("-"))}] as $cls
-		| (($cls | any(.cl | test("x"))) or ($a | any(. == "--extract" or . == "--get"))) as $ext
+		| ((($cls | any(.cl | test("x"))) or ($a | any(. == "--extract" or . == "--get"))) and (($cls | any(.cl | test("O"))) or ($a | any(. == "--to-stdout")) | not)) as $ext
 		| (($cls | any(.cl | test("[cruA]"))) or ($a | any(. == "--create" or . == "--append" or . == "--update" or . == "--concatenate"))) as $crt
 		| ([$cls[] | . as $k | ($k.cl | index("f")) as $j | select($j != null)
-			| ($k.cl[$j + 1:]) as $r | if $r != "" then $r else ($a[$k.i + 1] // empty) end] + optargs($a; ""; ["file"])) as $files
+			| ($k.cl[$j + 1:]) as $r | if $r != "" then $r else ($a[$k.i + 1] // empty) end] + optargs($a; ""; ["file"]) | map(select(. != "-"))) as $files
 		| (optargs($a; "C"; ["directory"])) as $dirs
 		| wbl((if $crt then [$files[] | select(rprot($cs))] else [] end)
 			+ (if $ext then (if ($dirs | length) > 0 then [$dirs[] | select(dprot($cs))] else cwdprot($cs) end) else [] end); "tar")
