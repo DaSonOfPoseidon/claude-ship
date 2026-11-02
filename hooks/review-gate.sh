@@ -483,9 +483,9 @@ done
 # any other operator, a comment and any key of the tree the program doesn't know (okkeys) fail the shape, so a newer shfmt
 # that adds a field fails closed. The output is lines for the shell, a word with a newline in it is no line, so it fails the shape too:
 #   cds N         how many `cd` commands the tree has anywhere (the `where` logic needs the count even without a push)
-#   cdt DIR       the one literal argument of the one `cd`, when that is the command that runs first (`cd DIR && ...`,
-#                 `cd DIR; ...`) and has exactly one argument: a `cd` that may not run (after `||`, in an `if` or a block)
-#                 is not followed, so it blocks (Codex round 1)
+#   cdt DIR       the one literal argument of the one `cd`, when it has exactly one
+#   cdl           the one `cd` is the command that runs first (`cd DIR && ...`, `cd DIR; ...`); without it, the `cd` may not
+#                 run (after `||`, in an `if` or a block), so the gate does not follow it
 #   shape ok      the command is one of the shapes above; then `C DIR` (the `-C` directory, if any) and `a WORD` (each word
 #                 after `push`, in order). Else `shape bad` and the sentence the gate blocks with.
 push_jq="$tree_defs"'
@@ -542,8 +542,9 @@ else
 	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
 	| (first(.Stmts[0]? | leftmost | select(okkeys(["Cmd", "End", "Pos", "Position", "Redirs", "Semicolon"])) | .Cmd) // null) as $lead
 	| "cds \($cds | length)",
-	(if ($cds | length) == 1 and $cds[0] == $lead then ($cds[0].Args[1:] | map(wv)) as $cw
-		| (if ($cw | length) == 1 and $cw[0] != null and ($cw[0] | contains("\n") | not) then "cdt \($cw[0])" else empty end)
+	(if ($cds | length) == 1 then ($cds[0].Args[1:] | map(wv)) as $cw
+		| (if ($cw | length) == 1 and $cw[0] != null and ($cw[0] | contains("\n") | not) then "cdt \($cw[0])" else empty end),
+		(if $cds[0] == $lead then "cdl" else empty end)
 		else empty end),
 	(try (shape | "shape ok", (if .c != null then "C \(.c)" else empty end), (.a[] | "a \(.)")) catch "shape bad \(.)")
 end'
@@ -777,9 +778,10 @@ fi
 push_shape=$(printf '%s\n' "$ptree" | sed -n 's/^shape //p')
 # A command that shows a push but isn't the push shape (push_jq) will be blocked, if the repo it pushes from has opted in
 # (below). Which repo that is can't always be told (the `cd` of `if false; then cd /tmp; fi; git push` may not run), so for
-# such a command ($soft) a directory the gate can't follow is not a reason to block: it is left out, and every directory
-# the push could come from is asked for its opt-in instead.
+# such a command ($soft) a `cd` that may not run is not followed, and every directory the push could come from is asked
+# for its opt-in instead. A directory that is not literal, or can't be entered, blocks as for any command.
 soft=
+alt_dir=
 if [ "$push_shape" != ok ] && [ -z "$data_only" ] &&
 	{ printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; }; then
 	soft=1
@@ -799,23 +801,37 @@ cds_of() {
 cds=$(cds_of "$cmd")
 [ "$(cds_of "$words")" -le "$cds" ] || cds=$(cds_of "$words")
 [ "$tree_cds" -le "$cds" ] || cds=$tree_cds
-if [ "$cds" -gt 1 ] && [ -z "$soft" ]; then
+if [ "$cds" -gt 1 ]; then
 	echo "Blocked: the review gate can't tell which directory pushes after several \`cd\`s. Push from the worktree with a single \`cd <dir> &&\`, or with \`git -C <dir> push\`." >&2
 	exit 2
 fi
 if [ "$cds" -eq 1 ]; then
 	to=
-	[ "$tree_cds" != 1 ] || to=$(printf '%s\n' "$ptree" | sed -n 's/^cdt //p')
+	cd_lead=
+	if [ "$tree_cds" = 1 ]; then
+		to=$(printf '%s\n' "$ptree" | sed -n 's/^cdt //p')
+		printf '%s\n' "$ptree" | grep -qx cdl && cd_lead=1
+	fi
 	case $to in
 	'' | '~'* | '-'* | *'$'* | *'`'*)
-		if [ -z "$soft" ]; then
-			echo "Blocked: the review gate can't follow this \`cd\` (it needs one literal directory, not starting with \`~\` or \`-\`, without \`\$\` or a backtick). Use an absolute path, or push from the worktree." >&2
-			exit 2
-		fi
+		echo "Blocked: the review gate can't follow this \`cd\` (it needs one literal directory, not starting with \`~\` or \`-\`, without \`\$\` or a backtick). Use an absolute path, or push from the worktree." >&2
+		exit 2
 		;;
-	/*) where=$to ;;
-	*) where=$where/$to ;;
 	esac
+	case $to in
+	/*) cd_to=$to ;;
+	*) cd_to=$where/$to ;;
+	esac
+	# Only a `cd` that runs first is followed. One that may not run is an extra directory the push could come from, which
+	# a command that is not the push shape has asked for its opt-in (below); for any other command it blocks.
+	if [ -n "$cd_lead" ]; then
+		where=$cd_to
+	elif [ -n "$soft" ]; then
+		alt_dir=$cd_to
+	else
+		echo "Blocked: the review gate can't follow this \`cd\`, which may not run (after \`||\`, in an \`if\` or a block). Put \`cd <dir> &&\` first, or push from the worktree." >&2
+		exit 2
+	fi
 fi
 # A later `git -C` replaces $where, but other calls in the command still run in the `cd` target.
 cd_dir=$where
@@ -832,39 +848,27 @@ else
 	c_dir=$(c_dir_of "$push_cmd")
 	case $c_dir in
 	*[\;\&\|\)]*)
-		[ -n "$soft" ] || {
-			echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use a directory without \`;&|)\`." >&2
-			exit 2
-		}
-		c_dir=
+		echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use a directory without \`;&|)\`." >&2
+		exit 2
 		;;
 	esac
 	if [ "$push_cmd" != "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$git_push" && [ "$(c_dir_of "$cmd")" != "$c_dir" ]; then
-		[ -n "$soft" ] || {
-			echo "Blocked: the review gate reads two different \`git -C\` directories in this command. Quote it plainly." >&2
-			exit 2
-		}
-		c_dir=
+		echo "Blocked: the review gate reads two different \`git -C\` directories in this command. Quote it plainly." >&2
+		exit 2
 	fi
 fi
 case $c_dir in
 '') ;;
 '~'* | *'$'* | *'`'*)
-	[ -n "$soft" ] || {
-		echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use an absolute path." >&2
-		exit 2
-	}
+	echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use an absolute path." >&2
+	exit 2
 	;;
 /*) where=$c_dir ;;
 *) where=$where/$c_dir ;;
 esac
 cd "$where" 2>/dev/null || {
-	if [ -n "$soft" ] && cd "$start" 2>/dev/null; then
-		where=$start
-	else
-		echo "Blocked: the review gate can't enter $where, where the push runs." >&2
-		exit 2
-	fi
+	echo "Blocked: the review gate can't enter $where, where the push runs." >&2
+	exit 2
 }
 
 # GitHub repos from remote URLs on stdin, one per line: any scheme, user, port, host case, ssh-over-443 host and
@@ -924,7 +928,7 @@ guarded() (
 # push from is asked: the session's, the `cd` target and the `-C` one. A repo that isn't opted in is none of the gate's
 # business, as everywhere else (Codex round 2).
 if [ -n "$soft" ]; then
-	for push_dir in "$start" "$cd_dir" "$where"; do
+	for push_dir in "$start" "$cd_dir" "$where" "${alt_dir:-$start}"; do
 		push_guarded=$(guarded "$push_dir") || exit 2
 		if [ -n "$push_guarded" ]; then
 			echo "Blocked: the review gate reviews HEAD, but ${push_shape#bad }. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2

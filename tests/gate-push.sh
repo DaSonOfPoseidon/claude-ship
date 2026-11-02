@@ -137,6 +137,10 @@ expect_off() {
 expect_off 0 'git push origin HEAD && echo done'
 expect_off 0 'true || cd /tmp; git push origin HEAD'
 expect_off 0 'true || git -C /tmp push origin HEAD'
+# ...but a directory the gate can't read could be an opted-in repo, so it blocks there too, as for any command.
+expect_off 2 'cd "$d" && git push origin HEAD; echo'
+expect_off 2 'true || cd "$d"; git push origin HEAD'
+expect_off 2 'true || git -C "$d" push origin HEAD'
 fixture /tmp/elsewhere.git
 expect 0 'git push origin HEAD && echo done'
 fixture https://github.com/acme/app.git
