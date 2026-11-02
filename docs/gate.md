@@ -188,8 +188,10 @@ branch is pushed. `cd`s are counted in the tree and as text in both command form
 `cd` inside `sh -c`, counts); the target is the tree's word for the one `cd`, with quotes and spaces resolved
 (`cd "a b"`), and a `cd` the tree doesn't show, one without exactly one literal argument, or one that may not run
 (after `||`, in an `if`, a block or a subshell: only a `cd` that comes first, alone or at the left of `&&`, is followed)
-blocks. A command that shows a push but isn't the push shape blocks before any directory is followed: a directory
-that isn't a repo ends the gate early, so `if false; then cd /tmp; fi; git push` would otherwise go unchecked. A later `git -C`
+blocks. A command that shows a push but isn't the push shape is different (`soft`): a directory the gate can't follow
+is left out instead of blocking, and the session's directory, the `cd` target and the `-C` one are each asked whether
+their repo opted in; any that did blocks. (A directory that isn't a repo ends the gate early, so `if false; then cd /tmp; fi; git push` would otherwise
+go unchecked, and a repo that hasn't opted in is none of the gate's business: `git push && echo done` passes there.) A later `git -C`
 replaces the directory, but other calls in the command still run in the `cd` target. For a command with the push
 shape the `-C` directory is the tree's word, so `-C "dir with space"` and a later `git -C …` inside a quoted string
 can't change it; for any other command, which blocks if it pushes, it is still read as text.

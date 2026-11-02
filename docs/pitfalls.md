@@ -104,8 +104,9 @@ review finds a new class.
   (`sh -c "…; git push"`, `eval`) is quoted text to a word scanner but still runs, so it gets the same check;
   only the ship skill's own `gh pr/issue create/edit/comment/close` is exempt. A `cd` or `git -C` that the tree shows
   may still not run (`true || cd /tmp; git push`, `if false; then cd /tmp; fi`), and a directory that isn't a repo
-  ends the gate with exit 0, so follow a directory only when it surely runs first, and judge the push shape before
-  following any (claude-ship #135, Codex round 1).
+  ends the gate with exit 0, so follow a directory only when it surely runs first, and for a command that is not the push shape ask every
+  directory it could push from for its opt-in instead of blocking early, which would also block repos that never opted in
+  (claude-ship #135, Codex rounds 1 and 2).
 - **A permission that looks like it belongs to one step may serve others.** Dropping `actions/checkout` took
   `contents: read` with it, but the status script's activity lookup needed it too (claude-ship #18). Before
   removing a permission, list every API call that runs under the token, and keep each permission they need.

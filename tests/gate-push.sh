@@ -119,6 +119,27 @@ expect 2 'if false; then cd /tmp; fi; git push origin HEAD'
 expect 2 'true || cd /tmp; git push origin HEAD'
 expect 2 'true || git -C /tmp push origin HEAD'
 expect 2 '{ cd /tmp; git push origin HEAD; }'
+# The shape rules apply where the gate does: a repo that has not opted in, or a remote that isn't GitHub's, is left alone,
+# whatever else the command runs (Codex round 2).
+mkdir -p "$tmp/offbin"
+printf '#!/bin/sh\necho false\n' >"$tmp/offbin/gh"
+chmod +x "$tmp/offbin/gh"
+expect_off() {
+	jq -nc --arg c "$2" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH=$tmp/offbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != "$1" ]; then
+		echo "FAIL (exit $rc, want $1; opted out): $2"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+expect_off 0 'git push origin HEAD && echo done'
+expect_off 0 'true || cd /tmp; git push origin HEAD'
+expect_off 0 'true || git -C /tmp push origin HEAD'
+fixture /tmp/elsewhere.git
+expect 0 'git push origin HEAD && echo done'
+fixture https://github.com/acme/app.git
 expect 2 'true || cd /tmp; gh pr create --title t'
 expect 2 'if false; then cd /tmp; fi; gh pr create --title t'
 expect 2 '{ cd /tmp; gh pr create --title t; }'
