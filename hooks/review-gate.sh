@@ -1551,7 +1551,7 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 	if [ "$kind" = code ]; then
 		if ctx_file docs/CONTRIBUTING.md CONTRIBUTING.md; then
 			checklist=$(checklist_of "$ctx_text")
-			checklist_src="CONTRIBUTING.md on $ctx_ref"
+			checklist_src="$ctx_path on $ctx_ref"
 		fi
 		if ctx_file docs/pitfalls.md; then
 			pitfalls=$ctx_text

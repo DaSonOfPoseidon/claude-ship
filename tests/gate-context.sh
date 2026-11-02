@@ -107,6 +107,8 @@ has upstream-wins 'upstream pitfall'
 lacks upstream-wins 'steer checklist'
 lacks upstream-wins 'steer pitfall'
 has upstream-wins 'Known pitfalls from past reviews (docs/pitfalls.md on refs/remotes/origin/master)'
+has upstream-wins '(CONTRIBUTING.md on refs/remotes/origin/master)'
+lacks upstream-wins '(docs/CONTRIBUTING.md on'
 
 # The default branch has docs/CONTRIBUTING.md; the branch adds a root CONTRIBUTING.md and edits docs/'s.
 fixture
@@ -122,6 +124,8 @@ review docs-contributing
 has docs-contributing 'upstream docs checklist'
 lacks docs-contributing 'steer root checklist'
 lacks docs-contributing 'steer docs checklist'
+# The heading names the file the checklist came from, not always the root one.
+has docs-contributing '(docs/CONTRIBUTING.md on refs/remotes/origin/master)'
 
 # The default branch's CONTRIBUTING.md has no Reviews section: the branch can't add one.
 fixture
