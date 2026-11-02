@@ -108,6 +108,14 @@ printf '%s\n' "$list" | jq -c 'if type == "array" then map({number, author: (.au
 listed=$(jq 'length' "$tmp/list") || exit 1
 if [ "$listed" -ge 200 ]; then
 	echo "token-report.sh: gh pr list returned the newest 200 PRs; older PRs don't compete for requests" >&2
+	# An asked PR that starts at or before the oldest listed one may have a previous PR the list cut off (or isn't
+	# listed itself): its window would silently reach back to the session's start, so it is an error.
+	oldest=$(jq -r '[.[].createdAt | select(type == "string") | .[0:19]] | min // ""' "$tmp/list") || exit 1
+	jq -r --arg o "$oldest" 'select(.start <= $o) | .pr' "$tmp/windows" >"$tmp/toolate" || exit 1
+	if [ -s "$tmp/toolate" ]; then
+		echo "token-report.sh: PR #$(head -n 1 "$tmp/toolate") starts before the oldest of the newest 200 PRs; its previous PR can't be found" >&2
+		exit 1
+	fi
 fi
 # prevend <in> <out>: adds prevEnd to each window: the latest end (merge, else close) strictly before the PR's
 # start of any other PR by its author; "" when there is none. A PR still open has no end.

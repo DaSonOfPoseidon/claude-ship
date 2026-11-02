@@ -251,7 +251,8 @@ start. The report shows the widened start. Work after the last merge isn't print
 window goes to the latest-started of those; only a request in none goes to the latest-started widened window, so
 widening never takes work from an overlapping PR. All this is done across every PR that could matter, not just
 the PRs asked for or their authors': the PRs competing for a request are the repo's, whoever wrote them (one
-`gh pr list`, newest 200; a full page prints a warning, since older PRs are then missing). That is the asked PRs
+`gh pr list`, newest 200; a full page prints a warning, since older PRs are then missing, and is an error when
+an asked PR starts at or before the oldest listed one, since its previous PR can't then be found). That is the asked PRs
 plus the others that could overlap an asked window (each read with `gh pr view`, since the list has no commit
 dates; one whose author is deleted is left out), all with the same window rules. "Could overlap" is bounded on
 both sides (#129). Below: a PR that ended before the earliest previous-PR end of the asked PRs is left out (no

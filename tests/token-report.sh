@@ -515,6 +515,15 @@ total 2 1250000 0 0 0 $5.00
 peak main context: 1000000 tokens'
 grep -q 'newest 200' "$tmp/err" || { echo 'FAIL: no warning for the full pr list'; cat "$tmp/err"; fail=1; }
 
+# But an asked PR that starts before the oldest PR in a full list (older than the newest 200, or created just
+# after the cut) can't have its previous PR found: that is an error, not a window reaching back to the session's
+# start. PR 98 (created 08-01) is older than the list's oldest (09-01).
+pr 98 'old' 2026-08-01T10:00:00Z 2026-08-01T12:00:00Z
+pauthor 98 alice
+run 98
+check 'asked PR older than a full list' 1 ''
+grep -q 'PR #98' "$tmp/err" || { echo 'FAIL: no message naming the PR older than the full list'; cat "$tmp/err"; fail=1; }
+
 # PRs that start after every asked window can't hold one of its requests, so they aren't read (#129), even when
 # the asked PR has no earlier PR to bound the other side. Alice's PR 200 (10:00..12:00) is her first; her next
 # three start after it ends. The fake gh logs each `pr view`: only PR 200 is read, and the row is the same.
