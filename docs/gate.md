@@ -428,7 +428,7 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   gets `min(1100 s, what is left)`, and none starts with fewer than `REVIEW_GATE_MIN_SECS` (default 120 s) left; the
   gate then blocks with "ran out of time". Two reviewers at 1100 s each would otherwise outlast the hook's timeout
   (2400 s, README › Install). A finder's result is kept, so the retry resumes at the verifier. A value that isn't
-  a plain number blocks. A reviewer that times out (`timeout` exits 124) or fails blocks like any failure.
+  a plain number of at least 1 blocks (a zero would reach `timeout` as no limit). A reviewer that times out (`timeout` exits 124) or fails blocks like any failure.
 
 **Reviewers only read.** `--tools` makes Read, Grep and Glob the only built-in tools (no shell, since even
 `git diff --output=<file>` writes), and `--strict-mcp-config` with no config loads no MCP or plugin tools,
