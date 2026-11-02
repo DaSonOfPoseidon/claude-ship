@@ -247,7 +247,8 @@ Never run gh api -X DELETE repos/a/b here.
 EOF' none
 expect_review 0 'echo "run git push later"' none
 expect_review 0 'grep -n "gh api" hooks/review-gate.sh' none
-expect_review 0 "printf '%s\\n' 'gh pr create' >/tmp/y" none
+# (printf is not trusted in any form, so this falls back to the old checks and starts a review: a known limit of #191.)
+expect_review 2 "printf '%s\\n' 'gh pr create' >/tmp/y" started
 expect_review 0 'echo "gh api -X DELETE repos/a/b"' none
 expect_review 0 'sort -u f; echo "git push"' none
 expect_review 2 'echo "git push"; bash -c '\''true'\''; bash -ec '\''true'\''; printf "%s\n" "git push" | xargs echo' none
