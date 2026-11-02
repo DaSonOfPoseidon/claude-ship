@@ -355,7 +355,7 @@ writing tool whose own arguments aren't protected (`cat ~/.claude/hooks/x | tee 
 read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
 What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`, the other spellings of a protected path
 and the writers above. What neither check covers: tools outside the writing-tool list, since the list can't be
-complete; paths a command builds or reads at run time (`ls | xargs rm`, `rm $(cat list)`, `rm $f` after `cd ~/.claude`)
+complete; paths a command builds or reads at run time (`ls | xargs rm`, `rm $(cat list)`; a bare `rm $f` after `cd ~/.claude` does block, since the variable could name anything there)
 or in a script (`python3 s.py`, which only blocks when a protected path is among its arguments); `rm -r ~/.claude`
 itself; a symlink to a protected path. What only the tree check misses: a string handed to a program that runs it where the tool isn't at the start of a command line
 inside it (`git commit -m "x; cp …"` reads as a command line and blocks, but `node -e 'fs.writeFileSync("…")'`
