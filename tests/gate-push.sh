@@ -253,7 +253,7 @@ expect_review 0 'grep -n "gh api" hooks/review-gate.sh' none
 # (printf is not trusted in any form, so this falls back to the old checks and starts a review: a known limit of #191.)
 expect_review 2 "printf '%s\\n' 'gh pr create' >/tmp/y" started
 expect_review 0 'echo "gh api -X DELETE repos/a/b"' none
-expect_review 0 'sort -u f; echo "git push"' none
+expect_review 0 'cut -f1 f; echo "git push"' none
 expect_review 2 'echo "git push"; bash -c '\''true'\''; bash -ec '\''true'\''; printf "%s\n" "git push" | xargs echo' none
 expect_review 2 'echo $((1+2)) "git push"; echo $x' none
 expect_review 2 'cat <<EOF | tee /tmp/y
@@ -403,7 +403,7 @@ expect_review 2 'echo "git push"; for PERL5OPT in a; do :; done' none
 expect_review 2 'echo "git push"; : ${PATH:=.}; cat f' none
 expect_review 2 'echo "git push"; readonly PATH=.; cat f' none
 expect_review 2 'echo "git push"; Foo=1 cat f' none
-expect_review 0 'echo "git push"; LC_ALL=C sort f; TZ=UTC date; lower=1 cat f; for i in a; do echo i; done' none
+expect_review 0 'echo "git push"; LC_ALL=C cut -f1 f; TZ=UTC date; lower=1 cat f; for i in a; do echo i; done' none
 expect_review 2 'echo "git push"; : ${x:=1}' none
 expect_review 2 'echo "git push"; echo ${y=2}' none
 expect_review 2 'echo "git push"; cat {PATH}</dev/null' none
@@ -430,7 +430,7 @@ expect_review 2 'echo "git push"; sort --compress=/tmp/x f' none
 expect_review 2 'echo "git push"; sort --co /tmp/x f' none
 expect_review 2 'echo "git push"; rg --pre /tmp/x a f' none
 expect_review 2 'echo "git push"; rg --pre-glob x a f' none
-expect_review 0 'echo "git push"; sort -u -k2 --reverse f' none
+expect_review 0 'echo "git push"; cut -s -f2 --complement f' none
 # Round 4 of #191, and the decision to stop patching one case at a time: the safe list is plain external read-only
 # tools with literal arguments. A declaration builtin, exec, eval, a shell, a wrapper, printf, a file-changing tool or a
 # dynamic argument makes the command unknown.
@@ -514,12 +514,23 @@ expect_review 2 'echo "git push"; uniq -c in out' none
 expect_review 2 'echo "git push"; xxd -r in /tmp/out' none
 expect_review 2 'echo "git push"; xxd f' none
 expect_review 2 'echo "git push"; base64 -o /tmp/out f' none
+expect_review 2 'echo "git push"; base64 --output=/tmp/out f' none
+expect_review 2 'echo "git push"; uniq - /tmp/bin/hostname <<'\''EOT'\''
+#!/bin/sh
+git push origin HEAD
+EOT
+hostname' none
+expect_review 2 'echo "git push"; uniq -c - /tmp/out' none
+expect_review 2 'echo "git push"; uniq f /tmp/out' none
+expect_review 2 'echo "git push"; sort f' none
+expect_review 2 'echo "git push"; uniq f' none
+expect_review 2 'echo "git push"; base64 f' none
 expect_review 0 'echo "git push" >/dev/null; echo "git push" 2>/dev/null; echo "git push" &>/dev/null; echo "git push" >>/dev/null; echo "git push" 2>&1; echo "git push" >&2; echo "git push" >&-' none
 expect_review 0 'cat <<EOF
 git push
 EOF
-cat <<< "git push"; wc -l < f; uniq f; uniq -c f; sort -u f' none
-expect_review 0 'echo "git push"; cat f; grep -n "gh api" f | wc -l; head -3 f | sort -u | uniq | cut -d: -f1; ls -la; diff a b; jq . f; date; pwd; true; false' none
+cat <<< "git push"; wc -l < f; cut -d: -f1 f; tr a b < f' none
+expect_review 0 'echo "git push"; cat f; grep -n "gh api" f | wc -l; head -3 f | cut -d: -f1; ls -la; diff a b; jq . f; date; pwd; true; false' none
 expect_review 0 'echo "git push" 2>&1 >/dev/null; stat f; basename /a/b; wc -l < f; sleep 1; seq 3; id -u; uname -a' none
 expect_review 2 'echo "git push" ; flock l true' none
 

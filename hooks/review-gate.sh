@@ -305,15 +305,10 @@ def calls:
 # (git and gh, a wrapper, a shell, an interpreter, a builtin that assigns, runs code or replaces the shell, a tool that
 # changes files, a script, a word that is not literal), whether it runs git or not: the list of what is dangerous
 # never ended (claude-ship #191), so the list of what is trusted is short.
-def ggsafe: test("^(cat|echo|grep|egrep|fgrep|wc|head|tail|sort|uniq|cut|tr|ls|stat|diff|cmp|jq|pwd|true|false|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|base64|od|uname|whoami|id|hostname)$");
-# A tool on that list with an option that runs a program (sort --compress-program, which getopt lets one abbreviate) or
-# an option or argument that makes it write a file (sort -o and --output, a second uniq file, base64 -o): a file it
-# writes can replace a program on PATH that a listed name then runs. rg is not listed: its --pre and --hostname-bin run
-# programs; xxd is not: `xxd -r in out` writes out.
-def ggbad($c; $a):
-	($c == "sort" and any($a[]; test("^--(co|o)") or test("^-[a-zA-Z]*o")))
-	or ($c == "uniq" and ([$a[] | select(startswith("-") | not)] | length) > 1)
-	or ($c == "base64" and any($a[]; test("^--o") or test("^-[a-zA-Z]*o")));
+# A tool that can write a file named by an argument or option (GNU or BSD form: sort -o, a second uniq operand, base64 -o,
+# tee) is not on it: the file can replace a program on PATH that a listed name then runs. rg (--pre, --hostname-bin
+# run programs) and xxd (-r in out) are not listed either.
+def ggsafe: test("^(cat|echo|grep|egrep|fgrep|wc|head|tail|cut|tr|ls|stat|diff|cmp|jq|pwd|true|false|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|od|uname|whoami|id|hostname)$");
 # A redirect that writes a file: any of `>`, `>>`, `>|`, `<>`, `&>`, `&>>` (also behind a descriptor: `2>`) and `>&` to
 # anything but a descriptor. A literal /dev/null is the one target that is no write. Here-strings, heredocs and `<` only read.
 def ggwrite:
@@ -336,7 +331,7 @@ def ggcalls:
 	(.Args? // []) as $args | [$args[] | wv] as $w
 	| if ($w | length) == 0 then empty
 	elif any($w[]; . == null) then {k: "ggdyn"}
-	elif ($w[0] | ggsafe) and (ggbad($w[0]; $w[1:]) | not) then empty
+	elif ($w[0] | ggsafe) then empty
 	else {k: "ggdyn"} end;
 # Nodes that run text without being a command, or change what a name runs: an indirect or prompt expansion (`${!x}`,
 # `${x@P}`), arithmetic, which evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`,

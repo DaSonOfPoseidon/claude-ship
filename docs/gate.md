@@ -75,10 +75,11 @@ exactly as before, text checks included, so a real `gh issue comment … <<EOF` 
 What is `ggdyn`: the filter trusts a short list and treats everything else as unknown (`ggsafe`), because every list of
 what is dangerous kept missing something (claude-ship #191: wrappers, `PERL5OPT`, `printf %n`, `declare -a`, `exec -l`).
 A command is trusted only when it is the bare name of a plain external read-only tool (`cat`, `echo`, `grep`, `wc`,
-`head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `ls`, `stat`, `diff`, `jq`, `date`, `basename`, `sha256sum`, … and `pwd`,
+`head`, `tail`, `cut`, `tr`, `ls`, `stat`, `diff`, `jq`, `date`, `basename`, `sha256sum`, … and `pwd`,
 `true`, `false`), **every** word of it is literal (a dynamic word could be an option that runs a program: `cat "$f"` and
-`echo $x` are unknown), and no option runs a program (`sort --compress-program` and every abbreviation of it). Unknown, so
-the old text checks run:
+`echo $x` are unknown), and no listed tool can run a program or write a file named by an argument or option, in GNU or BSD form, so `sort`
+(`-o`, `--compress-program`), `uniq` (its second operand is an output file), `base64` (`-o`, BSD) and `tee` are not
+listed. Unknown, so the old text checks run:
 
 - `git` and `gh` themselves, and anything that starts another program or shell: `env`, `sudo`, `nice`, `nohup`,
   `timeout`, `stdbuf`, `setsid`, `xargs`, `find`, `command`, `builtin`, `exec`, `sh`/`bash`/`zsh -c` (the string is still
@@ -95,8 +96,8 @@ the old text checks run:
   `LANGUAGE`, `TZ`, `TERM`, `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;
 - a write: any redirect that writes a file (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, `2>`, `>&file`) except to a literal
   `/dev/null` or to a descriptor (`2>&1`, `>&2`), since a file written by the command can replace a program on `PATH`
-  that a listed name then runs (`echo '…' > /abs/path/hostname; hostname`); and an option or argument that makes a
-  listed tool write (`sort -o`, `--output`, a second `uniq` file, `base64 -o`; `xxd` is not listed: `xxd -r in out`).
+  that a listed name then runs (`echo '…' > /abs/path/hostname; hostname`); and a tool that can write a file named by
+  an argument is not listed (`sort -o`, `uniq in out`, `base64 -o`, `xxd -r in out`).
   Heredocs, here-strings and `<` only read. So `cat > file <<'EOF' … EOF` is unknown and keeps the old checks;
 - text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `[[ a -eq b ]]`,
   `[[ -v x ]]`, `${x:n}`), and an array subscript. Plain numbers are fine. `time` is a keyword: the command behind it is
