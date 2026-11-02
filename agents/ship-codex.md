@@ -115,7 +115,10 @@ no request, so they don't wait for CI).
    If a call's result says the command is running in the background anyway, don't wait for it and don't end your
    turn: call the same command again in the foreground, as the same chunk. `codex-wait.sh` and `ci-failures.sh`
    only read state, so a second call is safe, and the backgrounded one is left to finish. Never end your turn on
-   work that is still running, whatever the reason.
+   work that is still running, whatever the reason. If a wait call is denied and its foreground retry is denied
+   too, the wait can't finish here. Then no wait is running, and you report `outcome: error` with a `stopped
+   because:` that **starts with `wait unfinished:`**, followed by the cause. Never report this while a wait is
+   still running, or after a single denial. The orchestrator keys on that prefix.
 5. `ci-failures.sh <pr> <slug>` for `ci:` (see **Report**). The push can have started jobs after step 0 read CI; the
    outcome stays the findings' (below), and the implementer acts on a `fail` here.
 6. `codex-findings.sh <pr> <slug>`: one block per unresolved Codex thread: `<thread id> <P0..P3 or P?> <path>:<line>`,
@@ -201,5 +204,5 @@ triaged: <thread id> <issue url or resolved>        (omit if none)
 denied: <what was denied or failed, with the script's failed: line word for word>   (omit if none)
 done: <the thread ids the script printed under done:, or "none">   (with denied; omit otherwise)
 file: <triage file (Write) path>   (with denied; omit otherwise)
-stopped because: <reason, for stop, round-cap, stalled, timeout, ci-timeout and error>
+stopped because: <reason, for stop, round-cap, stalled, timeout, ci-timeout and error; an unfinished wait (step 4) starts with `wait unfinished:`>
 ```
