@@ -36,8 +36,8 @@ implementer already replied to), `mode: resolve-only` (see **Resolve only**) or 
   - `~/.claude/skills/ship/codex-wait.sh <pr>`, optionally with `CODEX_WAIT_SECS=<n>` before it (step 4 sets it
     to 300; the only other environment variable allowed is `CI_WAIT_POLLS=<n>`, below)
   - `~/.claude/skills/ship/codex-findings.sh <pr>`
-  - `~/.claude/skills/ship/ci-failures.sh <pr> <slug>`, with `--wait` after the slug and `CI_WAIT_POLLS=<n>` before
-    it in step 0 (Bash `timeout: 600000`)
+  - `~/.claude/skills/ship/ci-failures.sh <pr> <slug>`, with `--wait` after the slug and `CI_WAIT_POLLS=<n>` (1 to
+    10, no leading zero) before it in step 0 (Bash `timeout: 600000`)
   - `~/.claude/skills/ship/codex-triage.sh <pr> <triage file (Bash)>`
   - `gh pr view <pr> ...` and `gh pr checks <pr> ...` (add `-R <slug>`), without `--web`
 - **Never** call `gh api`, post or edit a comment, request a review by hand, resolve a thread, or retry a denied

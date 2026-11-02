@@ -388,8 +388,21 @@ fi
 # CI_WAIT_POLLS: the --wait poll count, digits only, and only before ci-failures.sh.
 expect 0 "CI_WAIT_POLLS=10 $ship/ci-failures.sh 12 o/r --wait"
 expect 0 "CI_WAIT_POLLS=1 $ship/ci-failures.sh 12 o/r"
-expect 0 "CI_WAIT_POLLS=123456789 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=123456789 $ship/ci-failures.sh 12 o/r --wait"
 expect 2 "CI_WAIT_POLLS=1234567890 $ship/ci-failures.sh 12 o/r --wait"
+# Capped at 10 (10 polls fit the 10-minute Bash timeout): 1-10 only. A leading zero is denied, not normalized
+# (the shell would read 010 as octal in arithmetic).
+expect 0 "CI_WAIT_POLLS=9 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=11 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=100 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=0 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=00 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=010 $ship/ci-failures.sh 12 o/r --wait"
+expect 2 "CI_WAIT_POLLS=01 $ship/ci-failures.sh 12 o/r --wait"
+grep -q 'CI_WAIT_POLLS must be 1-10 (10 polls fit the 10-minute Bash timeout)' "$tmp/err" || {
+	echo "FAIL: the denial of CI_WAIT_POLLS above the cap doesn't state the range"
+	fail=1
+}
 expect 2 "CI_WAIT_POLLS=abc $ship/ci-failures.sh 12 o/r --wait"
 expect 2 "CI_WAIT_POLLS= $ship/ci-failures.sh 12 o/r --wait"
 expect 2 "CI_WAIT_POLLS=-1 $ship/ci-failures.sh 12 o/r --wait"
