@@ -376,14 +376,24 @@ def gitargs($a):
 # A write: block when any of $ps (the protected targets) is there.
 def wbl($ps; $why): if ($ps | length) > 0 then {k: "block", p: ($ps[0] | disp), w: $why} else empty end;
 def remote: test("^[^/]*:");
+# The words of a command that name a protected path. A relative word is resolved from the working directory unless it is the
+# command (or the first word, a wrapper) or an option: `rm` after `cd ~/.claude/hooks` is not the file hooks/rm.
+# `=VALUE` of an option still is a path.
+def protwords($all; $c0; $cs):
+	([range(0; $all | length) | select($all[.] == $c0)] | first) as $f
+	| [range(0; $all | length) as $i | $all[$i] as $x
+		| select(if $i == 0 or $i == $f then ($x | rprot([]))
+			elif ($x | startswith("-")) then (($x | rprot([])) or ($x | test("^-[^=]*=.")) and ($x | sub("^[^=]*="; "") | rprot($cs)))
+			else ($x | rprot($cs)) end)
+		| $x];
 # What a command writes, by its name and arguments, for the paths of the effective command $e (after wrappers); $all are the
 # words of the whole simple command, wrappers included, and $cs the candidate working directories.
 def wcheck($e; $all; $cs):
 	($e.w[0] | bn) as $c | $e.w[1:] as $a
 	| if ($c | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod)$")) or ($c == "sed" and ($a | any(test("^-[a-zA-Z]*i|^--in-place")))) then
-		(if any($all[]; rprot($cs)) then {k: "block", p: ([$all[] | select(rprot($cs))] | first | disp), w: $c} elif $e.x then {k: "dyn"} else empty end)
+		(protwords($all; $e.w[0]; $cs) as $pw | if ($pw | length) > 0 then {k: "block", p: ($pw[0] | disp), w: $c} elif $e.x then {k: "dyn"} else empty end)
 	elif ($c | test("^(python[0-9.]*|perl|node|nodejs|ruby|php)$")) then
-		(if any($all[]; rprot($cs)) then {k: "block", p: ([$all[] | select(rprot($cs))] | first | disp), w: $c} else {k: "dyn"} end)
+		(protwords($all; $e.w[0]; $cs) as $pw | if ($pw | length) > 0 then {k: "block", p: ($pw[0] | disp), w: $c} else {k: "dyn"} end)
 	elif $c == "curl" then
 		(optargs($a; ""; ["output-dir"])) as $od
 		| wbl([optargs($a; "o"; ["output"])[] | select(rprot($cs))] + [$od[] | select(dprot($cs))]
@@ -435,7 +445,7 @@ def redirs($cs): (.Redirs? // [])[]
 # after the command word (behind a wrapper the gate does not list: flock, ionice, watch, busybox...) with a protected
 # word among the words, and a `>` in one word (an awk program) with a protected path in another.
 def odd($w; $effs; $cs):
-	any($effs[]; any(.w[1:][]; bn | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed|python[0-9.]*|perl|node|nodejs|ruby|php|curl|wget|tar|rsync|scp|sponge)$"))) and any($w[]; rprot($cs))
+	any($effs[]; any(.w[1:][]; bn | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed|python[0-9.]*|perl|node|nodejs|ruby|php|curl|wget|tar|rsync|scp|sponge)$"))) and (protwords($w; $w[0]; $cs) | length) > 0
 	or any(range(0; $w | length); . as $i | ($w[$i] | contains(">")) and any(range(0; $w | length); . as $j | $j != $i and ($w[$j] | rprot($cs))));
 # `env -C DIR cmd` and `sudo -D DIR cmd` run cmd in DIR: it is one more directory its relative paths may start from.
 def wrapdirs($ws; $cs0): if any($ws[]; bn == "env" or bn == "sudo") then [optargs($ws; "CD"; ["chdir"])[] | abs($cs0; false)[]] else [] end;
@@ -452,7 +462,7 @@ def calls($cs0):
 		else
 			(eff($w; false) as $e0 | if $e0 != null and odd($w; $e0; $cs) then {k: "dyn"} else empty end),
 			($w[] | select(isprot and test("(^|[;&|({\n\"\u0027])\\s*((sudo|env|nohup|exec|command|time|xargs|nice)\\s+)*(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|python[0-9.]*|perl|sed\\s+(-[a-zA-Z]*i|--in-place))(\\s|$)")) | {k: "block", p: disp, w: "a command line"}),
-			($w[] | select(rprot($cs) and (startswith("\u0002") | not)) | {k: "lw", t: .}),
+			(protwords($w; $w[0]; $cs)[] | select(startswith("\u0002") | not) | {k: "lw", t: .}),
 			($w[] | select(test(">+[|&]?\\s*[\"\u0027]?[^\\s;&|\"\u0027]*(" + $prot + ")")) | {k: "block", p: ., w: ">"}),
 			(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w; $cs)) end)
 		end)
