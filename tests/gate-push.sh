@@ -400,6 +400,11 @@ expect_review 2 'echo "git push"; : ${PATH:=.}; cat f' none
 expect_review 2 'echo "git push"; readonly PATH=.; cat f' none
 expect_review 2 'echo "git push"; Foo=1 cat f' none
 expect_review 0 'echo "git push"; LC_ALL=C sort f; env TZ=UTC date; lower=1 cat f; : ${x:=1} ${y=2}; for i in a; do :; done' none
+expect_review 2 'echo "git push"; cat {PATH}</dev/null' none
+expect_review 2 'echo "git push"; exec {PERL5OPT}>/dev/null' none
+expect_review 2 'echo "git push"; coproc PATH { :; }' none
+expect_review 2 'echo "git push"; select PATH in a b; do :; done' none
+expect_review 0 'echo "git push"; cat {fd}</dev/null; coproc job { :; }; cat 2>/dev/null' none
 expect_review 2 'echo "git push"; printf '\''%n'\'' PATH' none
 expect_review 2 'echo "git push"; printf -- '\''%hhn'\'' PATH' none
 expect_review 2 'echo "git push"; printf '\''%1$n'\'' PATH' none

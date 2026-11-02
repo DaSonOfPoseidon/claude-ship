@@ -21,7 +21,8 @@ review finds a new class.
   last path part, so `./cat` and `/tmp/ls` passed as the tools, and by the bare word, so `PATH=. cat` ran a script the
   same command wrote (claude-ship #135). Trust a name only when it is a bare word and nothing in the command
   (an assignment to any variable not on a short allowlist of harmless names, since `PATH`, `PERL5OPT`, `IFS`,
-  `BASH_ENV`, `NODE_OPTIONS` and the rest never end; a function of that name) can change what it resolves to. A listed
+  `BASH_ENV`, `NODE_OPTIONS` and the rest never end; assignments are not only `name=value`: a loop variable, `select`,
+  `coproc`, `${x:=…}`, `read`, `printf -v` and a `{name}>file` redirect all set one; a function of that name) can change what it resolves to. A listed
   tool is trusted with its options too: `rg --pre` and `--hostname-bin` and `sort --compress-program` (also
   abbreviated) run a program, `printf '%n'` assigns a variable, `bash --rcfile … -ic true` runs a file before its `-c`
   string, `xargs env` runs whatever its input says and `xargs find` takes it as `-exec` predicates, so none of those is judged by the visible arguments alone (codex, #191).

@@ -81,7 +81,7 @@ can't hide a push. Also unknown:
 - a word that is a path ending in the name of a listed tool, a wrapper or a shell (`./cat`, `/tmp/env`, `/bin/cat`): a
   script of that name may be anything (only `git` and `gh` by path count as themselves);
 - an assignment to any variable not known to be harmless (in the command, behind `env` or `sudo`, by `export`,
-  `declare`, `readonly`, `for`, `${x:=…}`): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`,
+  `declare`, `readonly`, `for`, `select`, `coproc`, a `{name}` redirect, `${x:=…}`): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`,
   `GIT_*` and the rest of the variables that load code or change what a name runs never end, so it is an
   allowlist: a lower-case name (not zsh's `path`, `fpath`, `cdpath`, …) and `LC_*`, `LANG`, `LANGUAGE`, `TZ`, `TERM`,
   `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;

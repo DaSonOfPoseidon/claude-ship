@@ -357,7 +357,8 @@ def ggnode:
 	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
 	elif .Type == "DeclClause" and any(.Args[]?; .Naked == true and (([.Value.Parts[]? | .Type] | any(. != "Lit")) or ([.Value.Parts[]? | .Value? // ""] | join("") | test("^-[a-zA-Z]*[in]")))) then {k: "ggdyn"}
 	elif has("Index") and .Index != null then {k: "ggdyn"}
-	elif (.Name? | type) == "object" and (.Name.Value? // "" | ggnameok | not) then {k: "ggdyn"}
+	elif (.Name? | type) == "object" and ((.Name | if has("Value") then .Value else ([.Parts[]? | .Value? // "?"] | join("")) end) | ggnameok | not) then {k: "ggdyn"}
+	elif (.N? | type) == "object" and ((.N.Value? // "") | test("^\\{.*\\}$")) and (.N.Value[1:-1] | ggnameok | not) then {k: "ggdyn"}
 	elif .Type == "ParamExp" and ((.Exp.Op? // "") | test("^:?=$")) and (.Param.Value? // "" | ggnameok | not) then {k: "ggdyn"}
 	else empty end;
 if .Type != "File" then "bad"
