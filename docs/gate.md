@@ -59,9 +59,55 @@ forms, and every form that shows one must pass the checks. Checks that read text
 the raw command and its unmarked words (`cmd_all`), so quoting (`CLAUDE_AUTONO''MOUS`, `c''d`) can't split a
 name apart.
 
-The tamper check (and, in later changes, the others) reads a third form: the syntax tree shfmt makes of the command,
-where a quoted string, a file name and a heredoc body are what they are instead of text that looks like a command
-(Tamper protection below). The command must parse, or the call blocks.
+The tamper check, and the filter below, read a third form: the syntax tree shfmt makes of the command, where a quoted
+string, a file name and a heredoc body are what they are instead of text that looks like a command (Tamper
+protection below). The command must parse, or the call blocks.
+
+**The filter (`runs_gitgh`).** The checks that read text (the quoting check, the `gh api` scan, the push and
+`gh pr create` checks) only matter for a command that runs git or gh, so the tree decides first. The tamper walk
+(same jq run, `sh -c` and `eval` strings parsed again to depth 3) raises `ggdyn` for every command that is not on a
+short list of plain read-only tools with literal words, which includes `git` and `gh` themselves. When no command in
+the tree raises it, the command is not a push, a PR create or a `gh api` call, so after the tamper, waiver and opt-in
+checks the gate exits 0 without the rest: a heredoc body, a quoted argument or an `echo` that merely mentions
+`git push`, `gh pr create` or `gh api -X DELETE …` no longer blocks or starts a review (#135). Otherwise everything runs
+exactly as before, text checks included, so a real `gh issue comment … <<EOF` keeps its quoting check.
+
+What is `ggdyn`: the filter trusts a short list and treats everything else as unknown (`ggsafe`), because every list of
+what is dangerous kept missing something (claude-ship #191: wrappers, `PERL5OPT`, `printf %n`, `declare -a`, `exec -l`).
+A command is trusted only when it is the bare name of a plain external read-only tool (`cat`, `echo`, `grep`, `wc`,
+`head`, `tail`, `cut`, `tr`, `ls`, `stat`, `diff`, `jq`, `date`, `basename`, `sha256sum`, … and `pwd`,
+`true`, `false`), **every** word of it is literal (a dynamic word could be an option that runs a program: `cat "$f"` and
+`echo $x` are unknown), and no listed tool can run a program or write a file named by an argument or option, in GNU or BSD form, so `sort`
+(`-o`, `--compress-program`), `uniq` (its second operand is an output file), `base64` (`-o`, BSD) and `tee` are not
+listed. Unknown, so the old text checks run:
+
+- `git` and `gh` themselves, and anything that starts another program or shell: `env`, `sudo`, `nice`, `nohup`,
+  `timeout`, `stdbuf`, `setsid`, `xargs`, `find`, `command`, `builtin`, `exec`, `sh`/`bash`/`zsh -c` (the string is still
+  parsed for the tamper check), `eval`, `source`, `.`, an unlisted wrapper (`flock`, `watch`, `ssh`, `busybox`), an
+  interpreter (`python3 -c`, `node`, `sed`, `awk`, `rg`), a script (`./run.sh`, `make`) or a path (`/bin/cat`, `./cat`);
+- every builtin that assigns, runs code or replaces the shell: `declare`, `typeset`, `local`, `export`, `readonly`
+  (a quoted array initializer is parsed again, a nameref runs a subscript), `read`, `mapfile`, `printf` in any form
+  (`-v`, `%n`), `let`, `alias`, `enable`, `hash`, `trap`, `set`, `shopt`, `unset`, `cd`, `pushd`, `popd`, `[`, `test`;
+- a tool that changes files (`tee`, `cp`, `mv`, `rm`, `ln`, `chmod`, `touch`, `mkdir`, `mktemp`): only read-only tools
+  stay. A redirect (`> file`) is not a command and does not count;
+- an assignment to a variable not known to be harmless (in the command, by `for`, `select`, `coproc`, `${x:=…}` or a
+  `{name}` redirect): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`, `GIT_*` and the
+  rest never end, so it is an allowlist: a lower-case name (not zsh's `path`, `fpath`, `cdpath`, …) and `LC_*`, `LANG`,
+  `LANGUAGE`, `TZ`, `TERM`, `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;
+- a write: any redirect that writes a file (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, `2>`, `>&file`) except to a literal
+  `/dev/null` or to a descriptor (`2>&1`, `>&2`), since a file written by the command can replace a program on `PATH`
+  that a listed name then runs (`echo '…' > /abs/path/hostname; hostname`); and a tool that can write a file named by
+  an argument is not listed (`sort -o`, `uniq in out`, `base64 -o`, `xxd -r in out`).
+  Heredocs, here-strings and `<` only read. So `cat > file <<'EOF' … EOF` is unknown and keeps the old checks;
+- text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `[[ a -eq b ]]`,
+  `[[ -v x ]]`, `${x:n}`), and an array subscript. Plain numbers are fine. `time` is a keyword: the command behind it is
+  what is judged.
+
+Function bodies, `$(…)` and backticks, process substitutions and the `$(…)` in an unquoted heredoc are all in the tree,
+so `f(){ git push; }; f` and `cat <<EOF` with `$(git push)` are `gg`; a quoted heredoc body is data. A pipe or a
+heredoc feeding an unlisted command is no exception: that command is unknown on its own.
+A script written in one command and run by the same command (`./x`, `sh x`) is unknown too, since what runs isn't
+listed; one call that writes it and a later call that runs it are two calls, each judged on its own.
 
 A command that already holds a marker, quoting the scanner can't read, or a push whose own words have literal
 separators, quotes, `$` or newlines can't be checked word by word, so it blocks.

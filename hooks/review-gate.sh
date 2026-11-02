@@ -188,9 +188,12 @@ prot_re="(~|$home_re)/\\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)|\
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
 #   {k: "wr", t}        a write redirect to the literal target t
 #   {k: "lw", t}        a literal word t that names a protected path
+#   {k: "ggdyn"}        a command that is not a plain read-only tool with literal words, or text that is run without being
+#                       a command (see runs_gitgh)
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
 # kept as text); anything else is dynamic. The output, for the loop below: the verdict (block, dyn, pass, or bad when the
-# input is no tree) on the first line, then the message of a block, or the strings to parse again, one JSON string per line.
+# input is no tree) on the first line, then the message of a block; or `run` (a ggdyn event) or `skip` (none),
+# then the strings to parse again, one JSON string per line.
 tamper_jq='
 def bn: sub("^.*/"; "");
 def isprot: test($prot);
@@ -297,9 +300,62 @@ def calls:
 		($w[] | select(test(">+[|&]?\\s*[\"\u0027]?[^\\s;&|\"\u0027]*(" + $prot + ")")) | {k: "block", p: ., w: ">"}),
 		(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w)) end)
 	end;
+# runs_gitgh (docs/gate.md › Command reading): does the command run git or gh? Only a command made wholly of plain
+# external read-only tools, each with literal arguments, skips the text checks that follow. Everything else is unknown
+# (git and gh, a wrapper, a shell, an interpreter, a builtin that assigns, runs code or replaces the shell, a tool that
+# changes files, a script, a word that is not literal), whether it runs git or not: the list of what is dangerous
+# never ended (claude-ship #191), so the list of what is trusted is short.
+# A tool that can write a file named by an argument or option (GNU or BSD form: sort -o, a second uniq operand, base64 -o,
+# tee) is not on it: the file can replace a program on PATH that a listed name then runs. rg (--pre, --hostname-bin
+# run programs) and xxd (-r in out) are not listed either.
+def ggsafe: test("^(cat|echo|grep|egrep|fgrep|wc|head|tail|cut|tr|ls|stat|diff|cmp|jq|pwd|true|false|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|od|uname|whoami|id|hostname)$");
+# A redirect that writes a file: any of `>`, `>>`, `>|`, `<>`, `&>`, `&>>` (also behind a descriptor: `2>`) and `>&` to
+# anything but a descriptor. A literal /dev/null is the one target that is no write. Here-strings, heredocs and `<` only read.
+def ggwrite:
+	has("Op") and has("Word") and (.Op | type) == "string" and (.Op | test("^(>|>>|>\\||<>|&>|&>>|>&)$"))
+	and ((.Word | wv) as $t | if $t == null then true
+		elif $t == "/dev/null" then false
+		elif .Op == ">&" and ($t | test("^([0-9]+-?|-)$")) then false
+		else true end);
+# A variable that changes which program a listed name runs, or loads code into it or into the shell (`PATH=. cat`,
+# `PERL5OPT=-Mx shasum`, `IFS`, `BASH_ENV`, `PS4`, `GIT_*`, `NODE_OPTIONS`...). The list of those never ends, so it is
+# the other way round: only a variable known to be harmless is. That is a lower-case name (the environment variables
+# tools read are upper-case; the zsh ones that are tied to PATH and the like are left out) and the locale and terminal
+# ones. Any other name makes the command unknown.
+def ggnameok: test("^([a-z_][a-z0-9_]*|LC_[A-Z]+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|)$")
+	and (test("^(path|fpath|cdpath|manpath|mailpath|module_path|watch|psvar|histchars)$") | not);
+# The command word is the bare name of a listed tool (not a path: ./cat is a script), and every word is literal (a
+# dynamic one may be an option that runs a program), or the command is unknown. No wrapper is unwrapped: env, sudo,
+# xargs, find, sh -c and the like are not on the list.
+def ggcalls:
+	(.Args? // []) as $args | [$args[] | wv] as $w
+	| if ($w | length) == 0 then empty
+	elif any($w[]; . == null) then {k: "ggdyn"}
+	elif ($w[0] | ggsafe) then empty
+	else {k: "ggdyn"} end;
+# Nodes that run text without being a command, or change what a name runs: an indirect or prompt expansion (`${!x}`,
+# `${x@P}`), arithmetic, which evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`,
+# `[[ a -eq b ]]`), any declaration (`declare`, `typeset`, `local`, `export`, `readonly`: a quoted array initializer
+# is parsed again, a nameref runs a subscript), an array subscript, and an assignment to a variable that is not known
+# to be harmless (`x=1`, `for`, `select`, `coproc`, `${x:=…}`, a `{name}` redirect). Plain numbers are fine.
+def ggnum: ([.. | objects | select(.Type == "Lit") | .Value] | all(test("^([0-9]+|0[xX][0-9a-fA-F]+)$")))
+	and (any(.. | objects; .Type == "ParamExp") | not);
+def ggnode:
+	if ggwrite then {k: "ggdyn"}
+	elif .Type == "ParamExp" and (.Excl == true or ((.Exp.Op? // "") == "@")) then {k: "ggdyn"}
+	elif .Type == "ParamExp" and .Slice != null then (.Slice | if ggnum then empty else {k: "ggdyn"} end)
+	elif (.Type == "ArithmExp" or .Type == "ArithmCmd" or .Type == "LetClause" or .Type == "CStyleLoop") then (if ggnum then empty else {k: "ggdyn"} end)
+	elif .Type == "BinaryTest" and ((.Op | tostring) | test("^-(eq|ne|lt|le|gt|ge)$")) then {k: "ggdyn"}
+	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
+	elif .Type == "DeclClause" then {k: "ggdyn"}
+	elif has("Index") and .Index != null then {k: "ggdyn"}
+	elif (.Name? | type) == "object" and ((.Name | if has("Value") then .Value else ([.Parts[]? | .Value? // "?"] | join("")) end) | ggnameok | not) then {k: "ggdyn"}
+	elif (.N? | type) == "object" and ((.N.Value? // "") | test("^\\{.*\\}$")) and (.N.Value[1:-1] | ggnameok | not) then {k: "ggdyn"}
+	elif .Type == "ParamExp" and ((.Exp.Op? // "") | test("^:?=$")) and (.Param.Value? // "" | ggnameok | not) then {k: "ggdyn"}
+	else empty end;
 if .Type != "File" then "bad"
 else
-	[.. | objects | if .Type == "CallExpr" then calls else empty end, (if has("Redirs") then redirs else empty end)] as $ev
+	[.. | objects | if .Type == "CallExpr" then (calls, ggcalls) else ggnode end, (if has("Redirs") then redirs else empty end)] as $ev
 	| ($ev | map(select(.k == "lw")) | first) as $lw
 	| ($ev | map(select(.k == "block")) | first) as $b
 	| ($ev | map(select(.k == "wr" and (.t | isprot))) | first) as $wp
@@ -309,7 +365,9 @@ else
 		elif $lw != null and $wo != null then {p: $lw.t, w: ($wo.op + $wo.t)}
 		else null end) as $blk
 	| if $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
-		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end), ($ev[] | select(.k == "str") | .v | tojson) end
+		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end),
+			(if any($ev[]; .k == "ggdyn") then "run" else "skip" end),
+			($ev[] | select(.k == "str") | .v | tojson) end
 end'
 # What the tree can't settle falls back to the text check: a command that names gate state or the installed gate
 # writes when it runs a writing tool or redirects anywhere but a descriptor or /dev/null. A quoted `>` counts:
@@ -332,8 +390,10 @@ text_tamper() {
 	fi
 }
 # Walks the tree, then the strings it runs as shell (`sh -c`, `eval`) to a depth of 3, each parsed again. A string
-# that doesn't parse, or sits deeper, is dynamic.
+# that doesn't parse, or sits deeper, is dynamic. The same walk settles runs_gitgh (docs/gate.md › Command reading):
+# gg_run stays 0 only while every command in every tree is a plain read-only tool with literal words.
 tamper_dyn=0
+gg_run=0
 printf '%s' "$cmd_all" | grep -q disableAllHooks && tamper_dyn=1
 tamper_nl=$(printf '\n_')
 tamper_nl=${tamper_nl%_}
@@ -342,11 +402,22 @@ depth=0
 cur=$tree
 while [ -n "$cur" ]; do
 	# One jq run per tree: its first line is the verdict (block, dyn, pass, or bad for something that is no tree), and
-	# the rest the message of a block or the strings the command runs as shell, one JSON string per line.
+	# the rest the message of a block, or `run` or `skip` (runs_gitgh) and the strings the command runs as shell, one
+	# JSON string per line.
 	res=$(printf '%s' "$cur" | jq -r --arg prot "$prot_re" "$tamper_jq") || unreadable "command syntax tree"
 	verdict=${res%%"$tamper_nl"*}
 	rest=
 	case $res in *"$tamper_nl"*) rest=${res#*"$tamper_nl"} ;; esac
+	case $verdict in
+	dyn | pass)
+		gg=${rest%%"$tamper_nl"*}
+		case $rest in
+		*"$tamper_nl"*) rest=${rest#*"$tamper_nl"} ;;
+		*) rest= ;;
+		esac
+		[ "$gg" = skip ] || gg_run=1
+		;;
+	esac
 	case $verdict in
 	block)
 		echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names $rest." >&2
@@ -358,6 +429,7 @@ while [ -n "$cur" ]; do
 		# Only a string run as shell can fail to make a tree: the command's own parse was checked above.
 		[ "$depth" != 0 ] || unreadable "command syntax tree"
 		tamper_dyn=1
+		gg_run=1
 		;;
 	*) unreadable "command syntax tree" ;;
 	esac
@@ -380,16 +452,22 @@ while [ -n "$cur" ]; do
 		depth=${item%% *}
 		if [ "$depth" -gt 3 ]; then
 			tamper_dyn=1
+			gg_run=1
 			continue
 		fi
 		text=$(printf '%s' "${item#* }" | jq -r '.') || unreadable "command syntax tree"
 		if ! cur=$(printf '%s' "$text" | "$shfmt" -ln bash --to-json 2>/dev/null) || [ -z "$cur" ]; then
 			tamper_dyn=1
+			gg_run=1
 			cur=
 		fi
 	done
 done
 [ "$tamper_dyn" = 0 ] || text_tamper
+# runs_gitgh is no: no git or gh command anywhere in the tree, nothing in it that might run one, so what follows (the
+# quoting check, the `gh api` scan, the push and `gh pr create` checks) has nothing to judge, whatever the text says.
+# Only the tamper, waiver and opt-in checks above apply to such a command.
+[ "$gg_run" = 1 ] || exit 0
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then
 	push_cmd=$words
@@ -456,7 +534,7 @@ api_scan() (
 		# a field or a method, so it blocks.
 		--* | -i | -i=* | -h | -h=* | -H?* | -q?* | -t?* | -p?* | -) ;;
 		-*)
-			echo "block the review gate can't read the flags \`$w\`"
+			echo "block has flags the review gate can't read: \`$w\`"
 			exit 0
 			;;
 		# A redirection isn't an argument; a bare operator takes the next word.
@@ -480,7 +558,7 @@ api_scan() (
 	fi
 	case $ep in
 	*'$'* | *'`'* | *@*@* | *://*)
-		echo "block the review gate can't read its endpoint ($ep)"
+		echo "block has an endpoint the review gate can't read ($ep)"
 		exit 0
 		;;
 	esac
@@ -506,7 +584,7 @@ api_scan() (
 		case $(printf '%s' "$doc" | sed -E 's/^[[:space:]]*//') in
 		'{'* | query* | mutation* | fragment* | subscription*) ;;
 		*)
-			echo "block the review gate can't read its GraphQL query"
+			echo "block has a GraphQL query the review gate can't read"
 			exit 0
 			;;
 		esac
@@ -566,7 +644,7 @@ api_scan() (
 	# The ship skill's writes (docs/gate.md › REST allowlist) pass; anything else is checked below.
 	printf '%s %s' "${method:-POST}" "$rest" | grep -Eq '^(POST (issues|issues/[0-9]+/(comments|labels|reactions|dependencies/blocked_by)|issues/comments/[0-9]+/reactions|pulls/[0-9]+/(comments|reviews)|pulls/[0-9]+/comments/[0-9]+/replies|pulls/comments/[0-9]+/reactions|labels|actions/workflows/[^/]+/dispatches)|PATCH (issues/[0-9]+|issues/comments/[0-9]+|labels/[^/]+)|DELETE issues/[0-9]+/dependencies/blocked_by/[0-9]+)$' && exit 0
 	if ! printf '%s' "$slug" | grep -Eq '^([[:alnum:]_.-]+/[[:alnum:]_.-]+|\{owner\}/\{repo\})$'; then
-		echo "block the review gate can't read its repo ($slug)"
+		echo "block names a repo the review gate can't read ($slug)"
 		exit 0
 	fi
 	echo "repo $slug"
@@ -579,13 +657,13 @@ if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 	api_found=$(printf '%s\n' "$words" | sed -E 's/([<>])&/\1@RD@/g; s/&>/@RD@>/g' | tr ';&|()' '\n\n\n\n\n' |
 		grep -E "$gh_api" | while IFS= read -r seg; do
 		case $seg in
-		*'$' | *'`'*) echo "block the review gate can't read a command substitution in it" ;;
+		*'$' | *'`'*) echo "block holds a command substitution the review gate can't read" ;;
 		*) api_scan "$(printf '%s' "$seg" | sed -E "s/.*${gh_api}//")" ;;
 		esac
 	done)
 	# A `gh api` the raw command shows but the word-split form loses can't be scanned.
 	if [ -z "$api_found" ] && ! printf '%s' "$words" | grep -Eq "$gh_api"; then
-		api_found="block the review gate can't read this \`gh api\` call"
+		api_found="block isn't one the review gate can read"
 	fi
 	if blocked=$(printf '%s\n' "$api_found" | grep -m1 '^block '); then
 		echo "Blocked: this \`gh api\` call ${blocked#block }. Use \`git push\` and \`gh pr create\` for code; write other calls plainly." >&2

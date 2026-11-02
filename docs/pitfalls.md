@@ -14,7 +14,17 @@ review finds a new class.
   can be named, too. The tamper check now reads a syntax tree (shfmt) instead of text, so file names, quoted
   strings and heredoc bodies stop counting (claude-ship #135, #40): add a new Bash check there, as an event
   from the tree, rather than as another regex, and let anything the tree can't settle fall back to the stricter
-  old check (docs/gate.md › Tamper protection).
+  old check (docs/gate.md › Tamper protection). The push, PR and `gh api` checks sit behind the same tree: a command
+  that runs no git or gh skips them (docs/gate.md › Command reading), and "runs no git" means every command in the
+  tree is on a list of tools known not to run their arguments, not that the tree names no git.
+- **A command's name is not the program it runs, and a list of what is dangerous never ends.** The runs-git filter
+  first trusted a long list of names and then patched each bypass: `./cat` and `/tmp/ls` (a path is a script), `PATH=. cat`,
+  then `PERL5OPT=… shasum`, `xargs find`, `printf '%n'`, `{PATH}>f`, `declare -a a='($(…))'`, `exec -l bash` (claude-ship
+  #135, #191), one codex round each. What is left is a short list: the bare name of a plain external read-only tool, every
+  word literal, no listed tool that can write a file or run a program from an argument or option (`sort`, `uniq`, `base64` are out); a wrapper, a shell, a builtin
+  that assigns, runs code or replaces the shell, a file-changing tool, a dynamic word, a write (any redirect to a file) and any variable assignment outside
+  a short allowlist are unknown (docs/gate.md › Command reading). When a trusted tool turns out to run something, remove
+  it from the list rather than adding a check for that one form.
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
   `>&2` as a descriptor duplication when any non-alphanumeric followed, so `>&2.txt` (bash: a write to the file
   `2.txt`) and `>&1/x` passed; so did `&>/dev/null.log` (no terminator at all) and `>/dev/null,x` (the `/dev/…`
