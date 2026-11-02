@@ -10,7 +10,8 @@
 # issue is for "issue" only.
 # When no entry is "fixed" (no new push will recheck the status), it ends by running the codex-review workflow.
 # A "resolve" entry's push is already done, and it ran while the thread was open.
-# Exits 2 on bad arguments or an invalid file, before any call; 1 at the first failed call.
+# Exits 2 on bad arguments or an invalid file, before any call; 1 at the first failed call. If only the final
+# workflow run fails, it prints `failed: recheck (workflow)`: every thread is done, so rerun just that command.
 set -eu
 if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
 	echo "usage: codex-triage.sh <pr> <triage.json> [owner/repo]" >&2
@@ -49,6 +50,14 @@ stop() {
 	exit 1
 }
 
+# The final recheck failed after every thread was done: rerunning the file would leave it empty (exit 2).
+stop_recheck() {
+	echo "done:${done_ids:- (none)}" >&2
+	echo "failed: recheck (workflow)" >&2
+	echo "Every thread is done. Only the status recheck failed: run gh workflow run codex-review.yml -R $slug -f pr=$pr again, or push a commit." >&2
+	exit 1
+}
+
 n=$(jq length "$file")
 i=0
 while [ "$i" -lt "$n" ]; do
@@ -81,5 +90,5 @@ while [ "$i" -lt "$n" ]; do
 done
 
 if [ "$fixed" = 0 ]; then
-	gh workflow run codex-review.yml -R "$slug" -f pr="$pr" || stop "(all threads)" workflow
+	gh workflow run codex-review.yml -R "$slug" -f pr="$pr" || stop_recheck
 fi

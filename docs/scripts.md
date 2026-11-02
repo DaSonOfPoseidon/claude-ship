@@ -111,7 +111,7 @@ if any check is pending, and `no failed checks` when none failed (also when the 
   `CI_WAIT_POLLS=10` (5 minutes of polling), so the polls plus the failed-job log fetches, which run after the cap,
   fit well inside the Bash timeout, and calls it up to 4 times. At the cap it prints the same
   result and exits 3, so the caller tells "still running" from "settled". `gh pr checks --watch` isn't used because
-  it can't exclude a check. `CI_WAIT_INTERVAL` is for the tests only; the hook allows `CI_WAIT_POLLS` for this script and no other variable.
+  it can't exclude a check. `CI_WAIT_INTERVAL` is for the tests only; the hook allows `CI_WAIT_POLLS` (1 to 10) for this script and no other variable.
 
 - **`gh pr checks` exits non-zero on a failure (1) or a pending check (8): that is the result, not an error.** The
   script reads its output instead, and exits 1 only when that isn't a JSON list and isn't gh's "no checks
@@ -221,8 +221,10 @@ orchestrator, since subagents can't resolve threads (#100), from the checkout `p
   threads it fixed, so the orchestrator puts those in the same file as `resolve` entries: only
   `resolveReviewThread` runs for them, and any `reply` on them is ignored.
 - **Stops at the first failed call**, printing `done:` (the threads finished) and `failed:` (the thread and
-  step) to stderr, exit 1. A failed reply may have posted and a failed resolve leaves a posted reply, so check
-  the thread before rerunning with the finished threads removed from the file.
+  step, or `recheck (workflow)`) to stderr, exit 1. A failed reply may have posted and a failed resolve leaves a
+  posted reply, so check the thread before rerunning with the finished threads removed from the file. When
+  `failed:` is `recheck (workflow)`, every thread is already done: run only `gh workflow run codex-review.yml -R
+  <slug> -f pr=<pr>` again (or push a commit), never the triage file, which would be empty and exit 2.
 - **Ends with the status recheck** (`gh workflow run codex-review.yml`) only when no entry is `fixed`: a fix
   means a push and a new request, which recheck it anyway. A `resolve` entry doesn't count, because its fix was
   pushed before the thread was resolved, so the push-triggered run saw it open; without the recheck the status
@@ -393,12 +395,13 @@ hook decides, not what Claude Code does with it.
   written with `~/` exactly (not `$HOME`, an absolute path, `./`, `..` or `env`/`sh`), or `gh`, or the one
   environment prefix below.
 - **Allowed, as one plain command.** `codex-round.sh <pr> [owner/repo]`, `codex-request.sh <pr> <owner/repo>
-  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `[CI_WAIT_POLLS=<n>] ci-failures.sh <pr> [owner/repo [--wait]]`, `codex-triage.sh <pr> <file>`, and
+  <sha>`, `[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr>`, `codex-findings.sh <pr>`, `[CI_WAIT_POLLS=<1-10>] ci-failures.sh <pr> [owner/repo [--wait]]`, `codex-triage.sh <pr> <file>`, and
   `gh pr view|checks <pr> ...`. `--wait` is the one option `ci-failures.sh` takes, and only as its third word,
   after the repository (`ci-failures.sh 12 --wait` and `ci-failures.sh 12 o/r --wait extra` deny). `<pr>` is up to nine digits, a slug is `owner/repo` of letters, digits and `_.-` only,
   with no part starting with `-`, no part that is `.`, and no `..` anywhere, a sha is 40 lowercase hex characters. Nothing else may precede or follow: any other variable
   (`PATH=`, `GH_TOKEN=`, `CODEX_REQUEST_TRIES=`) denies, `CODEX_WAIT_SECS` only before the wait, and `CI_WAIT_POLLS`
-  (digits, one to nine) only before `ci-failures.sh`; only one of the two may be given.
+  (1 to 10, no leading zero: 10 polls fit the 10-minute Bash timeout) only before `ci-failures.sh`; only one of the
+  two may be given.
 - **A poll is denied with a hint.** The agent runs `CODEX_WAIT_SECS=300 codex-wait.sh <pr>` in the foreground,
   up to 4 calls in a row, and never ends its turn before one gives a result, so its report reaches the
   implementer and not the orchestrator (claude-ship #147). A command that starts with `sleep`, `cat`, `tail` or

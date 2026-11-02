@@ -159,6 +159,8 @@ CODEX_WAIT_SECS=*)
 CI_WAIT_POLLS=*)
 	polls=${1#CI_WAIT_POLLS=}
 	isnum "$polls" || deny "CI_WAIT_POLLS must be a number"
+	# 1-10, without a leading zero (010 would be octal in arithmetic): 10 polls fit the 10-minute Bash timeout.
+	case $polls in 0* | ??*) [ "$polls" = 10 ] || deny "CI_WAIT_POLLS must be 1-10 (10 polls fit the 10-minute Bash timeout)" ;; esac
 	shift
 	[ $# -ge 2 ] || deny "too short"
 	[ "$1" = "$ship/ci-failures.sh" ] || deny "CI_WAIT_POLLS is for ci-failures.sh only"

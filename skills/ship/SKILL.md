@@ -155,7 +155,8 @@ issue (adding its link to the reply), posts the reply and resolves the thread; a
 the thread, for one that already has its reply (an implementer replied to it). Include a fixed thread only once
 its fix is committed, so the reply can name the commit. It validates the whole file before any call and stops
 at the first failure, naming the threads done: check that thread for a half-applied reply before rerunning
-without the done ones.
+without the done ones. If only the final status recheck failed (`failed: recheck (workflow)`), every thread is
+done: run just `gh workflow run codex-review.yml -R <slug> -f pr=<pr>` again, not the file.
 
 Then:
 - **Something was fixed:** go back to step 2 (the gate reviews only the new commits) and request the next

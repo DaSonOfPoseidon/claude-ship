@@ -6,11 +6,12 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 # The log has one line per call: `reply <id>`, `resolve <id>`, `workflow <args>`. A reply body is saved as
-# body-<id>; FAIL_REPLY=<id> makes that thread's reply fail.
+# body-<id>; FAIL_REPLY=<id> makes that thread's reply fail, FAIL_WORKFLOW=1 makes the workflow run fail.
 cat >"$tmp/bin/gh" <<EOF
 #!/bin/sh
 if [ "\$1" = workflow ]; then
 	echo "workflow \$*" >>"$tmp/log"
+	[ -z "\${FAIL_WORKFLOW:-}" ] || exit 1
 	exit 0
 fi
 [ "\$1 \$2" = "api graphql" ] || { echo "unexpected gh call: \$*" >&2; exit 1; }
@@ -175,6 +176,29 @@ resolve T1
 reply T2'
 grep -q 'done: T1' "$tmp/out" && grep -q 'failed: T2 (reply)' "$tmp/out" || {
 	echo "FAIL: failure report"
+	cat "$tmp/out"
+	fail=1
+}
+
+# Only the final workflow run fails: every thread is done, so the advice must not be to rerun the file (an empty
+# file exits 2); it names the workflow command instead.
+cat >"$tmp/t.json" <<'EOF'
+[{"thread":"T1","outcome":"not-valid","reply":"a"},
+ {"thread":"T2","outcome":"resolve"}]
+EOF
+FAIL_WORKFLOW=1 run
+check 'workflow run fails' 1 'reply T1
+resolve T1
+resolve T2
+workflow workflow run codex-review.yml -R o/r -f pr=7'
+grep -q 'done: T1 T2' "$tmp/out" && grep -q 'failed: recheck (workflow)' "$tmp/out" &&
+	grep -q 'Every thread is done. Only the status recheck failed: run gh workflow run codex-review.yml -R o/r -f pr=7 again, or push a commit.' "$tmp/out" || {
+	echo "FAIL: workflow failure report"
+	cat "$tmp/out"
+	fail=1
+}
+! grep -q 'done threads removed' "$tmp/out" || {
+	echo "FAIL: workflow failure must not advise removing done threads"
 	cat "$tmp/out"
 	fail=1
 }
