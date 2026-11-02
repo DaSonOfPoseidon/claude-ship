@@ -14,11 +14,12 @@ case "$1 $2" in
 "pr view")
 	[ -f "$GH_DIR/pr-$3.json" ] || { echo "no pull request found for $3" >&2; exit 1; }
 	[ "$4 $5" = "-R acme/app" ] || { echo "gh pr view without -R acme/app: $*" >&2; exit 1; }
+	echo "$3" >>"$GH_DIR/views"
 	cat "$GH_DIR/pr-$3.json"
 	;;
 "pr list")
 	[ -f "$GH_DIR/list.json" ] || { echo "pr list failed" >&2; exit 1; }
-	[ "$3 $4 $5 $6 $7 $8" = "-R acme/app --author me --state all" ] || { echo "gh pr list with wrong arguments: $*" >&2; exit 1; }
+	[ "$3 $4 $5 $6 $7 $8 $9 ${10}" = "-R acme/app --state all --limit 200 --json number,author,createdAt,mergedAt,closedAt" ] || { echo "gh pr list with wrong arguments: $*" >&2; exit 1; }
 	cat "$GH_DIR/list.json"
 	;;
 *) echo "unexpected gh call: $*" >&2; exit 1 ;;
@@ -47,11 +48,19 @@ fresh() {
 	echo '[]' >"$GH_DIR/list.json"
 }
 
-# plist <n|created|merged|closed>...: what `gh pr list` returns for the author (an empty field is null).
+# plist <n|created|merged|closed[|author]>...: what `gh pr list` returns for the repo (an empty field is null;
+# the author is "me" unless given, and "none" is a deleted account: a null author).
 plist() {
 	printf '%s\n' "$@" | jq -R -s -c 'split("\n") | map(select(. != "") | split("|") as $f
-		| {number: ($f[0] | tonumber), createdAt: $f[1], mergedAt: (if $f[2] == "" then null else $f[2] end),
+		| (if ($f[4] // "") == "" then "me" else $f[4] end) as $a
+		| {number: ($f[0] | tonumber), author: (if $a == "none" then null else {login: $a} end), createdAt: $f[1],
+		mergedAt: (if $f[2] == "" then null else $f[2] end),
 		closedAt: (if $f[3] == "" then null else $f[3] end)})' >"$GH_DIR/list.json"
+}
+
+# pauthor <n> <login>: the author of PR <n> as `pr` made it ("me").
+pauthor() {
+	jq -c --arg a "$2" '.author.login = $a' "$GH_DIR/pr-$1.json" >"$GH_DIR/pr-$1.tmp" && mv "$GH_DIR/pr-$1.tmp" "$GH_DIR/pr-$1.json"
 }
 
 # pr <n> <title> <created> <merged or empty> [<first commit authored> [<closed at> [<commit shas, comma separated>]]]
@@ -454,6 +463,57 @@ main claude-opus-5-5 1 250000 0 0 0 $1.00
 total 1 250000 0 0 0 $1.00
 peak main context: 250000 tokens'
 same 80 81
+
+# The competing PRs are the repo's, whoever wrote them (#130). Alice's PR 100 (10:00..12:00) and Bob's PR 101
+# (11:00..13:00); one session with a planning request at 09:00 ($4), then 10:15 ($1) and 12:15 ($1). Both
+# widen back to 09:00 and the later-started (Bob's) takes it, so Alice's row is the 10:15 request only, whether
+# or not Bob's PR is asked for; Bob's is the other two.
+fresh
+pr 100 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 101 'b' 2026-10-01T11:00:00Z 2026-10-01T13:00:00Z
+pauthor 100 alice
+pauthor 101 bob
+plist '100|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z|alice' '101|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z|bob'
+line "$D/s.jsonl" k0 2026-10-01T09:00:00.000Z claude-opus-5-5 1000000 0 0 0
+line "$D/s.jsonl" k1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" k2 2026-10-01T12:15:00.000Z claude-opus-5-5 250000 0 0 0
+run 100
+check "Alice's PR alone" 0 'PR #100 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+run 101
+check "Bob's PR alone" 0 'PR #101 b (2026-10-01T09:00:00 → 2026-10-01T13:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 1250000 0 0 0 $5.00
+total 2 1250000 0 0 0 $5.00
+peak main context: 1000000 tokens'
+same 100 101
+
+# A deleted account's PR (a null author) in the list can't be read for its earlier PRs, so it is left out of the
+# competing set rather than failing the report (only an asked PR must have an author).
+plist '100|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z|alice' '101|2026-10-01T11:00:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z|bob' '102|2026-10-01T10:30:00Z|2026-10-01T10:45:00Z|2026-10-01T10:45:00Z|none'
+run 100
+check 'a deleted account in the list' 0 'PR #100 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+
+# A full list (200 PRs) may have cut the repo's older PRs: a warning, not a failure.
+pr 1199 'z' 2026-09-02T00:00:00Z 2026-09-02T01:00:00Z
+pauthor 1199 alice
+jq -n -c '[range(1000; 1199) | {number: ., author: {login: "alice"}, createdAt: "2026-09-01T00:00:00Z", mergedAt: "2026-09-01T01:00:00Z", closedAt: "2026-09-01T01:00:00Z"}]
+	+ [{number: 1199, author: {login: "alice"}, createdAt: "2026-09-02T00:00:00Z", mergedAt: "2026-09-02T01:00:00Z", closedAt: "2026-09-02T01:00:00Z"}]
+	+ [{number: 100, author: {login: "alice"}, createdAt: "2026-10-01T10:00:00Z", mergedAt: "2026-10-01T12:00:00Z", closedAt: "2026-10-01T12:00:00Z"}]' >"$GH_DIR/list.json"
+run 100
+check 'a full pr list' 0 'PR #100 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 1250000 0 0 0 $5.00
+total 2 1250000 0 0 0 $5.00
+peak main context: 1000000 tokens'
+grep -q 'newest 200' "$tmp/err" || { echo 'FAIL: no warning for the full pr list'; cat "$tmp/err"; fail=1; }
 
 # `gh pr list` failing exits 1 with its message and prints no table (it is not read as "no earlier PRs").
 fresh
