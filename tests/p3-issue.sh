@@ -50,6 +50,9 @@ docs/*                          area:docs,documentation
 notes/*                         area:docs, documentation
 scripts/*                       area:ci,area:typo
 .github/*                       area:ci
+docs/special.md                 area:ci
+late/special.md                 area:ci
+late/*                          area:docs,documentation
 
 *                               status:ready
 EOF
@@ -85,6 +88,10 @@ export V_CLAUDE_P3_LABELS=review:p3,milestone:later
 # Map labels add to the base ones; the branch's own map has no effect.
 expect crates/obdcracker-core/src/x.rs review:p3,milestone:later,area:core,status:ready ''
 expect docs/a.md review:p3,milestone:later,area:docs,documentation,status:ready ''
+# A later rule's area replaces an earlier one (so an override goes after the broad rule); its other labels still
+# add up. An override listed before the broad rule loses: the later rule wins (claude-ship #183).
+expect docs/special.md review:p3,milestone:later,documentation,area:ci,status:ready ''
+expect late/special.md review:p3,milestone:later,area:docs,documentation,status:ready ''
 # The type label fills in only when the map gives none, and a label the repo lacks (area:typo) is skipped.
 export V_CLAUDE_P3_TYPE_LABEL=bug
 expect scripts/pr-gate.sh review:p3,milestone:later,area:ci,status:ready,bug ''
@@ -157,6 +164,21 @@ unset V_CLAUDE_P3_TYPE_LABEL
 			continue
 		fi
 		got=$(grep -A1 -x -- --label "$tmp/args" | grep -vx -e --label -e --)
+		n=$(printf '%s\n' "$got" | grep -c '^area:')
+		[ "$n" = 1 ] || {
+			echo "FAIL: $path gets $n area: labels from p3-labels, want exactly one: $(printf '%s' "$got" | paste -sd, -)"
+			fail=1
+		}
+		case $path in
+		docs/gate.md) want=area:gate ;;
+		docs/scripts.md) want=area:skill ;;
+		scripts/fetch-shfmt.sh) want=area:install ;;
+		*) want= ;;
+		esac
+		if [ -n "$want" ] && [ "$(printf '%s\n' "$got" | grep '^area:')" != "$want" ]; then
+			echo "FAIL: $path wants $want, got: $(printf '%s' "$got" | paste -sd, -)"
+			fail=1
+		fi
 		for kind in area priority status; do
 			printf '%s\n' "$got" | grep -q "^$kind:" || {
 				echo "FAIL: $path gets no $kind: label from p3-labels, only: $(printf '%s' "$got" | paste -sd, -)"
