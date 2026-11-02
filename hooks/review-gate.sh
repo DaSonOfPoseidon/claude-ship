@@ -554,7 +554,10 @@ def estep($el):
 	| {c: $nc, ev: ($st.ev + (if any($ec[]; . == null) then [{k: "dyn"}] else [] end) + ($el | evs($ec)))};
 if .Type != "File" then "bad"
 else
-	(reduce ((.Stmts // [])[]) as $s ({c: ($cands // [($cwd | norm(false))]), ev: []}; reduce ($s | elems)[] as $el (.; estep($el)))).ev as $ev
+	(reduce ((.Stmts // [])[]) as $s ({c: ($cands // [($cwd | norm(false))]), ev: []};
+		. as $st | ($s | elems) as $els
+		| reduce $els[] as $el ($st; estep($el))
+		| if ($els | length) > 1 then .c = ($st.c + .c | unique | if length > 32 then (.[:32] + [null] | unique) else . end) else . end)).ev as $ev
 	| ($ev | map(select(.k == "lw")) | first) as $lw
 	| ($ev | map(select(.k == "block")) | first) as $b
 	| ($ev | map(select(.k == "wr" and .prot)) | first) as $wp

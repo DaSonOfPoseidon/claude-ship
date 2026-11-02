@@ -299,7 +299,8 @@ passes):
 - `//`, `/./`, a trailing `/.` and `seg/..` are folded (a `..` above `/` stays at `/`), and a relative word is made
   absolute from the working directory: the hook input's `cwd` (the `$PWD` of the gate without one), moved by the `cd`
   and `pushd` the command runs. A `cd` that runs first (alone, or on the left of `&&`; `a && cd b && c` follows it in
-  order) sets the directory for what follows. A `cd` that may not run in order (after `||`, in an `if`, a loop, a block,
+  order, each one only for what comes after it in the chain) sets the directory for what follows; after an `&&` chain
+  both the directory before it and the one it ended in are candidates, since a `cd` in it may not have run. A `cd` that may not run in order (after `||`, in an `if`, a loop, a block,
   a function, a substitution) adds a **candidate**: the statement's relative words are resolved from the directory
   before it and from every such target, and are protected when any of them is. A `cd` in a subshell, a pipeline or the
   background doesn't leave it. A `cd` to something dynamic (`cd $d`, `cd -`, `popd`) makes the directory unknown, and
