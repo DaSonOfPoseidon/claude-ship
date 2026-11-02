@@ -452,7 +452,10 @@ compares the gate's entry with the README snippet from `origin/main`, so the exp
 `matcher`, `timeout` below the README's or `onFailure` other than `"block"` that differs gets a warning (exit 0)
 and the README's entry to paste. It exits 1 when the gate isn't registered at all (no file, invalid JSON, no
 `PreToolUse` hook running `~/.claude/hooks/review-gate.sh` or the absolute path in the target directory) or when
-it can't check (no `jq`; a README without the snippets, which would be a bug here). The orchestrate hint hook is
+it can't check (no `jq`; a README without the snippets, which would be a bug here). It judges every hook that runs
+the gate, not the first (#153): Claude Code runs all of them, so a stale entry still runs with its weaker settings.
+More than one gives a warning that the gate is registered N times, then the usual warnings for each one that
+differs, named 1st, 2nd, and so on; "The gate is registered" prints only for exactly one hook with no warnings. The orchestrate hint hook is
 optional: a missing one only prints an info line. So does a missing `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}`
 (only the string `"0"` counts): the PR loop needs it, because under fork mode a subagent's Agent call returns at
 once (#160).

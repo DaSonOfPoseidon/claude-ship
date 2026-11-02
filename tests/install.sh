@@ -198,6 +198,53 @@ gate_with --arg c "$tmp/case-abs-command/hooks/review-gate.sh" '.hooks.PreToolUs
 run_case abs-command
 expect abs-command 0 0
 
+# Claude Code runs every registered gate hook, so each one is judged and a second registration is itself a warning
+# (claude-ship #153): the verdict can't depend on the order of the entries.
+# lacks <name> <text>: the output doesn't have this text.
+lacks() {
+	grep -qF -- "$2" "$tmp/out" && {
+		echo "FAIL: $1: output has: $2"
+		sed 's/^/  /' "$tmp/out"
+		fail=1
+	}
+}
+# A stale entry that misses all three checks (matcher, timeout, onFailure).
+stale=$(jq -n --arg c "$cmd" '{matcher: "Bash", hooks: [{type: "command", command: $c, timeout: 600}]}')
+# The README entry follows the stale one.
+gate_with --argjson s "$stale" '.hooks.PreToolUse = [$s] + .hooks.PreToolUse'
+run_case stale-then-good
+expect stale-then-good 0 4
+has stale-then-good "registered 2 times"
+has stale-then-good "1st"
+lacks stale-then-good "The gate is registered"
+# The same two entries the other way round: the good one first must not hide the stale one.
+gate_with --argjson s "$stale" '.hooks.PreToolUse += [$s]'
+run_case good-then-stale
+expect good-then-stale 0 4
+has good-then-stale "registered 2 times"
+has good-then-stale "2nd"
+lacks good-then-stale "The gate is registered"
+gate_with '.hooks.PreToolUse += [.hooks.PreToolUse[0]]'
+run_case two-good
+expect two-good 0 1
+has two-good "registered 2 times"
+lacks two-good "The gate is registered"
+# Two gate hooks in one entry count too, and so does one written with the absolute path.
+gate_with '.hooks.PreToolUse[0].hooks += [.hooks.PreToolUse[0].hooks[0]]'
+run_case one-entry-two-hooks
+expect one-entry-two-hooks 0 1
+has one-entry-two-hooks "registered 2 times"
+gate_with --arg c "$tmp/case-abs-twice/hooks/review-gate.sh" '.hooks.PreToolUse[0].hooks += [.hooks.PreToolUse[0].hooks[0] | .command = $c | del(.onFailure)]'
+run_case abs-twice
+expect abs-twice 0 2
+has abs-twice "2nd"
+# Three registrations: the count, and the third one named.
+gate_with --argjson s "$stale" '.hooks.PreToolUse += [.hooks.PreToolUse[0], $s]'
+run_case three
+expect three 0 4
+has three "registered 3 times"
+has three "3rd"
+
 # The orchestrate hint is optional: an info line, the exit unchanged, and the gate's own warnings still show.
 printf '%s\n' "$gate" >"$start"
 run_case no-hint

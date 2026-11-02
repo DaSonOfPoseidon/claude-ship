@@ -62,26 +62,47 @@ check_settings() {
 	fi
 	# shellcheck disable=SC2088 # the literal text README.md registers
 	jqs() { jq --arg a '~/.claude/hooks/review-gate.sh' --arg b "$dest/hooks/review-gate.sh" "$@"; }
-	hook='first(.hooks[] | select(type == "object" and (.command == $a or .command == $b)))'
-	entry=$(jqs -c 'first(.hooks.PreToolUse[]? | select(type == "object" and any(.hooks[]?; type == "object" and (.command == $a or .command == $b))))' "$settings" 2>/dev/null) || entry=
-	if [ -z "$entry" ]; then
+	# Every hook that runs the gate, with its entry's matcher: Claude Code runs all of them, so each is judged (#153).
+	gates=$(jqs -c '[.hooks.PreToolUse[]? | select(type == "object") | . as $e | $e.hooks[]? | select(type == "object" and (.command == $a or .command == $b)) | {matcher: $e.matcher, timeout, onFailure}]' "$settings" 2>/dev/null) || gates=
+	count=$(printf '%s' "$gates" | jq -r 'length' 2>/dev/null) || count=0
+	count=${count:-0}
+	if [ "$count" = 0 ]; then
 		echo "install: the gate isn't registered in $settings (missing, not valid JSON, or no PreToolUse hook running ~/.claude/hooks/review-gate.sh), so it reviews nothing. Add this:" >&2
 		printf '%s\n' "$snippet" >&2
 		return 1
 	fi
 	warned=
-	if ! printf '%s' "$entry" | jq -e --arg m "$want_matcher" '.matcher == $m' >/dev/null 2>&1; then
-		echo "install: warning: the gate's matcher differs from README.md; use \"matcher\": \"$want_matcher\"." >&2
+	if [ "$count" -gt 1 ]; then
+		echo "install: warning: the gate is registered $count times in $settings; keep only the README entry (Claude Code runs every one, so a stale one still runs with its weaker settings)." >&2
 		warned=1
 	fi
-	if ! printf '%s' "$entry" | jqs -e --argjson w "$want_timeout" "$hook | .timeout | type == \"number\" and . >= \$w" >/dev/null 2>&1; then
-		echo "install: warning: the gate's hook needs \"timeout\": $want_timeout (it must outlast the reviewer budget)." >&2
-		warned=1
-	fi
-	if ! printf '%s' "$entry" | jqs -e --arg f "$want_failure" "$hook | .onFailure == \$f" >/dev/null 2>&1; then
-		echo "install: warning: the gate's hook needs \"onFailure\": \"$want_failure\" (else a timeout lets the push through)." >&2
-		warned=1
-	fi
+	# One line per gate hook: whether its matcher, timeout and onFailure are right.
+	verdicts=$(printf '%s' "$gates" | jq -r --arg m "$want_matcher" --argjson w "$want_timeout" --arg f "$want_failure" '.[] | [.matcher == $m, ((.timeout | type) == "number" and .timeout >= $w), .onFailure == $f] | map(tostring) | join(" ")')
+	i=0
+	while read -r ok_matcher ok_timeout ok_failure; do
+		i=$((i + 1))
+		case $i in
+		1) ord=1st ;;
+		2) ord=2nd ;;
+		3) ord=3rd ;;
+		*) ord=${i}th ;;
+		esac
+		if [ "$count" -gt 1 ]; then g="the $ord gate registration's"; else g="the gate's"; fi
+		if [ "$ok_matcher" != true ]; then
+			echo "install: warning: $g matcher differs from README.md; use \"matcher\": \"$want_matcher\"." >&2
+			warned=1
+		fi
+		if [ "$ok_timeout" != true ]; then
+			echo "install: warning: $g hook needs \"timeout\": $want_timeout (it must outlast the reviewer budget)." >&2
+			warned=1
+		fi
+		if [ "$ok_failure" != true ]; then
+			echo "install: warning: $g hook needs \"onFailure\": \"$want_failure\" (else a timeout lets the push through)." >&2
+			warned=1
+		fi
+	done <<VERDICTS
+$verdicts
+VERDICTS
 	if [ -n "$warned" ]; then
 		echo "The entry from README.md:" >&2
 		printf '%s\n' "$snippet" >&2
