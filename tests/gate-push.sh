@@ -141,6 +141,24 @@ expect_off 0 'true || git -C /tmp push origin HEAD'
 expect_off 2 'cd "$d" && git push origin HEAD; echo'
 expect_off 2 'true || cd "$d"; git push origin HEAD'
 expect_off 2 'true || git -C "$d" push origin HEAD'
+# A relative `-C` after a `cd` that may not have run is asked in that `cd`'s directory too: only acme/inrepo has opted in
+# here, and it is reached as <cd target>/sub, while the session's own `sub` is another repo.
+mkdir -p "$tmp/selbin" "$tmp/inrepo"
+printf '#!/bin/sh\ncase "$*" in *acme/inrepo*) echo true ;; *) echo false ;; esac\n' >"$tmp/selbin/gh"
+chmod +x "$tmp/selbin/gh"
+git init -q -b feat "$tmp/inrepo/sub"
+git -C "$tmp/inrepo/sub" remote add origin https://github.com/acme/inrepo.git
+git init -q -b feat "$repo/sub"
+git -C "$repo/sub" remote add origin https://github.com/acme/app.git
+jq -nc --arg c "true || cd $tmp/inrepo; git -C sub push origin HEAD" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+	PATH=$tmp/selbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+rc=$?
+if [ "$rc" != 2 ] || ! grep -q 'reviews HEAD' "$tmp/err"; then
+	echo "FAIL (exit $rc, want 2 for the shape): a relative -C after a cd that may not run"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+fi
+rm -rf "$repo/sub"
 fixture /tmp/elsewhere.git
 expect 0 'git push origin HEAD && echo done'
 fixture https://github.com/acme/app.git

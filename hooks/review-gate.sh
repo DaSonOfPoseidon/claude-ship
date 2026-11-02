@@ -928,7 +928,13 @@ guarded() (
 # push from is asked: the session's, the `cd` target and the `-C` one. A repo that isn't opted in is none of the gate's
 # business, as everywhere else (Codex round 2).
 if [ -n "$soft" ]; then
-	for push_dir in "$start" "$cd_dir" "$where" "${alt_dir:-$start}"; do
+	# A relative `-C` is also taken from the `cd` that may not have run.
+	alt_c=
+	case $c_dir in
+	'' | /*) ;;
+	*) [ -z "$alt_dir" ] || alt_c=$alt_dir/$c_dir ;;
+	esac
+	for push_dir in "$start" "$cd_dir" "$where" "${alt_dir:-$start}" "${alt_c:-$start}"; do
 		push_guarded=$(guarded "$push_dir") || exit 2
 		if [ -n "$push_guarded" ]; then
 			echo "Blocked: the review gate reviews HEAD, but ${push_shape#bad }. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
