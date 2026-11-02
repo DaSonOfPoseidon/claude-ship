@@ -113,6 +113,15 @@ expect 2 'git -C . -C . push origin HEAD'
 expect 2 'git -C "$d" push origin HEAD'
 expect 2 'git --git-dir=x push origin HEAD'
 expect 2 'git push origin HEAD:other'
+# A `cd` or `-C` that may not run is no reason to look elsewhere: the push is judged where the session is, and a command
+# that is not the push shape blocks before any directory is followed (Codex round 1).
+expect 2 'if false; then cd /tmp; fi; git push origin HEAD'
+expect 2 'true || cd /tmp; git push origin HEAD'
+expect 2 'true || git -C /tmp push origin HEAD'
+expect 2 '{ cd /tmp; git push origin HEAD; }'
+expect 2 'true || cd /tmp; gh pr create --title t'
+expect 2 'if false; then cd /tmp; fi; gh pr create --title t'
+expect 2 '{ cd /tmp; gh pr create --title t; }'
 expect 2 'git push origin HEAD # x'
 expect 2 'git push origin HEAD # && rm x'
 expect 2 'git push origin HEAD

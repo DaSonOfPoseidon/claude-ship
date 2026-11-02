@@ -483,7 +483,9 @@ done
 # any other operator, a comment and any key of the tree the program doesn't know (okkeys) fail the shape, so a newer shfmt
 # that adds a field fails closed. The output is lines for the shell, a word with a newline in it is no line, so it fails the shape too:
 #   cds N         how many `cd` commands the tree has anywhere (the `where` logic needs the count even without a push)
-#   cdt DIR       the one literal argument of the first `cd`, when there is exactly one (not for a `cd` that has others)
+#   cdt DIR       the one literal argument of the one `cd`, when that is the command that runs first (`cd DIR && ...`,
+#                 `cd DIR; ...`) and has exactly one argument: a `cd` that may not run (after `||`, in an `if` or a block)
+#                 is not followed, so it blocks (Codex round 1)
 #   shape ok      the command is one of the shapes above; then `C DIR` (the `-C` directory, if any) and `a WORD` (each word
 #                 after `push`, in order). Else `shape bad` and the sentence the gate blocks with.
 push_jq="$tree_defs"'
@@ -512,6 +514,9 @@ def pipeline:
 	if .Cmd.Type == "BinaryCmd" then
 		binary | if .Cmd.Op == "|" then ((.Cmd.X | pipeline) + (.Cmd.Y | pipeline)) else also("an operator other than a pipe: `;`, `&&`, `||`, `|&`, `&`") end
 	else [leaf] end;
+# The first command of the statement, going into the left side of `&&`: the one `cd` that runs before the rest, whatever
+# else follows. A `cd` anywhere else (after `||`, in an `if`, a block or a subshell) may not run, so it is not followed.
+def leftmost: if .Cmd.Type == "BinaryCmd" and .Cmd.Op == "&&" then (.Cmd.X | leftmost) else . end;
 def clean($what): if (. == "") then also("an empty " + $what) elif contains("\n") then also("a " + $what + " with a newline in it") else . end;
 def shape:
 	if (okkeys(["Type", "Stmts", "Pos", "End"]) | not) then also("a comment")
@@ -535,8 +540,9 @@ def shape:
 if .Type != "File" then "shape bad it is no syntax tree"
 else
 	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
+	| (first(.Stmts[0]? | leftmost | select(okkeys(["Cmd", "End", "Pos", "Position", "Redirs", "Semicolon"])) | .Cmd) // null) as $lead
 	| "cds \($cds | length)",
-	(if ($cds | length) == 1 then ($cds[0].Args[1:] | map(wv)) as $cw
+	(if ($cds | length) == 1 and $cds[0] == $lead then ($cds[0].Args[1:] | map(wv)) as $cw
 		| (if ($cw | length) == 1 and $cw[0] != null and ($cw[0] | contains("\n") | not) then "cdt \($cw[0])" else empty end)
 		else empty end),
 	(try (shape | "shape ok", (if .c != null then "C \(.c)" else empty end), (.a[] | "a \(.)")) catch "shape bad \(.)")
@@ -758,6 +764,26 @@ if [ -z "$api_write" ] && ! printf '%s' "$push_cmd" | grep -Eq "$git_push|$pr_cr
 	exit 0
 fi
 
+# A push shown only by the raw command is usually quoted text, but `sh -c` and `eval` run it, so it is judged too.
+# The exception is the ship skill's own `gh pr/issue create/edit/comment/close`, whose quoted words are data: it must
+# be that single command, with no unquoted separator, redirect or command substitution. Nothing in it runs a push,
+# so push_scope judges none of it.
+data_only=
+if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment|close)[[:space:]]' &&
+	! printf '%s' "$words" | grep -Eq '[;&|<>()`]|\$(\(|@LP@|\[)' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
+	data_only=1
+fi
+
+# A command that shows a push but isn't the push shape (push_jq) blocks here, before any directory is followed: the `cd`
+# or `-C` of `if false; then cd /tmp; fi; git push` never runs, and a directory that isn't a repo would end the gate
+# early (`git rev-parse` below) with the push unchecked (Codex round 1).
+push_shape=$(printf '%s\n' "$ptree" | sed -n 's/^shape //p')
+if [ "$push_shape" != ok ] && [ -z "$data_only" ] &&
+	{ printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; }; then
+	echo "Blocked: the review gate reviews HEAD, but ${push_shape#bad }. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
+	exit 2
+fi
+
 # Where the command runs: the session's directory, then a `cd <dir>`, then `git -C <dir>`. More than one `cd`,
 # or one this can't follow, blocks rather than guessing which branch is pushed.
 where=$(printf '%s' "$input" | jq -r '.cwd // ""') || unreadable "working directory"
@@ -796,8 +822,7 @@ c_dir_of() {
 		sed 's/@SP@/ /g'
 }
 # The push shape (push_jq) names the `-C` directory as a word, quotes and spaces resolved. A command that is not that
-# shape is blocked below if it pushes, and otherwise is read as text, as before.
-push_shape=$(printf '%s\n' "$ptree" | sed -n 's/^shape //p')
+# shape was blocked above if it pushes, and otherwise is read as text, as before.
 if [ "$push_shape" = ok ]; then
 	c_dir=$(printf '%s\n' "$ptree" | sed -n 's/^C //p')
 else
@@ -944,16 +969,6 @@ use_state
 }
 # shellcheck source=review-lib.sh
 . "$dir/review-lib.sh"
-
-# A push shown only by the raw command is usually quoted text, but `sh -c` and `eval` run it, so it is judged too.
-# The exception is the ship skill's own `gh pr/issue create/edit/comment/close`, whose quoted words are data: it must
-# be that single command, with no unquoted separator, redirect or command substitution. Nothing in it runs a push,
-# so push_scope judges none of it.
-data_only=
-if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment|close)[[:space:]]' &&
-	! printf '%s' "$words" | grep -Eq '[;&|<>()`]|\$(\(|@LP@|\[)' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
-	data_only=1
-fi
 
 # A push may send only HEAD, to origin; prints why not and fails otherwise. The command must have the shape push_jq reads
 # from the tree (docs/gate.md › Push shape), and options outside the list block (--all, --mirror, --tags and --delete
