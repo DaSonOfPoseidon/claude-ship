@@ -129,16 +129,16 @@ fully-qualified host's trailing dot (`github.com.`). A URL whose host is github.
 parse prints as `?<url>`, and callers fail closed on it. Other hosts and local paths aren't GitHub.
 
 Only these push options pass: `-u`, `--set-upstream`, `-f`, `--force`, `--force-with-lease*`,
-`--force-if-includes`, `-q`, `-v`, `-n`, `--dry-run`, `--no-verify`, `--progress`, `--atomic`. Any other option
+`--force-if-includes`, `-q`, `--quiet`, `-v`, `--verbose`, `-n`, `--dry-run`, `--no-verify`, `--progress`, `--atomic`. Any other option
 blocks, since some (`--all`, `--mirror`, `--tags`, `--delete`) send other refs. A refspec's destination is checked as well as its source: `HEAD:other` or `HEAD:refs/tags/x` writes a ref
 the review didn't cover. Config that changes what a bare push sends blocks too: `push.default` `matching`, or
 `upstream`/`tracking` when the branch tracks another one; `remote.origin.push`; `push.followTags`;
 `push.recurseSubmodules` `on-demand` or `only`; `remote.origin.mirror`.
 
-Git global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) can change what's pushed or
-from which repo, and block. Environment overrides never get that far: only the push may run. The `sed` that reads
-the global options sees one `git … push`, so the check for `-c`, `--git-dir` and the like also runs over the
-whole command, and so does the check for a single `-C` (the directory check follows only one).
+Git global options other than one `-C <dir>` (`-c push.default=matching`, `--git-dir`, ...) can change what's pushed
+or from which repo, and block. Environment overrides never get that far: only the push may run. The tree allows only
+`-C <dir>` between `git` and `push`; the text check for `-c`, `--git-dir` and the like, and for a single `-C`, also
+still runs over the whole command in both forms.
 
 **What may run next to the push.** The checks read git config, refs and files before the command runs, so
 anything earlier in the command (or a later step that reruns it) can change what the push sends after they
@@ -147,13 +147,24 @@ only:
 
 - the push,
 - at most one leading `cd <dir> &&`,
-- harmless redirects (a whole descriptor duplication, `/dev/null`, `/dev/stdout` or `/dev/stderr`, each followed by
-  whitespace, a separator or the end, so `>&2.txt` and `&>/dev/null.log` are file writes and block), and
+- harmless redirects (`/dev/null`, `/dev/stdout` or `/dev/stderr` as a literal target, and descriptor
+  duplications such as `2>&1`, `>&2` and `>&-`), and
 - trailing pipes into read-only filters (`tail`, `head`, `cat`, `grep`).
 
-Redirects are taken out first, then every simple command (split at `;&|()` and newlines) must be one of those.
-Shell syntax the split can't place (substitutions, a trailing `&`, a redirect, a second line, a `;` before the
-push) fails the whole-command `shape` regex.
+`push_jq` decides that on the syntax tree (the one the tamper check reads), as an allowlist of tree shapes: anything
+it doesn't describe blocks, and nothing is a list of what is dangerous. The whole command must be one statement, one of
+`git push ARGS` (`git` or `PATH/git`, whose only global option is one `-C <dir>`), `cd DIR && git push ARGS`, or either
+piped into `tail`, `head`, `cat` or `grep`. Every word in every command must be literal (`wv`): a variable, a command
+substitution, a glob or a brace expansion blocks. A redirect passes only to a literal `/dev/null`, `/dev/stdout` or
+`/dev/stderr`, or between descriptors (`>&-` too); one to any other file, a here-document, a here-string, an input
+redirect and a `{fd}` redirect block. Also blocked: an assignment before the command (`GIT_DIR=x git push`), a negation, a
+background `&`, a subshell, a block or an `if`, `;` or a second line, `||`, `|&`, a second `cd`, an empty or
+newline-containing word, and any key of the tree that the program doesn't list, so a newer shfmt fails closed. Reading
+the tree instead of text is what lets `cd "dir with space" && git push` and a push continued with a backslash-newline
+pass (#39, #42), and a quoted redirect target (`>'/dev/null'`, #99), as the same command in another spelling; the old
+version split the text at `;&|()`, which could not tell a quoted space from a separator. `push_scope` takes the option
+and refspec checks' words from the tree too, so `'orig'in` and `"HEAD"` are read as the shell would (the one-push rule
+still counts `git push` in the text of both command forms).
 
 A push shown only by the raw command is usually quoted text, but `sh -c "…; git push"` and `eval` run it, so it
 is judged too. The one exception is the ship skill's own `gh pr/issue create/edit/comment/close`, whose quoted
@@ -173,10 +184,12 @@ inside double quotes it is a command substitution, so that body isn't `data_only
 
 Where the command runs: the session's directory, then a `cd <dir>` in the command, then `git -C <dir>`. More
 than one `cd`, or one the gate can't follow (`~`, `-`, `$`, a backtick), blocks rather than guessing which
-branch is pushed. `cd`s are counted in both command forms, so a quoted-apart `c''d` counts; the target is read
-from the raw command, and one only the words show can't be read there, so it blocks. A later `git -C` replaces
-the directory, but other calls in the command still run in the `cd` target. The `-C` directory is the whole word
-after `-C`, so `-C "/a)b"` can't read as `/a`; two different `-C` directories in the raw and word forms block.
+branch is pushed. `cd`s are counted in the tree and as text in both command forms (so a quoted-apart `c''d`, or a
+`cd` inside `sh -c`, counts); the target is the tree's word for the one `cd`, with quotes and spaces resolved
+(`cd "a b"`), and a `cd` the tree doesn't show, or one without exactly one literal argument, blocks. A later `git -C`
+replaces the directory, but other calls in the command still run in the `cd` target. For a command with the push
+shape the `-C` directory is the tree's word, so `-C "dir with space"` and a later `git -C …` inside a quoted string
+can't change it; for any other command, which blocks if it pushes, it is still read as text.
 
 ## MCP writes
 

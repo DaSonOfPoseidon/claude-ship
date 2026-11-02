@@ -180,6 +180,20 @@ fi
 # is the gate's state in any repo.
 home_re=$(printf '%s' "$HOME" | sed 's/[][\.*^$(){}?+|]/\\&/g')
 prot_re="(~|$home_re)/\\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
+# The jq definitions both tree programs share (tamper_jq, push_jq): the last part of a path, and the literal value of a
+# word (`wv`: null when it is not literal).
+tree_defs='
+def bn: sub("^.*/"; "");
+def unq: if (gsub("\\\\[\\s\\S]"; "") | test("[*?\\[]|^~[^/]|\\{[^}]*(,|\\.\\.)[^}]*\\}")) then null
+	else gsub("\\\\\n"; "") | gsub("\\\\(?<c>[\\s\\S])"; .c) end;
+def dq: gsub("\\\\\n"; "") | gsub("\\\\(?<c>[$`\"\\\\])"; .c);
+def pv: if .Type == "Lit" then (.Value | unq)
+	elif .Type == "SglQuoted" then (if .Dollar then null else .Value end)
+	elif .Type == "DblQuoted" then (if .Dollar then null
+		else ([.Parts[]? | if .Type == "Lit" then (.Value | dq) else null end] | if any(. == null) then null else join("") end) end)
+	else null end;
+def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
+'
 # The command's simple commands and redirects read from its syntax tree, `$tree`, as events, one object each:
 #   {k: "block", p, w}  a literal word p names a protected path and writes (w says how)
 #   {k: "dyn"}          something the tree can't settle: a word that isn't literal (a variable, a substitution, a
@@ -194,18 +208,8 @@ prot_re="(~|$home_re)/\\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)|\
 # kept as text); anything else is dynamic. The output, for the loop below: the verdict (block, dyn, pass, or bad when the
 # input is no tree) on the first line, then the message of a block; or `run` (a ggdyn event) or `skip` (none),
 # then the strings to parse again, one JSON string per line.
-tamper_jq='
-def bn: sub("^.*/"; "");
+tamper_jq="$tree_defs"'
 def isprot: test($prot);
-def unq: if (gsub("\\\\[\\s\\S]"; "") | test("[*?\\[]|^~[^/]|\\{[^}]*(,|\\.\\.)[^}]*\\}")) then null
-	else gsub("\\\\\n"; "") | gsub("\\\\(?<c>[\\s\\S])"; .c) end;
-def dq: gsub("\\\\\n"; "") | gsub("\\\\(?<c>[$`\"\\\\])"; .c);
-def pv: if .Type == "Lit" then (.Value | unq)
-	elif .Type == "SglQuoted" then (if .Dollar then null else .Value end)
-	elif .Type == "DblQuoted" then (if .Dollar then null
-		else ([.Parts[]? | if .Type == "Lit" then (.Value | dq) else null end] | if any(. == null) then null else join("") end) end)
-	else null end;
-def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 # The words left after the options of a wrapper: $val are the options that take the next word, $flag those that take
 # none. null for an option it does not know, so the caller treats the command as unreadable.
 def skipopts($w; $val; $flag):
@@ -468,6 +472,78 @@ done
 # quoting check, the `gh api` scan, the push and `gh pr create` checks) has nothing to judge, whatever the text says.
 # Only the tamper, waiver and opt-in checks above apply to such a command.
 [ "$gg_run" = 1 ] || exit 0
+# The push shape, read from the same tree (docs/gate.md › Push shape): a strict allowlist of what a pushing command may be,
+# so anything the allowlist doesn't describe blocks, with no list of what is dangerous. The whole command is one
+# statement, one of
+#   git push ARGS                       (git or PATH/git; the only global option is one `-C DIR`)
+#   cd DIR && git push ARGS
+#   either of those piped into tail, head, cat or grep
+# and every word in it is literal. Redirects are only to a literal /dev/null, /dev/stdout or /dev/stderr and between
+# descriptors (`2>&1`, `>&2`, `>&-`). An assignment, a negation, a background `&`, a subshell, a block, a second statement,
+# any other operator, a comment and any key of the tree the program doesn't know (okkeys) fail the shape, so a newer shfmt
+# that adds a field fails closed. The output is lines for the shell, a word with a newline in it is no line, so it fails the shape too:
+#   cds N         how many `cd` commands the tree has anywhere (the `where` logic needs the count even without a push)
+#   cdt DIR       the one literal argument of the first `cd`, when there is exactly one (not for a `cd` that has others)
+#   shape ok      the command is one of the shapes above; then `C DIR` (the `-C` directory, if any) and `a WORD` (each word
+#                 after `push`, in order). Else `shape bad` and the sentence the gate blocks with.
+push_jq="$tree_defs"'
+def fail($m): error($m);
+def also($m): fail("it also runs more than the push (" + $m + "), which may change what the push sends after the gate checked it; run that in its own command first");
+def okkeys($ks): (keys - $ks) | length == 0;
+def okredir:
+	okkeys(["End", "N", "Op", "OpPos", "Pos", "Word"])
+	and ((.N // null) | if . == null then true else ((.Value // "") | test("^[0-9]+$")) end)
+	and ((.Word | wv) as $t | if $t == null then false
+		elif (.Op == ">" or .Op == ">>" or .Op == "&>" or .Op == "&>>") then ($t | test("^/dev/(null|stdout|stderr)$"))
+		elif .Op == ">&" then ($t | test("^([0-9]+|-)$"))
+		else false end);
+# A simple command with only literal words: its words.
+def leaf:
+	if (okkeys(["Cmd", "End", "Pos", "Position", "Redirs"]) | not) then also("a comment, a negation, a background `&` or a coprocess")
+	elif (((.Redirs // []) | all(okredir)) | not) then also("a redirect to anything but /dev/null, /dev/stdout, /dev/stderr or a descriptor")
+	elif .Cmd.Type != "CallExpr" then also("a subshell, a block, or another compound command")
+	elif (.Cmd | okkeys(["Type", "Args", "Pos", "End"]) | not) then also("an assignment before the command")
+	else [(.Cmd.Args // [])[] | wv] | if any(. == null) then also("a word that is not literal text: a variable, a substitution, a glob") else . end end;
+def binary:
+	if (okkeys(["Cmd", "End", "Pos", "Position"]) and (.Cmd | okkeys(["Type", "Op", "OpPos", "Pos", "End", "X", "Y"]))) then .
+	else also("a redirect or a negation on a pipeline") end;
+# A pipeline: the words of each command in it.
+def pipeline:
+	if .Cmd.Type == "BinaryCmd" then
+		binary | if .Cmd.Op == "|" then ((.Cmd.X | pipeline) + (.Cmd.Y | pipeline)) else also("an operator other than a pipe: `;`, `&&`, `||`, `|&`, `&`") end
+	else [leaf] end;
+def clean($what): if (. == "") then also("an empty " + $what) elif contains("\n") then also("a " + $what + " with a newline in it") else . end;
+def shape:
+	if (okkeys(["Type", "Stmts", "Pos", "End"]) | not) then also("a comment")
+	elif (.Stmts | length) != 1 then also("a second command, after `;` or on a new line")
+	else .Stmts[0] as $s
+	| (if $s.Cmd.Type == "BinaryCmd" and $s.Cmd.Op == "&&" then
+		($s | binary | .Cmd.X | leaf) as $cw
+		| (if ($cw | length) == 2 and $cw[0] == "cd" then {dir: $cw[1], pl: ($s.Cmd.Y | pipeline)}
+			else also("a command before the push other than a single `cd DIR`") end)
+	else {dir: null, pl: ($s | pipeline)} end) as $p
+	| $p.pl as $pl
+	| ($pl[0]) as $g
+	| (if ($g[0] // "" | bn) != "git" then also("a first command that is not git push") else $g[1:] end) as $r
+	| (if ($pl[1:] | any(. as $w | ["tail", "head", "cat", "grep"] | index($w[0] // "") == null)) then also("a pipe into anything but tail, head, cat or grep") else null end) as $f
+	| (if $r[0] == "push" then {c: null, a: $r[1:]}
+		elif $r[0] == "-C" and $r[2] == "push" then {c: ($r[1] | clean("-C directory")), a: $r[3:]}
+		elif ($r | index("push")) == null then also("a git command that is not a push")
+		else fail("it passes git global options (`" + ($r[:($r | index("push"))] | join(" ")) + "`); only `-C <dir>` is allowed") end) as $gp
+	| {dir: ($p.dir | if . == null then null else clean("directory") end), c: $gp.c, a: ($gp.a | map(clean("argument")))}
+	end;
+if .Type != "File" then "shape bad it is no syntax tree"
+else
+	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
+	| "cds \($cds | length)",
+	(if ($cds | length) == 1 then ($cds[0].Args[1:] | map(wv)) as $cw
+		| (if ($cw | length) == 1 and $cw[0] != null and ($cw[0] | contains("\n") | not) then "cdt \($cw[0])" else empty end)
+		else empty end),
+	(try (shape | "shape ok", (if .c != null then "C \(.c)" else empty end), (.a[] | "a \(.)")) catch "shape bad \(.)")
+end'
+ptree=$(printf '%s' "$tree" | jq -r "$push_jq") || unreadable "command syntax tree"
+tree_cds=$(printf '%s\n' "$ptree" | sed -n 's/^cds //p')
+case $tree_cds in '' | *[!0-9]*) unreadable "command syntax tree" ;; esac
 push_cmd=$cmd
 if printf '%s' "$words" | grep -Eq "$git_push"; then
 	push_cmd=$words
@@ -687,22 +763,25 @@ fi
 where=$(printf '%s' "$input" | jq -r '.cwd // ""') || unreadable "working directory"
 [ -n "$where" ] || where=$PWD
 start=$where
-# `cd`s are counted in both forms (`c''d`); the target is read from the raw command, so one only the words show
-# blocks below.
+# `cd`s are counted in the tree and, as text, in the raw command and its words (`c''d`, a `cd` inside `sh -c`); the target
+# is the tree's: the one literal argument of the one `cd`, quotes and spaces resolved (`cd "a b"`). A `cd` the tree doesn't
+# show, or one without exactly one literal argument, can't be followed and blocks.
 cds_of() {
 	printf '%s' "$1" | grep -Eo '(^|[;&|(])[[:space:]]*cd([[:space:]]|$)' | wc -l
 }
 cds=$(cds_of "$cmd")
 [ "$(cds_of "$words")" -le "$cds" ] || cds=$(cds_of "$words")
+[ "$tree_cds" -le "$cds" ] || cds=$tree_cds
 if [ "$cds" -gt 1 ]; then
 	echo "Blocked: the review gate can't tell which directory pushes after several \`cd\`s. Push from the worktree with a single \`cd <dir> &&\`, or with \`git -C <dir> push\`." >&2
 	exit 2
 fi
 if [ "$cds" -eq 1 ]; then
-	to=$(printf '%s' "$cmd" | sed -nE 's/^(.*[;&|(])?[[:space:]]*cd[[:space:]]+([^[:space:];&|)]+).*/\2/p' | tr -d "\"'")
+	to=
+	[ "$tree_cds" != 1 ] || to=$(printf '%s\n' "$ptree" | sed -n 's/^cdt //p')
 	case $to in
-	'' | '~'* | '-' | *'$'* | *'`'*)
-		echo "Blocked: the review gate can't follow \`cd ${to}\`. Use an absolute path, or push from the worktree." >&2
+	'' | '~'* | '-'* | *'$'* | *'`'*)
+		echo "Blocked: the review gate can't follow this \`cd\` (it needs one literal directory, not starting with \`~\` or \`-\`, without \`\$\` or a backtick). Use an absolute path, or push from the worktree." >&2
 		exit 2
 		;;
 	/*) where=$to ;;
@@ -716,16 +795,23 @@ c_dir_of() {
 	printf '%s' "$1" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:]]+).*/\1/p' | tr -d "\"'" |
 		sed 's/@SP@/ /g'
 }
-c_dir=$(c_dir_of "$push_cmd")
-case $c_dir in
-*[\;\&\|\)]*)
-	echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use a directory without \`;&|)\`." >&2
-	exit 2
-	;;
-esac
-if [ "$push_cmd" != "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$git_push" && [ "$(c_dir_of "$cmd")" != "$c_dir" ]; then
-	echo "Blocked: the review gate reads two different \`git -C\` directories in this command. Quote it plainly." >&2
-	exit 2
+# The push shape (push_jq) names the `-C` directory as a word, quotes and spaces resolved. A command that is not that
+# shape is blocked below if it pushes, and otherwise is read as text, as before.
+push_shape=$(printf '%s\n' "$ptree" | sed -n 's/^shape //p')
+if [ "$push_shape" = ok ]; then
+	c_dir=$(printf '%s\n' "$ptree" | sed -n 's/^C //p')
+else
+	c_dir=$(c_dir_of "$push_cmd")
+	case $c_dir in
+	*[\;\&\|\)]*)
+		echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use a directory without \`;&|)\`." >&2
+		exit 2
+		;;
+	esac
+	if [ "$push_cmd" != "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$git_push" && [ "$(c_dir_of "$cmd")" != "$c_dir" ]; then
+		echo "Blocked: the review gate reads two different \`git -C\` directories in this command. Quote it plainly." >&2
+		exit 2
+	fi
 fi
 case $c_dir in
 '') ;;
@@ -869,8 +955,9 @@ if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:spac
 	data_only=1
 fi
 
-# A push may send only HEAD, to origin; prints why not and fails otherwise. Options outside the list block
-# (--all, --mirror, --tags and --delete send other refs).
+# A push may send only HEAD, to origin; prints why not and fails otherwise. The command must have the shape push_jq reads
+# from the tree (docs/gate.md › Push shape), and options outside the list block (--all, --mirror, --tags and --delete
+# send other refs).
 push_scope() (
 	[ -z "$data_only" ] || return 0
 	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ] ||
@@ -880,45 +967,17 @@ push_scope() (
 	fi
 	# A pushing command holds only the push, an optional leading `cd <dir> &&`, harmless redirects and trailing pipes
 	# into read-only filters: the checks below read git config and refs first, so anything else could change what the
-	# push sends after they passed (docs/gate.md › Push shape). Redirects are taken out first, then every simple
-	# command (split at `;&|()` and newlines) must be one of those.
-	bare=$(printf '%s' "$push_cmd" | sed -E 's/&>>?[[:space:]]*\/dev\/(null|stdout|stderr)['\''"]?([[:space:];&|)]|$)/ \2/g;
-		s/[0-9]*>>?[[:space:]]*\/dev\/(null|stdout|stderr)['\''"]?([[:space:];&|)]|$)/ \2/g; s/[0-9]*>&([0-9]+|-)['\''"]?([[:space:];&|)]|$)/ \2/g')
-	extra=$(
-		seen=
-		first=1
-		printf '%s\n' "$bare" | sed -E 's/&&|\|\||[;&|()`]/\
-/g' | while IFS= read -r part; do
-			part=$(printf '%s' "$part" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
-			[ -n "$part" ] || continue
-			if printf '%s' "$part" | grep -Eq "$git_push"; then
-				seen=1
-			elif [ -z "$seen" ] && [ "$first" = 1 ] && printf '%s' "$part" | grep -Eq '^cd[[:space:]]+[^[:space:]]+$'; then
-				:
-			elif [ -n "$seen" ] && printf '%s' "$part" | grep -Eq '^(tail|head|cat|grep)([[:space:]]|$)'; then
-				:
-			else
-				printf '%s\n' "$part"
-				break
-			fi
-			first=
-		done
-	)
-	# Shell syntax the split can't place (substitutions, a trailing `&`, a redirect, a second line, a `;` before the
-	# push) fails the whole-command shape check.
-	shape="^[[:space:]]*(cd[[:space:]]+[^[:space:];&|<>()\$\`]+[[:space:]]*&&[[:space:]]*)?([^[:space:];&|<>()\$\`]*/)?git([[:space:]][^;&|<>()\$\`]*)?([[:space:]]*\\|[[:space:]]*(tail|head|cat|grep)([[:space:]][^;&|<>()\$\`]*)?)*[[:space:]]*\$"
-	if { [ -n "$extra" ] || ! printf '%s' "$bare" | grep -Eq "$shape"; }; then
-		[ -n "$extra" ] || extra=$(printf '%s' "$bare" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
-		echo "it also runs \`$extra\`, which may change what the push sends after the gate checked it; run that in its own command first"
+	# push sends after they passed. push_jq decides that on the tree and says why not.
+	if [ "$push_shape" != ok ]; then
+		echo "${push_shape#bad }"
 		return 1
 	fi
-	args=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([[:space:]]+([^;&|)]*))?.*#\\6#p" | head -1 |
-		sed -E 's/(^|[[:space:]]+)[0-9]*[<>].*//' | tr -d "\"'")
+	push_args=$(printf '%s\n' "$ptree" | sed -n 's/^a //p')
 	branch=$(git symbolic-ref -q --short HEAD) || branch=HEAD
 	remote=
 	refspecs=
-	set -f
-	for a in $args; do
+	while IFS= read -r a; do
+		[ -n "$a" ] || continue
 		case $a in
 		-u | --set-upstream | -f | --force | --force-with-lease | --force-with-lease=* | --force-if-includes | \
 			-q | --quiet | -v | --verbose | -n | --dry-run | --no-verify | --progress | --atomic) ;;
@@ -956,7 +1015,9 @@ push_scope() (
 			esac
 			;;
 		esac
-	done
+	done <<EOF
+$push_args
+EOF
 	[ -n "$remote" ] || remote=$(git config "branch.$branch.pushRemote" || git config remote.pushDefault ||
 		git config "branch.$branch.remote" || echo origin)
 	if [ "$remote" != origin ]; then
@@ -994,29 +1055,20 @@ push_scope() (
 		echo "remote.origin.mirror makes every push a mirror push"
 		return 1
 	fi
-	# Global options other than `-C` (`-c push.default=matching`, `--git-dir`, ...) can change what's pushed or from
-	# which repo, and block.
-	globals=$(printf '%s\n' "$push_cmd" | sed -nE "s#.*${git_global}push([^[:alnum:]_-].*|$)#\\2#p" | head -1 |
-		sed -E 's/(^|[[:space:]]+)-C[[:space:]]+[^[:space:]]+//g')
-	case $globals in
-	*-*)
-		echo "it passes git global options (\`$globals\`); only \`-C <dir>\` is allowed"
-		return 1
-		;;
-	esac
-	# The sed above reads one `git … push`; these hold for the whole command, and so does a single `-C`.
-	if printf '%s' "$push_cmd" | grep -Eq '(^|[[:space:]])(-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--bare|--super-prefix)([[:space:]=]|$)' ||
-		[ "$(printf '%s' "$push_cmd" | grep -Eo '(^|[[:space:]])-C([[:space:]]|$)' | wc -l)" -gt 1 ]; then
-		echo "it passes git global options; only one \`-C <dir>\` is allowed"
-		return 1
-	fi
+	# Global options other than one `-C <dir>` (`-c push.default=matching`, `--git-dir`, ...) can change what's pushed or
+	# from which repo; the tree allows only that one. The text of the command, in both forms, is checked as well.
+	for text in "$cmd" "$words"; do
+		if printf '%s' "$text" | grep -Eq '(^|[[:space:]])(-c|--config-env|--git-dir|--work-tree|--namespace|--exec-path|--attr-source|--bare|--super-prefix)([[:space:]=]|$)' ||
+			[ "$(printf '%s' "$text" | grep -Eo '(^|[[:space:]])-C([[:space:]]|$)' | wc -l)" -gt 1 ]; then
+			echo "it passes git global options; only one \`-C <dir>\` is allowed"
+			return 1
+		fi
+	done
 )
-for push_cmd in "$cmd" "$words"; do
-	if printf '%s' "$push_cmd" | grep -Eq "$git_push" && ! why=$(push_scope); then
-		echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
-		exit 2
-	fi
-done
+if { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; } && ! why=$(push_scope); then
+	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
+	exit 2
+fi
 
 # A data-only command pushes nothing (its quoted words are data), so there is nothing to review or to block on (#91).
 # `gh pr create` is the exception: it is gated like a push, since the PR would cover an unreviewed HEAD.
