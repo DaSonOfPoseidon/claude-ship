@@ -314,6 +314,10 @@ passes):
 - The old text comparison still counts as well, on the word as written, so nothing the text check blocked passes now
   (`/dev/null,~/.claude/hooks/x`): a word's `NAME=VALUE` value is resolved too (`of=hooks/x`,
   `--target-directory=~/.claude/hooks`).
+- A relative word is resolved from the working directory only if it can be a file name. The command's own name, the first
+  word, options, a number (`644`, `4M`), a symbolic mode (`u+x`) and a sed script (`s/a/b/`) are not, and for `NAME=VALUE`
+  only the value is a path (`dd if=/tmp/a of=/tmp/b` in `~/.claude/hooks` passes). They still count as written or when
+  absolute.
 - The `Write`, `Edit`, `MultiEdit` and `NotebookEdit` path is folded the same way (relative to the same `cwd`) before the
   protected-path check, and also checked as written.
 

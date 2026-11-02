@@ -283,11 +283,14 @@ def dynmark($cs): wacc as $a | $a.s as $s
 	else any($s | abs($cs; true)[]; reaches) end) as $hit
 	| if $hit then "\u0002" + $s else null end;
 def wv2($cs): wl // dynmark($cs);
-# A word and the value of an option written with it (`of=PATH`, `--target-directory=PATH`).
-def rvals: ., (if test("^[^/=]+=.") then sub("^[^=]*="; "") else empty end);
+# The path in a word: the word, or for `of=PATH` and `--target-directory=PATH` the value after the `=`.
+def rvals: if test("^[^/=]+=.") then sub("^[^=]*="; "") else . end;
+# Words that are no file names though they stand among the operands of a writer: a number (a size, a mode such as 644), a
+# symbolic mode (u+x,go-w) and a sed script (s/a/b/). They are not resolved from the working directory.
+def nonpath: test("^[0-9]+[A-Za-z]{0,2}$") or test("^[ugoa]*[-+=][rwxXstugo]+(,[ugoa]*[-+=][rwxXstugo]*)*$") or test("^[sy]/");
 # Is the word a protected path, once it is resolved? The text check stays too (a name that is no path, such as
 # `/dev/null,~/.claude/hooks/x`, still counts).
-def rprot($cs): startswith("\u0002") or isprot or any(rvals; any(abs($cs; false)[]; pprot));
+def rprot($cs): startswith("\u0002") or isprot or any(rvals; any(abs(if nonpath then [] else $cs end; false)[]; pprot));
 # A directory is protected when a file in it would be.
 def dprot($cs): rprot($cs) or ((. + "/x") | rprot($cs));
 def cwdprot($cs): [$cs[] | select(. != null and ((. + "/x") | pprot))];
@@ -384,6 +387,7 @@ def protwords($all; $c0; $cs):
 	| [range(0; $all | length) as $i | $all[$i] as $x
 		| select(if $i == 0 or $i == $f then ($x | rprot([]))
 			elif ($x | startswith("-")) then (($x | rprot([])) or ($x | test("^-[^=]*=.")) and ($x | sub("^[^=]*="; "") | rprot($cs)))
+			elif ($x | nonpath) then ($x | rprot([]))
 			else ($x | rprot($cs)) end)
 		| $x];
 # What a command writes, by its name and arguments, for the paths of the effective command $e (after wrappers); $all are the
