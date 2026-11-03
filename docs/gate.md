@@ -130,9 +130,10 @@ the trigger above.
 marker, or the push's own words have literal separators, quotes, `$` or newlines) can't be checked word by word, so it blocks.
 
 **`gh api`.** The hook never sees an API write, so the gate still scans `gh api` calls. A command is scanned when its text
-shows `gh api` and its tree names a literal `gh` anywhere (`gh`, `/usr/bin/gh`, behind `sudo`, `xargs`, `flock`, or in a string
-run by `sh -c` or `eval`; a string the gate can't parse counts as naming one). A heredoc body, an `echo` or a `grep` that only
-mentions `gh api -X DELETE …` names no `gh`, so it is data and passes. A scanned call writes when its method isn't GET (gh's
+shows `gh api` and its tree names a literal `gh` as a word of a command that may run it (`gh`, `/usr/bin/gh`, behind `sudo`,
+`xargs`, `flock`, or in a string run by `sh -c` or `eval`; a string the gate can't parse counts as naming one). A heredoc body,
+the words after an `echo` or `printf`, or a quoted `grep` pattern that only mention `gh api -X DELETE …` name no `gh`, so they are
+data and pass. A scanned call writes when its method isn't GET (gh's
 default once it has fields or an `--input`), and passes only if it is one of the writes the ship skill makes (REST allowlist
 below). A write that names `{owner}/{repo}` goes to whichever repo gh finds where it runs, so the opt-in lookup also asks the
 directory of every `cd` the tree shows, whether or not the command is a push (a `cd` that is not one literal path blocks).
@@ -258,8 +259,11 @@ The stubs in `~/.claude/git-hooks` are protected like the installed hooks (Tampe
 that writes there, blocks. The lines git sends are saved to a temp file first; if that save fails (full disk, file size
 limit) the push is refused, not read as an empty list.
 
-Not covered: a Claude push that never reaches a git hook (the GitHub API, MCP writes: those are the gate's), and a
-setting changed with a command the gate can't read (Threat model).
+Not covered: a Claude push that never reaches a git hook (the GitHub API, MCP writes: those are the gate's), a
+setting changed with a command the gate can't read (Threat model), and where a push in a non-canonical command goes: the hook
+checks that the pushed commit was reviewed, not the destination (`git push origin HEAD:main && …` sends a reviewed feature commit
+to `main`). The gate's destination checks (Push shape) hold for a canonical push only; branch protection requiring `codex-review`
+is the backstop for the rest.
 
 ## MCP writes
 
