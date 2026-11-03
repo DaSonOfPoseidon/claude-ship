@@ -143,6 +143,8 @@ right-hand column.
   entry to `docs/false-positives.md` in the same push (with no push left, in the next PR's first commit), unless
   the finding was wrong only about this one diff. The entry is one narrow pattern, why it's fine and where it
   came up; never a whole class of bug.
+  When the repo's rules already put the finding out of scope (AGENTS.md › Gate scope), reply citing the rule
+  and add no entry: that would be a whole class.
 - **Fix:** test-first, with a sweep for the same class. Reply on the thread with the fixing commit, then
   resolve the thread.
 - **File an issue:** reply on the thread with the issue's link, then resolve it. The issue is filed with

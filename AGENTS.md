@@ -7,13 +7,26 @@ the `ship` skill that Claude Code uses in every opted-in repo. See `README.md`.
 
 Codex's PR review and the pre-push review gate both follow this section. Rate every finding on this scale:
 
-- **P0**: a way to push to an opted-in repo without a passing review, or a change that breaks every push.
-  Never merge.
-- **P1**: wrong behaviour on a real path (a finding lost, misread or wrongly blocking), a protection hole, or
-  a skill step that would lead Claude to do something the user's rules forbid.
+- **P0**: a push Claude could make in ordinary work that reaches an opted-in repo without a passing review, or
+  a change that breaks every push. Never merge.
+- **P1**: wrong behaviour on a real path (a finding lost, misread or wrongly blocking), a protection hole a
+  plausible command falls through, or a skill step that would lead Claude to do something the user's rules
+  forbid.
 - **P2**: an edge case that breaks (no PR yet, empty diff, rebases, worktrees, `gh` failures), a doc or
   comment promise the code doesn't keep, or a script whose behaviour differs from its description.
 - **P3**: a minor issue a strict reviewer might still flag.
+- **Gate scope**: the gate stops Claude's slips, not a command written to get past it. A finding about its
+  command checks needs a command Claude could plausibly run unprompted: literal words, in a form the repo's
+  docs, skills or scripts use, or common git/gh/shell practice (`--no-verify`, `git -C`, `cd dir && git push`,
+  `| tail`). Out of scope at every priority, and not reported:
+  - a command, path or setting built at run time (variables, `$(…)`, `eval`, aliases, functions);
+  - code an interpreter reads from a string, a file or an environment variable;
+  - another tool's option that runs a command;
+  - a link, copy or rename onto a protected file;
+  - a setting changed only to skip a check (`HOME`, `GIT_CONFIG_*`, `-c` keys that turn hooks off).
+
+  Branch protection doesn't read command text: a way past it that a plausible command takes is in scope.
+  `docs/gate.md` › Threat model has the examples.
 
 How each finding is handled depends on its priority and on which review found it: the outcome table in
 `skills/ship/SKILL.md` › Triage.
@@ -39,8 +52,10 @@ or anything CI already checks (shellcheck, actionlint).
   only the writes the ship skill uses, plus issue metadata such as dependency links (an allowlist, REST and
   GraphQL); any other write, including statuses,
   checks and settings, blocks. A GitHub URL the gate can't read blocks too.
-- The gate catches Claude's own slips; it isn't a security boundary. It matches command text, and its state is
-  writable by any shell. Branch protection requiring `codex-review` is the server-side backstop.
+- The gate catches Claude's own slips; it isn't a security boundary (see Gate scope). Its command checks read
+  text, and its state is writable by any shell. Branch protection requiring `codex-review` is the server-side
+  backstop for merges. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch
+  skips it.
 - Only the user changes the opt-in variables, waives a review, or edits the installed gate, its state or
   the settings that register it. `install.sh` deploys only `origin/main`.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,
