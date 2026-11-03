@@ -1,7 +1,9 @@
 #!/bin/sh
 # Prints where a planned unit's branch stands, so the orchestrator can resume a unit whose implementer ended
 # without a report (an error, a usage-limit stop, a killed session, or a /clear). Read-only: it fetches the
-# default branch and the unit's branch from origin and never switches, resets, deletes or pushes.
+# default branch and the unit's branch from origin (and, for a merged PR, refs/pull/<n>/head, which writes
+# FETCH_HEAD) and never switches, resets, deletes or pushes; the fetches update only remote-tracking refs and
+# FETCH_HEAD.
 # The first line is the state; detail lines follow, in this order, when they apply:
 #   state: merged <pr> | pr-open <pr> | pr-closed <pr>   a PR on the branch (an open one wins over newer ones)
 #   state: pushed       on origin, no PR

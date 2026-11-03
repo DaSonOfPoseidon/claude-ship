@@ -90,7 +90,7 @@ if [ -z "$row" ]; then
 	completed=$(echo "$row" | grep -o 'datetime="[^"]*"' | head -1 | cut -d'"' -f2 | cut -c1-19)
 	row_ok=
 	if [ -n "$completed" ]; then
-# Only the owner and collaborators can request a review.
+# Only requests from the owner and collaborators count (anyone can comment `@codex review`).
 		requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
 			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
 # Earlier completions leave a receipt comment (clean) or a pull request review (findings).

@@ -277,7 +277,7 @@ are counted.
 to `~/.claude/state/review-costs.jsonl` (`$CLAUDE_REVIEW_COSTS` overrides the path, for tests). Each PR gets `gate
 <stage>` rows (grouped by stage and model; the token columns show `-`, the cost is the sum of `cost_usd`), counted
 in the total's requests and cost. A run with `cost_usd: null` makes its row and the total `?`, and a run that
-failed (`rc` not 0) still counts. A row is the PR's when its repo is this one (compared without case: the gate logs the slug as spelled in the push
+failed (`rc` not 0) still counts when its output is JSON; a run with no JSON output (e.g. killed by `timeout`) logs no row, so its cost is missing from the report. A row is the PR's when its repo is this one (compared without case: the gate logs the slug as spelled in the push
 URL, `gh` gives GitHub's) and either its `head` is one of the
 PR's commits (from the `gh pr view` call that reads the window, no extra call) or its head is no commit of any PR
 read (the asked ones and the others read) and its `date` is in the PR's own window (the widening doesn't

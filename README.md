@@ -14,9 +14,10 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   `hooks/codex-bash.sh`: the optional orchestrated mode (below).
 - `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. It sets the `codex-review` commit
   status that branch protection requires (success once Codex reviewed the PR's head and every Codex thread is
-  resolved). Every opted-in repo, this one included, calls it through the reusable workflow
-  `.github/workflows/codex-status.yml` from a short caller, `.github/workflows/codex-review.yml` (a copy of
-  `skills/ship/templates/codex-review.yml`).
+  resolved). Opted-in repos call it through the reusable workflow `.github/workflows/codex-status.yml` from a
+  short caller, a copy of `skills/ship/templates/codex-review.yml`. This repo's caller,
+  `.github/workflows/codex-review.yml`, is the same except that it calls the local workflow, so a PR here tests
+  its own copy.
 
 ## Orchestrated mode
 
