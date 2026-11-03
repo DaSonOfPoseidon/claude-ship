@@ -1,6 +1,6 @@
 # The pre-push review gate: design notes
 
-`hooks/review-gate.sh` is a PreToolUse hook. It blocks `git push` and `gh pr create` until an independent
+`hooks/review-gate.sh` is a PreToolUse hook. It blocks a canonical `git push` until an independent
 reviewer (a fresh headless Claude session with no context from the current one) has reviewed the branch diff
 against the repo's default branch. The script keeps only short comments on its checks and regexes; the reasons
 behind them are here. Classes of bug past reviews caught are in [`pitfalls.md`](pitfalls.md).
@@ -76,9 +76,11 @@ can point at its own branch, which would leave nothing to review. When GitHub ca
 
 ## Command reading
 
-The gate reads the command two ways: the raw text, and a list of words as the shell would split them
-(`shell_words`, run by jq). Quotes and backslashes go, and every character they made literal becomes a marker,
-so `git -c "a=b c" push` and `git "push"` read as the push they are and a quoted `;` can't pass for a separator.
+The gate reads a Bash command three ways: the raw text, a list of words as the shell would split them (`shell_words`, run by
+jq) and the syntax tree shfmt makes of it. The command must parse, or the call blocks.
+
+In the word list, quotes and backslashes go and every character they made literal becomes a marker, so `git -c "a=b c" push`
+and `git "push"` read as the push they are and a quoted `;` can't pass for a separator.
 
 | Marker | Stands for |
 |---|---|
@@ -91,68 +93,50 @@ so `git -c "a=b c" push` and `git "push"` read as the push they are and a quoted
 | `@DQ@`, `@SQ@` | `"`, `'` |
 | `@UQ@` | quoting the scanner can't read (unterminated, or bash's `$'...'`) |
 
-Inside double quotes `$` and backticks still expand, so they stay as they are. Pushes are looked for in both
-forms, and every form that shows one must pass the checks. Checks that read text rather than structure see both
-the raw command and its unmarked words (`cmd_all`), so quoting (`CLAUDE_AUTONO''MOUS`, `c''d`) can't split a
-name apart.
+Inside double quotes `$` and backticks still expand, so they stay as they are. Checks that read text rather than structure
+see both the raw command and its unmarked words (`cmd_all`), so quoting (`CLAUDE_AUTONO''MOUS`, `c''d`) can't split a name
+apart. The tree is what the tamper check reads (Tamper protection below), and what decides whether a command is a push.
 
-The tamper check, and the filter below, read a third form: the syntax tree shfmt makes of the command, where a quoted
-string, a file name and a heredoc body are what they are instead of text that looks like a command (Tamper
-protection below). The command must parse, or the call blocks.
+**What starts a review.** The gate starts a review for a *canonical push* and for nothing else (the `gh api` calls below
+aside). Every other command passes once the tamper, waiver, opt-in-variable and pre-push-check denials above have looked at
+it. It used to hunt for pushes it could not read: a filter (`runs_gitgh`) for commands that run no git, text checks for a
+push hidden in a heredoc, a `gh pr create` trigger, and a soft path that followed `cd`s that might not run. Those caused
+false blocks (claude-ship #192, #193) and bypasses (#191) for every shape the text could not settle. Since the
+[pre-push check](#pre-push-check) refuses an unreviewed push however it started, the gate no longer has to find them all.
 
-**The filter (`runs_gitgh`).** The checks that read text (the quoting check, the `gh api` scan, the push and
-`gh pr create` checks) only matter for a command that runs git or gh, so the tree decides first. The tamper walk
-(same jq run, `sh -c` and `eval` strings parsed again to depth 3) raises `ggdyn` for every command that is not on a
-short list of plain read-only tools with literal words, which includes `git` and `gh` themselves. When no command in
-the tree raises it, the command is not a push, a PR create or a `gh api` call, so after the tamper, waiver and opt-in
-checks the gate exits 0 without the rest: a heredoc body, a quoted argument or an `echo` that merely mentions
-`git push`, `gh pr create` or `gh api -X DELETE …` no longer blocks or starts a review (#135). Otherwise everything runs
-exactly as before, text checks included, so a real `gh issue comment … <<EOF` keeps its quoting check.
+A canonical push is one statement, and in it the git command is first in its pipeline and its subcommand is `push`
+(after any global options): `git push ARGS` or `PATH/git push ARGS`, alone or after leading `cd ARGS &&` commands, and
+optionally piped on (`git push 2>&1 | tail -5`). The subcommand is found on the tree's literal words, skipping the global options
+and their values.
 
-What is `ggdyn`: the filter trusts a short list and treats everything else as unknown (`ggsafe`), because every list of
-what is dangerous kept missing something (claude-ship #191: wrappers, `PERL5OPT`, `printf %n`, `declare -a`, `exec -l`).
-A command is trusted only when it is the bare name of a plain external read-only tool (`cat`, `echo`, `grep`, `wc`,
-`head`, `tail`, `cut`, `tr`, `ls`, `stat`, `diff`, `jq`, `date`, `basename`, `sha256sum`, … and `pwd`,
-`true`, `false`), **every** word of it is literal (a dynamic word could be an option that runs a program: `cat "$f"` and
-`echo $x` are unknown), and no listed tool can run a program or write a file named by an argument or option, in GNU or BSD form, so `sort`
-(`-o`, `--compress-program`), `uniq` (its second operand is an output file), `base64` (`-o`, BSD) and `tee` are not
-listed. Unknown, so the old text checks run:
+| Command, in an opted-in repo | Result |
+|---|---|
+| `git push`, `git push -u origin HEAD`, `cd /abs/repo && git push`, `git -C ~/repo push`, `git push 2>&1 \| tail -5` | reviewed |
+| `git push origin "$b"`, `cd "$d" && git push`, `cd a && cd b && git push`, `git -C a -C b push` | blocked: the gate can't tell which repo, or what, it pushes |
+| `--all`, `--tags`, `--mirror`, another remote, `--no-verify`, `GIT_DIR=x git push`, a redirect to a file | blocked (Push shape) |
+| `git add -A && git commit -m x && git push`, `git push; echo`, `(cd x; git push)`, `bash -c 'git push'`, `xargs git push`, `timeout 60 git push`, `./scripts/release.sh`, an alias, `gh pr create --fill` | passes; the pre-push check judges the push, if one happens |
+| a heredoc or an argument that only mentions `git push` or `gh api` (#193, #192) | passes |
 
-- `git` and `gh` themselves, and anything that starts another program or shell: `env`, `sudo`, `nice`, `nohup`,
-  `timeout`, `stdbuf`, `setsid`, `xargs`, `find`, `command`, `builtin`, `exec`, `sh`/`bash`/`zsh -c` (the string is still
-  parsed for the tamper check), `eval`, `source`, `.`, an unlisted wrapper (`flock`, `watch`, `ssh`, `busybox`), an
-  interpreter (`python3 -c`, `node`, `sed`, `awk`, `rg`), a script (`./run.sh`, `make`) or a path (`/bin/cat`, `./cat`);
-- every builtin that assigns, runs code or replaces the shell: `declare`, `typeset`, `local`, `export`, `readonly`
-  (a quoted array initializer is parsed again, a nameref runs a subscript), `read`, `mapfile`, `printf` in any form
-  (`-v`, `%n`), `let`, `alias`, `enable`, `hash`, `trap`, `set`, `shopt`, `unset`, `cd`, `pushd`, `popd`, `[`, `test`;
-- a tool that changes files (`tee`, `cp`, `mv`, `rm`, `ln`, `chmod`, `touch`, `mkdir`, `mktemp`): only read-only tools
-  stay. A redirect (`> file`) is not a command and does not count;
-- an assignment to a variable not known to be harmless (in the command, by `for`, `select`, `coproc`, `${x:=…}` or a
-  `{name}` redirect): `PATH`, `IFS`, `BASH_ENV`, `PS4`, `LD_*`, `PERL5OPT`, `PYTHON*`, `NODE_OPTIONS`, `GIT_*` and the
-  rest never end, so it is an allowlist: a lower-case name (not zsh's `path`, `fpath`, `cdpath`, …) and `LC_*`, `LANG`,
-  `LANGUAGE`, `TZ`, `TERM`, `COLUMNS`, `LINES`, `NO_COLOR` pass; any other (`FOO=1 cat x` too) makes the command unknown;
-- a write: any redirect that writes a file (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, `2>`, `>&file`) except to a literal
-  `/dev/null` or to a descriptor (`2>&1`, `>&2`), since a file written by the command can replace a program on `PATH`
-  that a listed name then runs (`echo '…' > /abs/path/hostname; hostname`); and a tool that can write a file named by
-  an argument is not listed (`sort -o`, `uniq in out`, `base64 -o`, `xxd -r in out`).
-  Heredocs, here-strings and `<` only read. So `cat > file <<'EOF' … EOF` is unknown and keeps the old checks;
-- text that bash itself runs: `${!x}` and `${x@P}`, arithmetic over a variable (`$((x))`, `(( ))`, `[[ a -eq b ]]`,
-  `[[ -v x ]]`, `${x:n}`), and an array subscript. Plain numbers are fine. `time` is a keyword: the command behind it is
-  what is judged.
+`git commit && git push` is the case that matters most: the gate would review the HEAD from before the commit, so it does
+not look at the chain, and the hook refuses the push if the new commit has no review (`tests/git-hook.sh` runs that chain
+for real). `gh pr create` starts no review either: the PR covers a HEAD the hook already stopped from being pushed unreviewed.
 
-Function bodies, `$(…)` and backticks, process substitutions and the `$(…)` in an unquoted heredoc are all in the tree,
-so `f(){ git push; }; f` and `cat <<EOF` with `$(git push)` are `gg`; a quoted heredoc body is data. A pipe or a
-heredoc feeding an unlisted command is no exception: that command is unknown on its own.
-A script written in one command and run by the same command (`./x`, `sh x`) is unknown too, since what runs isn't
-listed; one call that writes it and a later call that runs it are two calls, each judged on its own.
+The pre-push check is the layer that binds the cases the gate lets by. What the gate still reads in *every* command is the
+tamper check, the waiver and variable checks, and the denials that keep the hook on (`push --no-verify`, a write of
+`core.hooksPath`: Pre-push check › The gate keeps it on), all before the trigger above.
 
-A command that already holds a marker, quoting the scanner can't read, or a push whose own words have literal
-separators, quotes, `$` or newlines can't be checked word by word, so it blocks.
+**Quoting.** A canonical push, or a command with a `gh api` call, whose quoting the scanner can't read (it already holds a
+marker, or the push's own words have literal separators, quotes, `$` or newlines) can't be checked word by word, so it blocks.
 
-`git` and `gh` may be named by a path (`/usr/bin/git`, `./gh`), so `/` counts as a word boundary before them;
-`.`, `_` and `-` don't (`.git/`, `my-gh`). Any global options, each with at most one value word, may come
-between `git` and the subcommand, so `git --git-dir x push` still counts as a push; `push_scope` then allows
-only `-C`.
+**`gh api`.** The hook never sees an API write, so the gate still scans `gh api` calls. A command is scanned when its text
+shows `gh api` and its tree names a literal `gh` anywhere (`gh`, `/usr/bin/gh`, behind `sudo`, `xargs`, `flock`, or in a string
+run by `sh -c` or `eval`; a string the gate can't parse counts as naming one). A heredoc body, an `echo` or a `grep` that only
+mentions `gh api -X DELETE …` names no `gh`, so it is data and passes. A scanned call writes when its method isn't GET (gh's
+default once it has fields or an `--input`), and passes only if it is one of the writes the ship skill makes (REST allowlist
+below). `tests/gate-api.sh` covers it.
+
+`git` and `gh` may be named by a path (`/usr/bin/git`, `./gh`), so `/` counts as a word boundary before them in the text
+checks; `.`, `_` and `-` don't (`.git/`, `my-gh`).
 
 ## Push shape
 
@@ -179,9 +163,9 @@ or from which repo, and block. Environment overrides never get that far: only th
 still runs over the whole command in both forms.
 
 **What may run next to the push.** The checks read git config, refs and files before the command runs, so
-anything earlier in the command (or a later step that reruns it) can change what the push sends after they
-passed: `git show --output=…`, or `printf … > /tmp/settings` behind an `include.path`. So a pushing command holds
-only:
+anything earlier in the command can change what the push sends after they passed: `git show --output=…`, or
+`printf … > /tmp/settings` behind an `include.path`. Such a chain is not a canonical push, so the gate leaves it to the
+pre-push check, which judges the commit that is really pushed. A canonical push holds only:
 
 - the push,
 - at most one leading `cd <dir> &&`,
@@ -189,56 +173,32 @@ only:
   duplications such as `2>&1`, `>&2` and `>&-`), and
 - trailing pipes into read-only filters (`tail`, `head`, `cat`, `grep`).
 
-`push_jq` decides that on the syntax tree (the one the tamper check reads), as an allowlist of tree shapes: anything
-it doesn't describe blocks, and nothing is a list of what is dangerous. The whole command must be one statement, one of
-`git push ARGS` (`git` or `PATH/git`, whose only global option is one `-C <dir>`), `cd DIR && git push ARGS`, or either
-piped into `tail`, `head`, `cat` or `grep`. Every word in every command must be literal (`wv`): a variable, a command
-substitution, a glob or a brace expansion blocks. A redirect passes only to a literal `/dev/null`, `/dev/stdout` or
-`/dev/stderr`, or between descriptors (`>&-` too); one to any other file, a here-document, a here-string, an input
-redirect and a `{fd}` redirect block. Also blocked: an assignment before the command (`GIT_DIR=x git push`), a negation, a
-background `&`, a subshell, a block or an `if`, `;` or a second line, `||`, `|&`, a second `cd`, an empty or
-newline-containing word, and any key of the tree that the program doesn't list, so a newer shfmt fails closed. Reading
+`push_jq` decides that on the syntax tree (the one the tamper check reads), as an allowlist of tree shapes: a canonical push
+that doesn't fit blocks, and nothing is a list of what is dangerous. The statement must be `git push ARGS` (`git` or `PATH/git`,
+whose only global option is one `-C <dir>`), `cd DIR && git push ARGS`, or either piped into `tail`, `head`, `cat` or `grep`.
+Every word in every command must be literal (`wv`): a variable, a command substitution, a glob or a brace expansion blocks.
+A redirect passes only to a literal `/dev/null`, `/dev/stdout` or `/dev/stderr`, or between descriptors (`>&-` too); one to any
+other file, a here-document, a here-string, an input redirect and a `{fd}` redirect block. Also blocked: an assignment before
+the command (`GIT_DIR=x git push`), a negation, a background `&`, a trailing `;`, a comment, a pipe into anything else, `|&`, an
+empty or newline-containing word, and any key of the tree that the program doesn't list, so a newer shfmt fails closed. Reading
 the tree instead of text is what lets `cd "dir with space" && git push` and a push continued with a backslash-newline
-pass (#39, #42), and a quoted redirect target (`>'/dev/null'`, #99), as the same command in another spelling; the old
-version split the text at `;&|()`, which could not tell a quoted space from a separator. `push_scope` takes the option
-and refspec checks' words from the tree too, so `'orig'in` and `"HEAD"` are read as the shell would (the one-push rule
+pass (#39, #42), and a quoted redirect target (`>'/dev/null'`, #99), as the same command in another spelling. `push_scope` takes
+the option and refspec checks' words from the tree too, so `'orig'in` and `"HEAD"` are read as the shell would (the one-push rule
 still counts `git push` in the text of both command forms).
 
-A push shown only by the raw command is usually quoted text, but `sh -c "…; git push"` and `eval` run it, so it
-is judged too. The one exception is the ship skill's own `gh pr/issue create/edit/comment/close`, whose quoted
-words are data: it has to be that single command, with no unquoted separator, redirect or expansion. Such a
-command (`data_only`) skips `push_scope` entirely, so a body that mentions `git push` any number of times, with
-any text after it (`` `git push origin HEAD` exits 2 ``), is not read as a push (#56). It also skips the HEAD
-review (the dirty-tree and `.pass` checks and the reviewers): nothing is pushed, so the gate exits 0 right after
-`push_scope`, whether or not HEAD has a pass (#91). `gh pr create` is the exception: it is gated like a push, so
-it still needs a passing review of HEAD. Anything outside that shape
-(`FOO=1 gh …`, `gh -R o/r issue …`, a second line, `&& git push`) isn't `data_only` and is judged as before.
-`gh pr merge` isn't in the list. A backtick inside single quotes is data (the word scanner marks it `@BQ@`);
-inside double quotes it is a command substitution, so that body isn't `data_only` and is judged as a push.
-
-> Known gap, reported with #29: the exception's code (`data_only`) rejects command substitution (`$(`, `$[` and
-> backticks) but not a bare unquoted `$VAR`. The variable is only data to `gh`, so nothing runs, but "expansion"
-> overstated what the check does.
-
-Where the command runs: the session's directory, then a `cd <dir>` in the command, then `git -C <dir>`. More
-than one `cd`, or one the gate can't follow (`~`, `-`, `$`, a backtick), blocks rather than guessing which
-branch is pushed. `cd`s are counted in the tree and as text in both command forms (so a quoted-apart `c''d`, or a
-`cd` inside `sh -c`, counts); the target is the tree's word for the one `cd`, with quotes and spaces resolved
-(`cd "a b"`), and a `cd` the tree doesn't show, one without exactly one literal argument, or one that may not run
-(after `||`, in an `if`, a block or a subshell: only a `cd` that comes first, alone or at the left of `&&`, is followed)
-blocks. A command that shows a push but isn't the push shape is different (`soft`): a `cd` that may not run (after `||`,
-in an `if`, a block or a subshell) is not followed but its literal target is an extra directory, and the session's
-directory, the `cd` target and the `-C` one are each asked whether their repo opted in; any that did blocks. A
-directory that isn't literal (`cd "$d"`) or can't be entered still blocks, as for any command. (A directory that isn't a repo ends the gate early, so `if false; then cd /tmp; fi; git push` would otherwise
-go unchecked, and a repo that hasn't opted in is none of the gate's business: `git push && echo done` passes there.) A later `git -C`
-replaces the directory, but other calls in the command still run in the `cd` target. For a command with the push
-shape the `-C` directory is the tree's word, so `-C "dir with space"` and a later `git -C …` inside a quoted string
-can't change it; for any other command, which blocks if it pushes, it is still read as text.
+**Where the push runs.** The session's directory, then the `cd DIR` before the push, then `git -C DIR`; the repo found there is
+the one checked. `DIR` must be a single literal path: `~` and `~/…` are the home directory (`~name` is not literal), a relative
+path is taken from the session's directory, and a `-C` one from the `cd` target. A second `cd`, a second `-C`, a `cd -`, an
+empty directory, a variable or a substitution can't be followed, so the gate blocks ("can't tell which repo this pushes"), in
+any repo, since the directory could be an opted-in one. A directory that can't be entered blocks too. A repo that hasn't opted
+in is none of the gate's business: a canonical push that doesn't fit the shape passes there, as `git push && echo done` does.
+The `cd` and `-C` words come from the tree, so `-C "dir with space"` and a `git -C …` inside a quoted string can't change the
+directory.
 
 ## Pre-push check
 
-The gate reads command text, so a push that starts some other way (a script, `gh pr create`, a compound command it
-misreads) could still reach an opted-in repo unreviewed. Git itself closes that: `install.sh` sets the global
+The gate starts a review only for a canonical push ([Command reading](#command-reading)), so a push that starts some other
+way (a script, a compound command, `bash -c`, a wrapper) would reach an opted-in repo unreviewed. Git itself closes that: `install.sh` sets the global
 `core.hooksPath` to `~/.claude/git-hooks`, and `hooks/git-hook.sh` runs from the stubs there. Its `pre-push` refuses
 Claude's push of a commit with no `.pass` or `.waived` in the review state, whatever started the push. It is a backstop
 for the gate, not a second reviewer: it only reads the state the gate writes (and the user's waiver).
