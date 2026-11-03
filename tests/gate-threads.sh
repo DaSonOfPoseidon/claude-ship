@@ -5,10 +5,12 @@
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/tests/lib/shfmt.sh"
+. "$root/tests/lib/gitenv.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/rbin" "$tmp/home"
 link_shfmt "$tmp/home"
+gate_git_hooks "$tmp/home"
 export HOME="$tmp/home"
 # PR_LIST: fail, empty, or a PR number. GQL: fail, empty, or thread (one thread line).
 cat >"$tmp/rbin/gh" <<'EOT'

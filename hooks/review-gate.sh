@@ -373,6 +373,41 @@ def gitargs($a):
 		elif ($x | startswith("-")) then go($i + 1; $d)
 		else {dirs: $d, sub: $x} end end;
 	go(0; []);
+# What skips the pre-push check hooks/git-hook.sh makes of Claude pushes (docs/gate.md › Pre-push check), read from the words
+# after `git`: `push --no-verify`, and a write of core.hooksPath, which points git at that hook: `-c core.hooksPath=…`
+# (also `-ccore.hooksPath=…`), `--config-env=core.hooksPath=…`, and `git config` in any form that is not a read (a bare key,
+# `--get`, `--get-all`, `--get-regexp`, `--list`, `-l`). The key is matched in any case. {k: "gitdeny", m: the message}, or nothing.
+def hookkey: test("^core\\.hookspath(=.*)?$"; "i");
+def gitdeny($a):
+	def pre($i; $o):
+		if $i >= ($a | length) then {sub: null, rest: [], o: $o}
+		else $a[$i] as $x
+		| if $x == "-c" or $x == "--config-env" then pre($i + 2; $o + [$a[$i + 1] // ""])
+		elif ($x | test("^-c.")) then pre($i + 1; $o + [$x[2:]])
+		elif ($x | test("^--config-env=")) then pre($i + 1; $o + [$x | sub("^--config-env="; "")])
+		elif ($x | test("^(-C|--git-dir|--work-tree|--namespace|--super-prefix|--attr-source)$")) then pre($i + 2; $o)
+		elif ($x | startswith("-")) then pre($i + 1; $o)
+		else {sub: $x, rest: $a[$i + 1:], o: $o} end end;
+	# The operands of `git config`, without the values of the options that take one.
+	def cfgpos($r):
+		def go($i): if $i >= ($r | length) then [] else $r[$i] as $x
+			| if ($x | test("^(-f|--file|--blob|--default|--type)$")) then go($i + 2)
+			elif ($x | startswith("-")) then go($i + 1)
+			else [$x] + go($i + 1) end end;
+		go(0);
+	def cfgwrite($r):
+		cfgpos($r) as $p
+		| ($p | any(test("^core\\.hookspath$"; "i")))
+		and (($r | any(test("^(--get|--get-all|--get-regexp|--get-urlmatch|--list|-l)$"))) | not)
+		and (if ($p[0] // "") == "get" or ($p[0] // "") == "list" then false
+			elif ($p | length) == 1 and (($r | any(test("^(--unset|--unset-all|--add|--replace-all|-e|--edit)$"))) | not) then false
+			else true end);
+	pre(0; []) as $g
+	| if ($g.o | any(hookkey)) or ($g.sub == "config" and cfgwrite($g.rest)) then
+		{k: "gitdeny", m: "core.hooksPath runs the review gate\u0027s pre-push check, which refuses an unreviewed push; only the user changes it. Ask them to make the change with `!`."}
+	elif $g.sub == "push" and ($g.rest | any(. == "--no-verify")) then
+		{k: "gitdeny", m: "`git push --no-verify` would skip the review gate\u0027s pre-push check, which refuses an unreviewed push. Push without it; if a review is wrong, ask the user to waive it."}
+	else empty end;
 # A write: block when any of $ps (the protected targets) is there.
 def wbl($ps; $why): if ($ps | length) > 0 then {k: "block", p: ($ps[0] | disp), w: $why} else empty end;
 def remote: test("^[^/]*:");
@@ -426,10 +461,11 @@ def wcheck($e; $all; $cs):
 		([$a[] | select(startswith("-") | not)] | last) as $l
 		| wbl(if $l != null and ($l | rprot($cs)) then [$l] else [] end; $c)
 	elif $c == "git" then
-		gitargs($a) as $g
+		gitdeny($a),
+		(gitargs($a) as $g
 		| if $g.sub != null and (["status", "log", "diff", "show", "rev-parse", "ls-files"] | index($g.sub) | not) then
 			wbl([$g.dirs[] | select(dprot($cs) or any(abs($cs; false)[]; . == $home + "/.claude"))]; "git -C")
-		else empty end
+		else empty end)
 	else empty end;
 def cmdev($e; $all; $cs):
 	($e.w[0] | bn) as $c | $e.w[1:] as $a
@@ -581,7 +617,9 @@ else
 		elif $wp != null then {p: ($wp.t | disp), w: ($wp.op + ($wp.t | disp))}
 		elif $lw != null and $wo != null then {p: $lw.t, w: ($wo.op + ($wo.t | disp))}
 		else null end) as $blk
-	| if $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
+	| ($ev | map(select(.k == "gitdeny")) | first) as $gd
+	| if $gd != null then "gitdeny", $gd.m
+		elif $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
 		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end),
 			(if any($ev[]; .k == "ggdyn") then "run" else "skip" end),
 			($ev[] | select(.k == "str") | {v: .v, c: .c} | tojson) end
@@ -640,6 +678,10 @@ while [ -n "$cur" ]; do
 	case $verdict in
 	block)
 		echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names $rest." >&2
+		exit 2
+		;;
+	gitdeny)
+		echo "Blocked: $rest" >&2
 		exit 2
 		;;
 	dyn) tamper_dyn=1 ;;
@@ -1253,7 +1295,7 @@ push_scope() (
 		[ -n "$a" ] || continue
 		case $a in
 		-u | --set-upstream | -f | --force | --force-with-lease | --force-with-lease=* | --force-if-includes | \
-			-q | --quiet | -v | --verbose | -n | --dry-run | --no-verify | --progress | --atomic) ;;
+			-q | --quiet | -v | --verbose | -n | --dry-run | --progress | --atomic) ;;
 		-*)
 			echo "the gate doesn't allow \`$a\`"
 			return 1
@@ -1338,6 +1380,17 @@ EOF
 		fi
 	done
 )
+# A push in an opted-in repo needs the pre-push check active where it runs: core.hooksPath at the deployed git-hooks (install.sh
+# sets it) and an executable pre-push in it, else the push would skip the check that refuses an unreviewed one
+# (docs/gate.md › Pre-push check). The value git would use counts, including a repo's own.
+if [ -z "$data_only" ] && { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; }; then
+	want_hooks=${CLAUDE_HOME:-$HOME/.claude}/git-hooks
+	have_hooks=$(git config --get core.hooksPath) || have_hooks=
+	if [ "$have_hooks" != "$want_hooks" ] || [ ! -f "$want_hooks/pre-push" ] || [ ! -x "$want_hooks/pre-push" ]; then
+		echo "Blocked: the review gate's pre-push check isn't active here (core.hooksPath is '$have_hooks'); run claude-ship's ./install.sh." >&2
+		exit 2
+	fi
+fi
 if { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; } && ! why=$(push_scope); then
 	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
 	exit 2

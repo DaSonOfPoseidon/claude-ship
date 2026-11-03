@@ -7,3 +7,17 @@ isolate_git() {
 	GIT_CONFIG_NOSYSTEM=1
 	export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
 }
+
+# gate_git_hooks <home>: what the gate's check before a push looks for under a test's HOME (the gate reads
+# ${CLAUDE_HOME:-$HOME}/.claude/git-hooks): core.hooksPath in the global config at that directory, and an executable
+# pre-push in it. A test that sets HOME for the gate calls this, so its pushes get past that check. Git then reads that
+# HOME's .gitconfig as the global config and no system config, whatever the caller's environment says.
+gate_git_hooks() {
+	unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
+	GIT_CONFIG_NOSYSTEM=1
+	export GIT_CONFIG_NOSYSTEM
+	mkdir -p "$1/.claude/git-hooks"
+	printf '#!/bin/sh\nexit 0\n' >"$1/.claude/git-hooks/pre-push"
+	chmod +x "$1/.claude/git-hooks/pre-push"
+	git config -f "$1/.gitconfig" core.hooksPath "$1/.claude/git-hooks"
+}
