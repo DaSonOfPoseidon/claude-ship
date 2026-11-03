@@ -45,18 +45,6 @@ default_branch() {
 	gh repo view "$1" --json defaultBranchRef --jq .defaultBranchRef.name
 }
 
-# Prints `true` if the repo opted in, nothing if it didn't; fails if GitHub can't say.
-autonomous() {
-	if out=$(gh variable get CLAUDE_AUTONOMOUS -R "$1" 2>&1); then
-		[ "$out" = true ] && echo true
-		return 0
-	fi
-	case $out in
-	*'not found'* | *'Not Found'*) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
 # Without jq the gate can't tell what it's looking at, and a hook that fails is not a hook that said no (Claude Code
 # lets the call through unless the registration has "onFailure": "block"; README › Install). So it blocks every
 # call it sees, and so it does for any call jq can't read: an empty result would pass as "not a push".
@@ -68,6 +56,15 @@ unreadable() {
 	echo "Blocked: the review gate couldn't read this tool call ($1), so it can't tell whether it pushes. Retry; if it keeps failing, tell the user." >&2
 	exit 2
 }
+# The helpers the gate shares with hooks/git-hook.sh (autonomous, github_slugs) live in gate-common.sh next to this script.
+# A shell that fails to source a file exits with a status Claude Code lets through (see jq above), so a missing file
+# blocks here instead.
+[ -r "$dir/gate-common.sh" ] || {
+	echo "Blocked: the review gate can't read $dir/gate-common.sh, which holds the opt-in lookup it shares with the git hook. Run claude-ship's install.sh." >&2
+	exit 2
+}
+# shellcheck source=gate-common.sh
+. "$dir/gate-common.sh"
 
 input=$(cat)
 tool=$(printf '%s' "$input" | jq -r '.tool_name // ""') || unreadable "tool name"
@@ -1090,21 +1087,6 @@ cd "$where" 2>/dev/null || {
 	exit 2
 }
 
-# GitHub repos from remote URLs on stdin, one per line: any scheme, user, port, host case, ssh-over-443 host and
-# trailing-dot host. A github.com URL that doesn't parse prints as `?<url>` so callers fail closed; other hosts
-# and local paths aren't GitHub.
-github_slugs() {
-	while IFS= read -r url; do
-		s=$(printf '%s\n' "$url" | sed -E 's#/+$##; s#\.git$##' |
-			sed -nE 's#^([[:alpha:]+]+://)?([^@/]*@)?([Ss][Ss][Hh]\.)?[Gg][Ii][Tt][Hh][Uu][Bb]\.[Cc][Oo][Mm]\.?(:[0-9]*)?[:/]/*([^/:@]+/[^/:@]+)$#\5#p')
-		host=$(printf '%s\n' "$url" | sed -E 's#^[[:alpha:]+]+://##; s#^[^@/]*@##; s#[:/].*##')
-		if [ -n "$s" ]; then
-			echo "$s"
-		elif printf '%s' "$host" | grep -Eqi '(^|\.)github\.com\.?$'; then
-			echo "?$url"
-		fi
-	done | sort -u
-}
 # Fails, naming the URL, when a list from github_slugs holds one it couldn't read.
 readable_slugs() {
 	if bad=$(printf '%s\n' "$1" | grep -m1 '^?'); then
