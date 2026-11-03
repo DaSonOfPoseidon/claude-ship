@@ -317,6 +317,9 @@ gh_here 0 'cd sub && gh api -X POST repos/{owner}/{repo}/pulls'
 gh_here 2 "cd $tmp/inrepo/sub && gh api -X POST repos/{owner}/{repo}/pulls"
 gh_here 2 "cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls | cat"
 gh_here 2 "true || cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls"
+gh_here 2 "sh -c 'cd $tmp/inrepo/sub && gh api -X POST repos/{owner}/{repo}/pulls'"
+gh_here 2 "sh -c \"echo x; cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls\""
+gh_here 0 'echo cd && gh api -X POST repos/{owner}/{repo}/pulls'
 gh_here 2 'cd "$d" && gh api -X POST repos/{owner}/{repo}/pulls'
 gh_here 2 "cd $tmp/inrepo/sub && cd - && gh api -X POST repos/{owner}/{repo}/pulls"
 rm -rf "$repo/sub"

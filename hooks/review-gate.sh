@@ -1081,6 +1081,8 @@ if [ -n "$api_write" ]; then
 	if [ -n "$placeholder" ] || printf '%s\n' "$api_write" | grep -qx here; then
 		# Every `cd` the tree shows counts, whether or not it runs first or the command is a push: gh picks the repo from
 		# wherever it runs. One that is not a single literal path (or is `cd -`) leaves the repo unknown, so it blocks.
+		# A `cd` inside a string run by `sh -c` or `eval` is not in this tree, but it can only precede the `gh` there through a
+		# separator, quoted in the string, which the quoting check above already blocks (tests/gate-push.sh, `gh_here`).
 		cd_all=$(printf '%s\n' "$ptree" | sed -n 's/^cda //p')
 		if printf '%s\n' "$ptree" | grep -qx cdabad || printf '%s\n' "$cd_all" | grep -q '^-'; then
 			echo "Blocked: this \`gh api\` call writes with \`{owner}/{repo}\` (or no repo), and the review gate can't tell which repo gh picks after a \`cd\` it can't follow. Use one literal \`cd <dir> &&\`, or name the repo." >&2
