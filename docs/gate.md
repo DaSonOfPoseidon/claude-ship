@@ -6,9 +6,46 @@ against the repo's default branch. The script keeps only short comments on its c
 behind them are here. Classes of bug past reviews caught are in [`pitfalls.md`](pitfalls.md).
 
 The gate catches Claude's own slips; it isn't a security boundary. It judges command text, and its state is
-writable by any shell. Branch protection requiring the `codex-review` status is the server-side backstop.
+writable by any shell. Branch protection requiring the `codex-review` status is the server-side backstop for
+merges. What counts as a gap and what doesn't: [Threat model](#threat-model).
 
 Exit 0 allows the tool call; exit 2 blocks it and shows stderr to Claude.
+
+## Threat model
+
+**Purpose.** The gate stops Claude's own slips: a push made without thinking, a chained `git commit && git push`,
+an edit to the installed gate. It does not defend against a command written to get past it. Its command checks
+read text (and a syntax tree of it); its state is writable by any shell.
+
+**In scope.** A finding about a command check needs a command Claude could plausibly run unprompted: literal
+words, in a form the repo's docs, skills or scripts use, or common git/gh/shell practice. The canonical forms:
+`git push --no-verify`, `git -C dir push`, `cd dir && git push`, `git push 2>&1 | tail -5`, `/usr/bin/git push`,
+and a GitHub API write the ship skill doesn't use. One that reaches an opted-in repo without a passing review is
+a P0.
+
+**Out of scope at every priority** (AGENTS.md › Code Review Rules › Gate scope). Reviewers and Codex don't report
+them, and the answer to such a finding is the rule, not another entry in a list:
+
+- *A command, path or setting built at run time* (variables, `$(…)`, `eval`, aliases, functions):
+  `declare -n ref='a[$(git push)]'`, `printf '%n'`, `exec -l bash`, `xargs env git push`, `rm $(cat list)`,
+  `ls | xargs rm`.
+- *Code an interpreter reads from a string, a file or an environment variable*: `node -e 'fs.writeFileSync("…")'`,
+  `python3 s.py`, `PERL5OPT=-M… shasum`.
+- *Another tool's option that runs a command*: `rg --hostname-bin`, `xargs find`.
+- *A link, copy or rename onto a protected file*: a symlink to a protected path.
+- *A setting changed only to skip a check*: `HOME`, `GIT_CONFIG_*`, `-c` keys that turn hooks off (the inputs of
+  claude-ship #200–#203).
+
+The first three classes include the P0s of claude-ship #191 (`rg --hostname-bin`, `xargs env`,
+`declare -n ref='a[$(git push)]'`, `PERL5OPT=-M… shasum`, `printf '%n'`, `exec -l bash`): one codex round each,
+none a command Claude would run.
+
+Checks that block a literal form today stay (a `cp`, `mv` or `ln` that names a protected path, the writing-tool
+list in Tamper protection); what is out of scope is a finding that a variant of these classes gets past them.
+
+**Layers that don't read text.** Branch protection requiring `codex-review` blocks a merge whatever the command
+was. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch skips it. A way past
+branch protection that a plausible command takes is in scope.
 
 ## Opt-in
 
@@ -358,12 +395,7 @@ argument when no `>` comes before the protected path inside it (`gh issue create
 writing tool whose own arguments aren't protected (`cat ~/.claude/hooks/x | tee /tmp/y`), or a write command and a
 read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
 What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`, the other spellings of a protected path
-and the writers above. What neither check covers: tools outside the writing-tool list, since the list can't be
-complete; paths a command builds or reads at run time (`ls | xargs rm`, `rm $(cat list)`; a bare `rm $f` after `cd ~/.claude` does block, since the variable could name anything there)
-or in a script (`python3 s.py`, which only blocks when a protected path is among its arguments); `rm -r ~/.claude`
-itself; a symlink to a protected path. What only the tree check misses: a string handed to a program that runs it where the tool isn't at the start of a command line
-inside it (`git commit -m "x; cp …"` reads as a command line and blocks, but `node -e 'fs.writeFileSync("…")'`
-passes); the gate catches Claude's slips and isn't a boundary.
+and the writers above. What neither check covers is out of scope by design: see [Threat model](#threat-model).
 
 ## Waivers and opt-in flags
 

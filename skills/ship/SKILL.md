@@ -135,7 +135,7 @@ comments API. For each finding, by priority and round:
 | P2 | fix | file an issue |
 | P3 and lower | file an issue | file an issue |
 
-Every finding ends with one outcome (fixed, not valid, deferred to an issue, or out of scope → issue), and its
+Every finding ends with one outcome (fixed, not valid, deferred to an issue, or beyond this PR's scope → issue), and its
 thread is resolved once it has one. A user-approved fix after round 3 gets one more review, with the same
 right-hand column.
 
@@ -143,6 +143,8 @@ right-hand column.
   entry to `docs/false-positives.md` in the same push (with no push left, in the next PR's first commit), unless
   the finding was wrong only about this one diff. The entry is one narrow pattern, why it's fine and where it
   came up; never a whole class of bug.
+  When the repo's rules already rule the finding out (AGENTS.md › Gate scope), it is not valid, not an issue:
+  reply citing the rule and add no entry, since that would be a whole class.
 - **Fix:** test-first, with a sweep for the same class. Reply on the thread with the fixing commit, then
   resolve the thread.
 - **File an issue:** reply on the thread with the issue's link, then resolve it. The issue is filed with

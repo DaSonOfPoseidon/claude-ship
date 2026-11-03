@@ -19,6 +19,8 @@ review finds a new class.
   tree is on a list of tools known not to run their arguments, not that the tree names no git. The push shape reads the
   tree too (`push_jq`, claude-ship #135): an allowlist of tree shapes, with every word literal, so a quoted directory with
   spaces and a backslash-newline are the same command as the plain one, and a text split at `;&|()` no longer decides.
+  For the gate, a form outside AGENTS.md › Gate scope isn't a reason to extend a list or add a check; a check
+  that must hold for every spelling belongs in a layer that doesn't read text.
 - **A command's name is not the program it runs, and a list of what is dangerous never ends.** The runs-git filter
   first trusted a long list of names and then patched each bypass: `./cat` and `/tmp/ls` (a path is a script), `PATH=. cat`,
   then `PERL5OPT=… shasum`, `xargs find`, `printf '%n'`, `{PATH}>f`, `declare -a a='($(…))'`, `exec -l bash` (claude-ship
@@ -27,6 +29,8 @@ review finds a new class.
   that assigns, runs code or replaces the shell, a file-changing tool, a dynamic word, a write (any redirect to a file) and any variable assignment outside
   a short allowlist are unknown (docs/gate.md › Command reading). When a trusted tool turns out to run something, remove
   it from the list rather than adding a check for that one form.
+  The same holds for any new bypass of the gate: a form outside AGENTS.md › Gate scope isn't a reason to extend
+  a list, and a check that must hold for every spelling belongs in a layer that doesn't read text.
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
   `>&2` as a descriptor duplication when any non-alphanumeric followed, so `>&2.txt` (bash: a write to the file
   `2.txt`) and `>&1/x` passed; so did `&>/dev/null.log` (no terminator at all) and `>/dev/null,x` (the `/dev/…`
