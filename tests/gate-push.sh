@@ -171,6 +171,10 @@ expect 2 "cd $tmp/husky && git commit -m x && git push"
 expect 2 "git -C $tmp/husky commit -m x && git -C $tmp/husky push"
 expect 2 "true || cd $tmp/husky; ls"
 expect 2 "git -C ../husky status"
+# ...behind a wrapper too (`timeout`, `sudo`, `env`, `nice`...): the wrapped git runs in that directory.
+expect 2 "timeout 60 git -C $tmp/husky push"
+expect 2 "sudo git -C $tmp/husky push"
+expect 2 "env GIT_PAGER=cat git -C $tmp/husky log"
 # A relative target after a `cd` is taken from that `cd`'s directory too.
 mkdir -p "$tmp/hk2"
 git init -q -b feat "$tmp/hk2/inner"

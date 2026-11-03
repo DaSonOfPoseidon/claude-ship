@@ -509,10 +509,14 @@ def calls($cs0):
 			(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w; $cs)) end)
 		end)
 	end;
-# A literal word `gh` among the words of a simple command: the `gh` itself, or behind a wrapper (`sudo gh api`, `xargs gh api`,
-# `flock l gh api`). A `gh api` in the text of a command without one is data (an `echo`, a heredoc body), not a call
-# (docs/gate.md › Command reading).
-def ghev: if ((.Args? // []) | map(wv) | any(. != null and bn == "gh")) then {k: "gh"} else empty end;
+# A literal word `gh` among the words of a command that may run it: the `gh` itself, behind a wrapper (`sudo gh api`, `xargs gh api`,
+# or one the gate does not unwrap: `flock l gh api`), or in a string it cannot unwrap. Words after `echo` or `printf`, and a `gh api`
+# in a heredoc body, are data, not a call (docs/gate.md › Command reading).
+def ghev:
+	([(.Args? // [])[] | wv // "\u0001"]) as $ws
+	| eff($ws; false) as $effs
+	| if $effs == null then {k: "gh"}
+	else ($effs[] | select(((.w[0] | bn) | test("^(echo|printf)$") | not) and (.w | any(bn == "gh"))) | {k: "gh"}) end;
 # The working directory, tracked lexically. $cs is the set of directories the next command may run in (null: unknown, after a
 # `cd` to something dynamic). cdev: the target of each effective `cd` or `pushd` in a simple command (null: unknown).
 def cdev($w): ($w | map(. // "\u0001")) as $ws | (eff($ws; false) // [])[]
@@ -771,7 +775,8 @@ else
 	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
 	| ($cds[] | (.Args[1:] | map(wv)) as $cw
 		| if ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cda \($cw[0])" else "cdabad" end),
-	([.. | objects | select(.Type == "CallExpr") | words | select(length > 0 and .[0] != null and (.[0] | bn) == "git") | gitopts(.) | .cs[] | select(. != null and . != "" and (contains("\n") | not))] | unique[] | "cdc \(.)"),
+	([.. | objects | select(.Type == "CallExpr") | words as $w | range(0; $w | length) as $i
+		| select($w[$i] != null and ($w[$i] | bn) == "git") | gitopts($w[$i:]) | .cs[] | select(. != null and . != "" and (contains("\n") | not))] | unique[] | "cdc \(.)"),
 	((if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
 	| ($ch[:-1]) as $init
 	| (if ($ch | length) > 0 then ($ch[-1] | pipefirst | gitinfo) else null end) as $g

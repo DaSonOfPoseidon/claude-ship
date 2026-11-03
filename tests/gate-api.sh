@@ -87,6 +87,12 @@ Never run gh api -X DELETE repos/a/b here.
 EOF'
 bash 0 'echo "gh api -X DELETE repos/a/b"'
 bash 0 'grep -n "gh api" hooks/review-gate.sh'
+# Words after a command that only prints them are data too, quoted or not; a wrapper the gate unwraps still runs its gh.
+bash 0 'echo gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 0 'printf "%s\n" gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'sudo gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'timeout 60 gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'xargs gh api -X DELETE repos/o/r/git/refs/heads/x'
 bash 2 'gh api -X DELETE repos/o/r/git/refs/heads/x'
 bash 2 'echo "gh api" && gh api -X DELETE repos/o/r/git/refs/heads/x'
 bash 2 'sh -c "gh api -X DELETE repos/o/r/git/refs/heads/x"'
