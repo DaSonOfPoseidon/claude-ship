@@ -9,6 +9,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/stubs"
+. "$root/tests/lib/shfmt.sh"
 . "$root/tests/lib/gitenv.sh"
 isolate_git "$tmp"
 git config --global core.hooksPath "$tmp/stubs"
@@ -461,6 +462,34 @@ fi
 rm -f "$repo/.git/hooks/pre-commit"
 git -C "$repo" commit -q --allow-empty -m nohook || {
 	echo "FAIL: a commit with no pre-commit failed"
+	fail=1
+}
+# --- the gate and the hook together ---
+# The gate reviews only a canonical push, so it lets `git commit … && git push` through; the hook is what refuses that push
+# when the new commit has no review (docs/gate.md › Command reading). A plain push after a pass then succeeds.
+mkrepo
+mkdir -p "$tmp/gatehome"
+link_shfmt "$tmp/gatehome"
+chain='git commit -q --allow-empty -m chained && git push -q origin main'
+jq -nc --arg c "$chain" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+	HOME=$tmp/gatehome PATH=$tmp/bin:$PATH GH_MODE=true sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/out"
+[ $? = 0 ] || {
+	echo "FAIL: the gate blocked a chained commit and push"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+(cd "$repo" && env CLAUDE_CODE_CHILD_SESSION=1 FAKE_ANCESTRY=none GH_MODE=true PATH=$tmp/bin:$PATH sh -c "$chain" 2>&1) >"$tmp/out"
+rc=$?
+want_push "a chained commit and push the gate let through" no
+on_remote refs/heads/main && {
+	echo "FAIL: the chained push reached the remote"
+	fail=1
+}
+pass
+gpush "$repo" origin main
+want_push "a plain push after a pass" yes
+on_remote refs/heads/main || {
+	echo "FAIL: the reviewed commit didn't reach the remote"
 	fail=1
 }
 # No arguments: usage error.
