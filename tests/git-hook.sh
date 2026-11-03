@@ -73,14 +73,14 @@ mkrepo() {
 commit() {
 	git -C "$repo" commit -q --allow-empty -m "$1"
 }
-# pass [<rev>] / waive [<rev>]: the review state for a commit (default HEAD).
+# pass [<rev>]: a passing review for a commit (default HEAD); waive: the user's waiver of HEAD.
 pass() {
 	mkdir -p "$repo/.git/review-gate"
 	: >"$repo/.git/review-gate/$(git -C "$repo" rev-parse "${1:-HEAD}").pass"
 }
 waive() {
 	mkdir -p "$repo/.git/review-gate"
-	: >"$repo/.git/review-gate/$(git -C "$repo" rev-parse "${1:-HEAD}").waived"
+	: >"$repo/.git/review-gate/$(git -C "$repo" rev-parse HEAD).waived"
 }
 
 # who: claude (the variable), ancestor (a process named claude, from the stub ps), real (nothing faked: the caller
