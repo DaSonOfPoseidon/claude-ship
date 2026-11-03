@@ -789,6 +789,49 @@ ptree=$(printf '%s' "$tree" | jq -r "$push_jq") || unreadable "command syntax tr
 cand=
 printf '%s\n' "$ptree" | grep -qx cand && cand=1
 push_shape=$(printf '%s\n' "$ptree" | sed -n 's/^shape //p')
+# Fails, naming the URL, when a list from github_slugs holds one it couldn't read.
+readable_slugs() {
+	if bad=$(printf '%s\n' "$1" | grep -m1 '^?'); then
+		echo "Blocked: the review gate can't read the GitHub repo in the remote URL ${bad#?}. Use https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git." >&2
+		exit 2
+	fi
+}
+# Where `git push origin` writes: origin's push URLs (insteadOf and pushInsteadOf applied), as GitHub repos.
+push_slugs() {
+	git remote get-url --push --all origin 2>/dev/null | github_slugs
+}
+# Every GitHub repo any remote here fetches from or pushes to.
+remote_slugs() {
+	for r in $(git remote); do
+		git remote get-url --all "$r"
+		git remote get-url --push --all "$r"
+	done 2>/dev/null | github_slugs
+}
+
+# The pre-push check (hooks/git-hook.sh) is what refuses a push the gate did not start a review for, so it has to be on wherever
+# Claude runs a command in an opted-in repo: core.hooksPath at the deployed git-hooks (install.sh sets it) and an executable
+# pre-push in it. A repo's own core.hooksPath (husky, say) replaces it for every push, whatever the command says, so this is
+# asked of every Bash command, with no reading of its text (docs/gate.md › Pre-push check). The value git would use counts.
+want_hooks=${CLAUDE_HOME:-$HOME/.claude}/git-hooks
+hooks_ok() {
+	[ "$(git config --get core.hooksPath)" = "$want_hooks" ] && [ -f "$want_hooks/pre-push" ] && [ -x "$want_hooks/pre-push" ]
+}
+no_hooks() {
+	echo "Blocked: the review gate's pre-push check isn't active in this repo (core.hooksPath is '$(git config --get core.hooksPath)'), so a push that isn't a plain \`git push\` would skip the review. Ask the user to fix it: run claude-ship's ./install.sh, and \`git config --local --unset core.hooksPath\` here if the repo sets its own." >&2
+	exit 2
+}
+# Only the session's repo is asked, and only while it is off: the lookup of the opt-in variable (GitHub) runs just then.
+if [ -d "$cwd" ] && (cd "$cwd" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1) && ! (cd "$cwd" && hooks_ok); then
+	hk_slugs=$(cd "$cwd" && remote_slugs)
+	readable_slugs "$hk_slugs"
+	for hk_slug in $hk_slugs; do
+		if ! hk_flag=$(autonomous "$hk_slug"); then
+			echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $hk_slug from GitHub, and the pre-push check isn't active here. Check \`gh auth status\` and retry." >&2
+			exit 2
+		fi
+		[ -z "$hk_flag" ] || { (cd "$cwd" && no_hooks) || exit 2; }
+	done
+fi
 gh_api='(^|[^[:alnum:]_.-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
 # Nothing else is the gate's to read: a command that is neither a canonical push nor a `gh api` call passes, whatever its text
 # says, since the pre-push check refuses an unreviewed push however it started (docs/gate.md › Command reading). A `gh api`
@@ -1001,25 +1044,6 @@ if [ "$gh_seen" = 1 ] && printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api";
 fi
 api_write=$api_found
 [ -n "$api_write" ] || [ -n "$cand" ] || exit 0
-
-# Fails, naming the URL, when a list from github_slugs holds one it couldn't read.
-readable_slugs() {
-	if bad=$(printf '%s\n' "$1" | grep -m1 '^?'); then
-		echo "Blocked: the review gate can't read the GitHub repo in the remote URL ${bad#?}. Use https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git." >&2
-		exit 2
-	fi
-}
-# Where `git push origin` writes: origin's push URLs (insteadOf and pushInsteadOf applied), as GitHub repos.
-push_slugs() {
-	git remote get-url --push --all origin 2>/dev/null | github_slugs
-}
-# Every GitHub repo any remote here fetches from or pushes to.
-remote_slugs() {
-	for r in $(git remote); do
-		git remote get-url --all "$r"
-		git remote get-url --push --all "$r"
-	done 2>/dev/null | github_slugs
-}
 
 # Where a canonical push runs: the session's directory, then the `cd DIR` before it, then `git -C DIR`. Each DIR is one literal
 # path (`~` is the home directory, a relative one is taken from the session's directory), else the gate can't tell which repo
@@ -1326,12 +1350,7 @@ EOF
 # A push in an opted-in repo needs the pre-push check active where it runs: core.hooksPath at the deployed git-hooks (install.sh
 # sets it) and an executable pre-push in it, else the push would skip the check that refuses an unreviewed one
 # (docs/gate.md › Pre-push check). The value git would use counts, including a repo's own.
-want_hooks=${CLAUDE_HOME:-$HOME/.claude}/git-hooks
-have_hooks=$(git config --get core.hooksPath) || have_hooks=
-if [ "$have_hooks" != "$want_hooks" ] || [ ! -f "$want_hooks/pre-push" ] || [ ! -x "$want_hooks/pre-push" ]; then
-	echo "Blocked: the review gate's pre-push check isn't active here (core.hooksPath is '$have_hooks'); run claude-ship's ./install.sh." >&2
-	exit 2
-fi
+hooks_ok || no_hooks
 if ! why=$(push_scope); then
 	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
 	exit 2

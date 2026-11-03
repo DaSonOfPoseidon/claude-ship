@@ -262,3 +262,9 @@ review finds a new class.
   push through. Check that the tool exists before reading its output (the shell's own messages are not the tool's), and test
   the error text with the tool missing. Git hooks add a second case: setting `core.hooksPath` makes git stop running the
   repo's own `.git/hooks`, so whatever replaces them must chain to the repo's hook of the same name.
+- **A repo-local setting can silently turn a global layer off.** The pre-push check is installed through the global
+  `core.hooksPath`, and a repo's own `core.hooksPath` (husky, set by an install script rather than by a command the gate
+  reads) replaces it: every push then skips the check, whatever started it. The gate checked the setting only before a
+  canonical push, so a chained or wrapped push in such a repo went through unreviewed. When a protection is a global layer,
+  check its effective value where Claude runs, for every command, not only before the command that needs it; a lookup that
+  costs a network call goes behind the cheap local check (docs/gate.md › Pre-push check).
