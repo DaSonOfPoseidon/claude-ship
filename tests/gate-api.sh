@@ -80,11 +80,9 @@ bash 2 'gh api -X POST repos/acme/app/issues/169/dependencies/blocked_by/../../.
 bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by/5/extra'
 bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by'
 
-# A command whose syntax tree runs no gh is no `gh api` call, whatever its text says: a heredoc body or a quoted
-# argument is data (claude-ship #135). A real call still blocks, also next to such text.
-# (A heredoc redirected to a file is blocked as on main: codex round 5 of #191 found that a written file can replace a
-# program on PATH that a listed name runs, so any write redirect keeps the old checks until a follow-up settles a safe way.)
-bash 2 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
+# A command whose syntax tree runs no gh is no `gh api` call, whatever its text says: a heredoc body (written to a file
+# too, claude-ship #193) or a quoted argument is data (claude-ship #135). A real call still blocks, also next to such text.
+bash 0 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
 Never run gh api -X DELETE repos/a/b here.
 EOF'
 bash 0 'echo "gh api -X DELETE repos/a/b"'
