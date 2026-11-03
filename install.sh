@@ -1,7 +1,9 @@
 #!/bin/sh
 # Deploys claude-ship's origin/main into ~/.claude: the gate, its prompts and the orchestrate hint (hooks/), the
 # ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh for local DRY_RUN
-# checks), and a pinned shfmt in bin/ (scripts/fetch-shfmt.sh; a failure there makes the exit non-zero). Only main
+# checks), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh; a failure there makes the exit non-zero), and the git hook
+# stubs in git-hooks/, which it points git's global core.hooksPath at when that is unset (any other value makes the exit
+# non-zero; docs/gate.md › Pre-push check). Only main
 # is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
 # (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after deploying, this
 # script reads that file (never writes it) and warns about a missing or outdated entry, and says when the PR
@@ -35,6 +37,45 @@ if ! sh "$tmp/scripts/fetch-shfmt.sh" "$dest/bin/shfmt"; then
 	echo "install: couldn't install shfmt (see above); the review gate will need it." >&2
 	rc=1
 fi
+
+# The git hook stubs (docs/gate.md › Pre-push check): core.hooksPath points git at $dest/git-hooks, where each stub runs
+# hooks/git-hook.sh with its own name, so a pre-push check refuses Claude's unreviewed pushes and the repo's own hooks still
+# run (git stops reading a repo's .git/hooks once core.hooksPath is set). One stub for every hook git 2.34 runs from the hooks
+# directory (`git help hooks`) except push-to-checkout, proc-receive and fsmonitor-watchman, whose presence alone changes what
+# git does. The gate wants exactly "$dest/git-hooks" as the value, so $dest must be an absolute path.
+case $dest in
+/*"'"* | [!/]* | "")
+	echo "install: can't write git hook stubs: $dest must be an absolute path without a single quote." >&2
+	rc=1
+	;;
+*)
+	mkdir -p "$dest/git-hooks"
+	for h in applypatch-msg pre-applypatch post-applypatch pre-commit pre-merge-commit prepare-commit-msg commit-msg \
+		post-commit pre-rebase post-checkout post-merge pre-push pre-receive update post-receive post-update \
+		reference-transaction pre-auto-gc post-rewrite sendemail-validate p4-changelist p4-prepare-changelist \
+		p4-post-changelist p4-pre-submit post-index-change; do
+		printf '#!/bin/sh\nexec sh '"'%s'"' %s "$@"\n' "$dest/hooks/git-hook.sh" "$h" >"$dest/git-hooks/$h"
+		chmod 755 "$dest/git-hooks/$h"
+	done
+	# core.hooksPath is the user's too: set it only when it is unset, and leave any other value alone.
+	hooks_path=
+	hooks_st=0
+	hooks_path=$(git config --global --get core.hooksPath 2>/dev/null) || hooks_st=$?
+	if [ "$hooks_st" = 1 ]; then
+		git config --global core.hooksPath "$dest/git-hooks" || hooks_st=2
+		[ "$hooks_st" = 2 ] || hooks_path=$dest/git-hooks
+	fi
+	if [ "$hooks_st" != 0 ] && [ "$hooks_st" != 1 ]; then
+		echo "install: couldn't read or set git's global core.hooksPath; the review gate's pre-push check is off, and the gate blocks pushes until it is $dest/git-hooks." >&2
+		rc=1
+	elif [ "$hooks_path" != "$dest/git-hooks" ]; then
+		echo "install: git's core.hooksPath is $hooks_path, not $dest/git-hooks, so the review gate's pre-push check is off and the gate blocks pushes. Point it at ours (or unset it) and run this again." >&2
+		rc=1
+	else
+		echo "Git now runs repos' own hooks through the stubs in $dest/git-hooks (core.hooksPath), which add the review gate's pre-push check."
+	fi
+	;;
+esac
 
 # Each deployed ship agent's frontmatter hooks (ship-explorer's explorer-bash.sh, ship-codex's codex-bash.sh) are what
 # keep its Bash in bounds. A hook that is missing or not executable fails with a non-blocking error, so the agent's
