@@ -776,7 +776,7 @@ else
 	| ($cds[] | (.Args[1:] | map(wv)) as $cw
 		| if ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cda \($cw[0])" else "cdabad" end),
 	([.. | objects | select(.Type == "CallExpr") | words as $w | range(0; $w | length) as $i
-		| select($w[$i] != null and ($w[$i] | bn) == "git") | gitopts($w[$i:]) | .cs[] | select(. != null and . != "" and (contains("\n") | not))] | unique[] | "cdc \(.)"),
+		| select($w[$i] != null and ($w[$i] | bn) == "git" and (($w[0] // "") | bn | test("^(echo|printf)$") | not)) | gitopts($w[$i:]) | .cs[] | select(. != null and . != "" and (contains("\n") | not))] | unique[] | "cdc \(.)"),
 	((if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
 	| ($ch[:-1]) as $init
 	| (if ($ch | length) > 0 then ($ch[-1] | pipefirst | gitinfo) else null end) as $g
@@ -836,17 +836,19 @@ expand_dir() {
 }
 # The directories the tree's `cd` (prefix `cda`) and `git -C` (`cdc`) targets may name, one per line, `~` expanded: an absolute
 # one as it is; a relative one from the session's directory and from the directory of the target before it (`cd a && cd b`, or
-# `cd a && git -C b …`), the two ways a chain can read it.
+# `cd a && git -C b …`), the two ways a chain can read it. Every occurrence counts (`cd .. && cd ..` climbs twice), and the
+# resulting directories are deduplicated, not the words.
 tree_dirs() {
 	printf '%s\n' "$ptree" | sed -n "s/^$1 //p" | awk -v cwd="$cwd" -v hn="$hn" '
-		!seen[$0]++ {
+		function emit(p) { if (!(p in out)) { out[p] = 1; print p } }
+		{
 			d = $0
 			if (d == "~") d = hn
 			else if (substr(d, 1, 2) == "~/") d = hn substr(d, 2)
-			if (substr(d, 1, 1) == "/") { print d; chain = d }
+			if (substr(d, 1, 1) == "/") { emit(d); chain = d }
 			else {
-				print cwd "/" d
-				if (chain != "") print chain "/" d
+				emit(cwd "/" d)
+				if (chain != "") emit(chain "/" d)
 				chain = (chain == "" ? cwd : chain) "/" d
 			}
 		}'

@@ -175,6 +175,29 @@ expect 2 "git -C ../husky status"
 expect 2 "timeout 60 git -C $tmp/husky push"
 expect 2 "sudo git -C $tmp/husky push"
 expect 2 "env GIT_PAGER=cat git -C $tmp/husky log"
+# Words after a command that only prints them are data.
+expect 0 "echo git -C $tmp/husky status"
+expect 0 "printf '%s\\n' git -C $tmp/husky status"
+# A repeated `cd ..` climbs twice: the outer repo (hook off) is reached from a nested one (hook on).
+mkdir -p "$tmp/outer/inner/subdir"
+git init -q -b feat "$tmp/outer"
+git -C "$tmp/outer" remote add origin https://github.com/acme/outer.git
+git -C "$tmp/outer" config core.hooksPath .husky
+git init -q -b feat "$tmp/outer/inner"
+git -C "$tmp/outer/inner" remote add origin https://github.com/acme/inner.git
+climb() {
+	jq -nc --arg c "$2" --arg d "$tmp/outer/inner/subdir" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != "$1" ]; then
+		echo "FAIL (exit $rc, want $1): $2"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+climb 2 'cd .. && cd .. && git status'
+climb 2 'cd ../.. && ls'
+climb 0 'cd .. && ls'
 # A relative target after a `cd` is taken from that `cd`'s directory too.
 mkdir -p "$tmp/hk2"
 git init -q -b feat "$tmp/hk2/inner"
