@@ -163,53 +163,40 @@ grep -q 'core.hooksPath is .\.husky' "$tmp/err" && grep -q 'unset' "$tmp/err" ||
 	fail=1
 }
 git -C "$repo" config --unset core.hooksPath
-# ...also in another opted-in repo the command reaches by a literal `cd` or `git -C`, not only the session's own.
-git init -q -b feat "$tmp/husky"
-git -C "$tmp/husky" remote add origin https://github.com/acme/other.git
-git -C "$tmp/husky" config core.hooksPath .husky
-expect 2 "cd $tmp/husky && git commit -m x && git push"
-expect 2 "git -C $tmp/husky commit -m x && git -C $tmp/husky push"
-expect 2 "true || cd $tmp/husky; ls"
-expect 2 "git -C ../husky status"
-# ...behind a wrapper too (`timeout`, `sudo`, `env`, `nice`...): the wrapped git runs in that directory.
-expect 2 "timeout 60 git -C $tmp/husky push"
-expect 2 "sudo git -C $tmp/husky push"
-expect 2 "env GIT_PAGER=cat git -C $tmp/husky log"
-# Words after a command that only prints them are data.
-expect 0 "echo git -C $tmp/husky status"
-expect 0 "printf '%s\\n' git -C $tmp/husky status"
-# A repeated `cd ..` climbs twice: the outer repo (hook off) is reached from a nested one (hook on).
-mkdir -p "$tmp/outer/inner/subdir"
-git init -q -b feat "$tmp/outer"
-git -C "$tmp/outer" remote add origin https://github.com/acme/outer.git
-git -C "$tmp/outer" config core.hooksPath .husky
-git init -q -b feat "$tmp/outer/inner"
-git -C "$tmp/outer/inner" remote add origin https://github.com/acme/inner.git
-climb() {
-	jq -nc --arg c "$2" --arg d "$tmp/outer/inner/subdir" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
-		PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
-	rc=$?
-	if [ "$rc" != "$1" ]; then
-		echo "FAIL (exit $rc, want $1): $2"
-		sed 's/^/  /' "$tmp/err"
-		fail=1
-	fi
+# A checkout under the scan root (REVIEW_GATE_SCAN_ROOT, set by gate_git_hooks; /srv/CodeServer in use) whose local config overrides
+# core.hooksPath blocks every command once the repo is opted in, wherever the command goes: no `cd` or `git -C` is read.
+scan=$REVIEW_GATE_SCAN_ROOT
+git init -q -b feat "$scan/husky"
+git -C "$scan/husky" remote add origin https://github.com/acme/other.git
+git -C "$scan/husky" config core.hooksPath .husky
+expect 2 "cd -P $scan/husky && git commit -m x && git push"
+expect 2 'ls'
+expect 2 './scripts/release.sh'
+expect 2 "git -C $scan/husky status"
+grep -q "$scan/husky" "$tmp/err" && grep -q '\.husky' "$tmp/err" && grep -q 'unset' "$tmp/err" || {
+	echo "FAIL: the block for another checkout's core.hooksPath lacks its path or advice"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
 }
-climb 2 'cd .. && cd .. && git status'
-climb 2 'cd ../.. && ls'
-climb 0 'cd .. && ls'
-# A relative target after a `cd` is taken from that `cd`'s directory too.
-mkdir -p "$tmp/hk2"
-git init -q -b feat "$tmp/hk2/inner"
-git -C "$tmp/hk2/inner" remote add origin https://github.com/acme/other2.git
-git -C "$tmp/hk2/inner" config core.hooksPath .husky
-expect 2 "cd $tmp/hk2 && cd inner && ls"
-expect 2 "cd $tmp/hk2 && git -C inner status"
-expect 0 "cd $tmp/hk2 && ls"
-expect 0 "ls $tmp/husky"
-expect 0 "cd $tmp && ls"
-git -C "$tmp/husky" config --unset core.hooksPath
-expect 0 "cd $tmp/husky && git commit -m x && git push"
+# A config.worktree override counts, and so does one in a checkout's linked-worktree config.
+git -C "$scan/husky" config --unset core.hooksPath
+expect 0 'ls'
+printf '[core]\n\thooksPath = .husky\n' >"$scan/husky/.git/config.worktree"
+expect 2 'ls'
+rm -f "$scan/husky/.git/config.worktree"
+mkdir -p "$scan/husky/.git/worktrees/w1"
+printf '[core]\n\thooksPath = /elsewhere\n' >"$scan/husky/.git/worktrees/w1/config.worktree"
+expect 2 'ls'
+rm -rf "$scan/husky/.git/worktrees"
+# The deployed path itself is no override, and a key in another section is not one.
+git -C "$scan/husky" config core.hooksPath "$HOME/.claude/git-hooks"
+expect 0 'ls'
+git -C "$scan/husky" config --unset core.hooksPath
+git -C "$scan/husky" config alias.hooksPath .husky
+expect 0 'ls'
+git -C "$scan/husky" config --unset alias.hooksPath
+# No override anywhere: everything that is no canonical push passes.
+expect 0 "cd -P $scan/husky && git commit -m x && git push"
 expect 0 'git push -u origin HEAD'
 expect 0 'ls'
 expect 0 'git commit -m x && git push'
@@ -338,6 +325,9 @@ git -C "$repo" config core.hooksPath .husky
 expect_off 0 'ls'
 expect_off 0 'git commit -m x && git push'
 git -C "$repo" config --unset core.hooksPath
+git -C "$scan/husky" config core.hooksPath .husky
+expect_off 0 'ls'
+git -C "$scan/husky" config --unset core.hooksPath
 expect_off 0 'git push origin HEAD > out.txt'
 # ...but a directory the gate can't read could be an opted-in repo, so a canonical push from one blocks there too.
 expect_off 2 'cd "$d" && git push origin HEAD'

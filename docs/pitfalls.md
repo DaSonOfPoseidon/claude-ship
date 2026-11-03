@@ -265,6 +265,8 @@ review finds a new class.
 - **A repo-local setting can silently turn a global layer off.** The pre-push check is installed through the global
   `core.hooksPath`, and a repo's own `core.hooksPath` (husky, set by an install script rather than by a command the gate
   reads) replaces it: every push then skips the check, whatever started it. The gate checked the setting only before a
-  canonical push, so a chained or wrapped push in such a repo went through unreviewed. When a protection is a global layer,
-  check its effective value where Claude runs, for every command, not only before the command that needs it; a lookup that
-  costs a network call goes behind the cheap local check (docs/gate.md › Pre-push check).
+  canonical push, so a chained or wrapped push in such a repo went through unreviewed. Checking it for the repos a command
+  names (`cd`, `git -C`, wrappers, relative chains, `cd -P`) never ended: each spelling was the next finding (claude-ship #222).
+  When a protection is a global layer, check its state where it lives (the config of every checkout, and the session's), for
+  every command, instead of working out which repo a command means; a lookup that costs a network call goes behind the cheap
+  local check (docs/gate.md › Pre-push check).

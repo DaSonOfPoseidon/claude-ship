@@ -775,8 +775,6 @@ else
 	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
 	| ($cds[] | (.Args[1:] | map(wv)) as $cw
 		| if ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cda \($cw[0])" else "cdabad" end),
-	([.. | objects | select(.Type == "CallExpr") | words as $w | range(0; $w | length) as $i
-		| select($w[$i] != null and ($w[$i] | bn) == "git" and (($w[0] // "") | bn | test("^(echo|printf)$") | not)) | gitopts($w[$i:]) | .cs[] | select(. != null and . != "" and (contains("\n") | not))] | unique[] | "cdc \(.)"),
 	((if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
 	| ($ch[:-1]) as $init
 	| (if ($ch | length) > 0 then ($ch[-1] | pipefirst | gitinfo) else null end) as $g
@@ -816,14 +814,20 @@ remote_slugs() {
 
 # The pre-push check (hooks/git-hook.sh) is what refuses a push the gate did not start a review for, so it has to be on wherever
 # Claude runs a command in an opted-in repo: core.hooksPath at the deployed git-hooks (install.sh sets it) and an executable
-# pre-push in it. A repo's own core.hooksPath (husky, say) replaces it for every push, whatever the command says, so this is
-# asked of every Bash command, with no reading of its text (docs/gate.md › Pre-push check). The value git would use counts.
+# pre-push in it. A repo's own core.hooksPath (husky, say) replaces it for every push, whatever the command says. The gate does not
+# try to tell which repo a command works in (a `cd`, `git -C`, a script: the spellings never ended). It asks, with no reading of
+# the command, of every Bash command (docs/gate.md › Pre-push check › The gate keeps it on):
+#   - the checkouts under $scan_root (/srv/CodeServer): does their local config (.git/config, config.worktree) override it?
+#   - the session's own repo: the same, and is the hook on there at all (hooks_ok: the value git would use)?
+# Plain file reads first; git and gh only run for a checkout that looks off.
 want_hooks=${CLAUDE_HOME:-$HOME/.claude}/git-hooks
+scan_root=${REVIEW_GATE_SCAN_ROOT:-/srv/CodeServer}
 hooks_ok() {
 	[ "$(git config --get core.hooksPath)" = "$want_hooks" ] && [ -f "$want_hooks/pre-push" ] && [ -x "$want_hooks/pre-push" ]
 }
+# no_hooks <dir> <what git would use there>
 no_hooks() {
-	echo "Blocked: the review gate's pre-push check isn't active in this repo (core.hooksPath is '$(git config --get core.hooksPath)'), so a push that isn't a plain \`git push\` would skip the review. Ask the user to fix it: run claude-ship's ./install.sh, and \`git config --local --unset core.hooksPath\` here if the repo sets its own." >&2
+	echo "Blocked: the review gate's pre-push check isn't active in $1 (core.hooksPath is '$2'), so a push that isn't a plain \`git push\` would skip the review there. Ask the user to fix it: run claude-ship's ./install.sh, and \`git config --local --unset core.hooksPath\` in $1 if the repo sets its own." >&2
 	exit 2
 }
 # `~` and `~/…` are the home directory; the tree reads `~name` as not literal.
@@ -834,10 +838,10 @@ expand_dir() {
 	*) printf '%s' "$1" ;;
 	esac
 }
-# The directories the tree's `cd` (prefix `cda`) and `git -C` (`cdc`) targets may name, one per line, `~` expanded: an absolute
-# one as it is; a relative one from the session's directory and from the directory of the target before it (`cd a && cd b`, or
-# `cd a && git -C b …`), the two ways a chain can read it. Every occurrence counts (`cd .. && cd ..` climbs twice), and the
-# resulting directories are deduplicated, not the words.
+# The directories the tree's literal `cd` targets (lines `cda`) may name, one per line, `~` expanded: an absolute one as it is; a
+# relative one from the session's directory and from the directory of the target before it (`cd a && cd b`), the two ways a chain
+# can read it. Every occurrence counts (`cd .. && cd ..` climbs twice), and the resulting directories are deduplicated, not the
+# words. Only the `gh api` placeholder lookup below uses it.
 tree_dirs() {
 	printf '%s\n' "$ptree" | sed -n "s/^$1 //p" | awk -v cwd="$cwd" -v hn="$hn" '
 		function emit(p) { if (!(p in out)) { out[p] = 1; print p } }
@@ -853,36 +857,106 @@ tree_dirs() {
 			}
 		}'
 }
-# The directories a command may run git in: the session's, and every literal `cd` and `git -C` target the tree shows, whether or
-# not it runs first (a relative one is taken from the session's directory). A target that is not a literal path (a variable, a
-# substitution) is built at run time, outside the gate's scope (AGENTS.md › Gate scope). Only a repo with the hook off is
-# asked for its opt-in, so a normal setup costs two `git` calls per directory.
-hooks_in() {
-	[ -d "$1" ] || return 0
-	(cd "$1" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1) || return 0
-	(cd "$1" && hooks_ok) && return 0
-	hk_slugs=$(cd "$1" && remote_slugs)
+# hooks_overrides <config file>...: "<file><TAB><value>" for every core.hooksPath in them that is not the deployed directory (a
+# `~/` start is the home directory). The key counts in [core] only, in any case.
+hooks_overrides() {
+	awk -v want="$want_hooks" -v hn="$hn" '
+		FNR == 1 { core = 0 }
+		/^[ \t]*\[/ { core = (tolower($0) ~ /^[ \t]*\[[ \t]*core[ \t]*\]/); next }
+		core && tolower($0) ~ /^[ \t]*hookspath[ \t]*=/ {
+			v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v)
+			if (v == "~") v = hn; else if (substr(v, 1, 2) == "~/") v = hn substr(v, 2)
+			if (v != want) print FILENAME "\t" v
+		}' "$@"
+}
+# The git directory that holds a checkout's config, from a directory inside it: .git is a directory, or a file `gitdir: X` of a
+# linked worktree (then the shared config is in X/commondir). Prints the config files that exist, nothing outside a repo.
+repo_configs() {
+	rc_d=$1
+	while :; do
+		if [ -d "$rc_d/.git" ]; then
+			rc_g=$rc_d/.git
+			break
+		elif [ -f "$rc_d/.git" ]; then
+			rc_g=$(sed -n 's/^gitdir:[ ]*//p' "$rc_d/.git" | head -1)
+			case $rc_g in /*) ;; *) rc_g=$rc_d/$rc_g ;; esac
+			break
+		fi
+		[ "$rc_d" != / ] && [ -n "$rc_d" ] || return 0
+		rc_d=${rc_d%/*}
+		[ -n "$rc_d" ] || rc_d=/
+	done
+	rc_c=$rc_g
+	[ ! -f "$rc_g/commondir" ] || {
+		rc_c=$(head -1 "$rc_g/commondir")
+		case $rc_c in /*) ;; *) rc_c=$rc_g/$rc_c ;; esac
+	}
+	for rc_f in "$rc_c/config" "$rc_g/config.worktree" "$rc_c/config.worktree"; do
+		[ -f "$rc_f" ] && printf '%s\n' "$rc_f"
+	done
+}
+# Is the repo around <dir> opted in? Fails closed (blocks) when GitHub can't say.
+hooks_optin() {
+	hk_slugs=$(cd "$1" 2>/dev/null && remote_slugs)
 	readable_slugs "$hk_slugs"
 	for hk_slug in $hk_slugs; do
 		if ! hk_flag=$(autonomous "$hk_slug"); then
-			echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $hk_slug from GitHub, and the pre-push check isn't active in $1. Check \`gh auth status\` and retry." >&2
+			echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $hk_slug from GitHub, and the pre-push check is overridden in $1. Check \`gh auth status\` and retry." >&2
 			exit 2
 		fi
-		[ -z "$hk_flag" ] || { (cd "$1" && no_hooks) || exit 2; }
+		[ -z "$hk_flag" ] || return 0
 	done
+	return 1
 }
-hooks_in "$cwd"
-hk_dirs=$(tree_dirs 'cd[ac]')
-hk_ifs=$IFS
-IFS=$tamper_nl
-set -f
-for hk_d in $hk_dirs; do
-	IFS=$hk_ifs
-	hooks_in "$hk_d"
-	IFS=$tamper_nl
+# Plain file reads: the checkouts under the scan root, and the session's own repo.
+set --
+for hk_f in "$scan_root"/*/.git/config "$scan_root"/*/.git/config.worktree "$scan_root"/*/.git/worktrees/*/config.worktree; do
+	[ -f "$hk_f" ] && set -- "$@" "$hk_f"
 done
-set +f
-IFS=$hk_ifs
+hk_found=
+if [ $# -gt 0 ]; then
+	hk_found=$(hooks_overrides "$@")
+fi
+hk_own=$(repo_configs "$cwd")
+hk_own_found=
+if [ -n "$hk_own" ]; then
+	hk_old=$IFS
+	IFS=$tamper_nl
+	set -f
+	set -- $hk_own
+	set +f
+	IFS=$hk_old
+	hk_own_found=$(hooks_overrides "$@")
+fi
+hk_tab=$(printf '	')
+# hooks_block <lines of "file<TAB>value"> [dir]: blocks when the repo of a file (or <dir>) is opted in.
+hooks_block() {
+	case $1 in *[![:space:]]*) ;; *) return 0 ;; esac
+	hb_ifs=$IFS
+	IFS=$tamper_nl
+	set -f
+	for hb_line in $1; do
+		IFS=$hb_ifs
+		hb_val=${hb_line#*"$hk_tab"}
+		hb_dir=${2:-${hb_line%%"$hk_tab"*}}
+		[ -n "${2:-}" ] || hb_dir=${hb_dir%%/.git/*}
+		if hooks_optin "$hb_dir"; then
+			no_hooks "$hb_dir" "$hb_val"
+		fi
+		IFS=$tamper_nl
+	done
+	set +f
+	IFS=$hb_ifs
+}
+hooks_block "$hk_found"
+hooks_block "$hk_own_found" "$cwd"
+# The session's repo with no override of its own can still be off: the global setting missing or pointing elsewhere (install.sh
+# not run), or the hook gone. The common case is read from the global config without running git.
+if [ -n "$hk_own" ] && { [ ! -x "$want_hooks/pre-push" ] || ! grep -Fqs "$want_hooks" "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; }; then
+	if hooks_optin "$cwd" && ! (cd "$cwd" && hooks_ok); then
+		no_hooks "$cwd" "$(cd "$cwd" && git config --get core.hooksPath)"
+	fi
+fi
 gh_api='(^|[^[:alnum:]_.-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
 # Nothing else is the gate's to read: a command that is neither a canonical push nor a `gh api` call passes, whatever its text
 # says, since the pre-push check refuses an unreviewed push however it started (docs/gate.md › Command reading). A `gh api`

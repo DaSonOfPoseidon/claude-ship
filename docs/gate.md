@@ -265,16 +265,28 @@ git does. The stubs `exec sh '<dest>/hooks/git-hook.sh' <name> "$@"`.
 
 **The gate keeps it on.** `push --no-verify` and a write of `core.hooksPath` (`git config` in any form but a read,
 `-c core.hooksPath=…`, `--config-env=core.hooksPath=…`, the key in any case) are denied wherever the gate sees them, read
-from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped). Every Bash command run in an opted-in
-repo also blocks unless `git config --get core.hooksPath` there is `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` and its
-`pre-push` is executable, with no reading of the command's text: a push the gate does not start a review for is left to the hook,
-and a repo's own `core.hooksPath` (husky and the like, often set by an install script) replaces ours for every push, so the
-check can only be known to hold by looking at the setting. The value git would use counts, a repo's own included. It looks at
-the session's directory and every literal `cd` and `git -C` target in the command (from the tree, whether or not it runs first; a
-relative one is taken from the session's directory and from the target before it; a target built at run time is out of scope), and only while the hook is off does it ask GitHub for the opt-in, so a normal
-setup costs two `git` calls per directory and a repo that never opted in is left alone. The
-block tells the user what to run (`./install.sh`, or `git config --local --unset core.hooksPath` in the repo: Claude can't, the
-write is denied above). `--no-verify` is no longer one of the push options the gate allows (Push shape).
+from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped).
+
+On top of that, every Bash command is checked for the hook being on, with no reading of the command's text: a push the gate
+does not start a review for is left to the hook, and a repo's own `core.hooksPath` (husky and the like, often set by an install
+script) replaces ours for every push. The gate does not try to tell which repo a command works in (a `cd`, `git -C`, a script, a
+wrapper: every spelling the scan missed was the next finding, claude-ship #222), it looks at the checkouts instead:
+
+- the local config of every checkout directly under `/srv/CodeServer` (`.git/config`, `.git/config.worktree`, and the
+  `config.worktree` of its linked worktrees under `.git/worktrees`), and of the session's own repo (found from the working
+  directory; a linked worktree's shared config too), for a `core.hooksPath` in `[core]` that isn't the deployed directory
+  (`~/` is the home directory). `REVIEW_GATE_SCAN_ROOT` replaces `/srv/CodeServer`; the tests use it so the machine's own
+  checkouts stay out of them;
+- the session's repo, whether the hook is on there at all: `git config --get core.hooksPath` is
+  `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` and its `pre-push` is executable (install.sh not run, or the hook deleted).
+
+These are plain file reads while all is well: the global config is searched for the deployed path, and `git` and `gh` run only for
+a checkout that looks off, which is then asked for its opt-in (`CLAUDE_AUTONOMOUS`; GitHub unreachable blocks). An override in a
+repo that has not opted in is left alone. For an opted-in one, every Bash command blocks, wherever it runs, with the path, the value
+and what the user should run (`./install.sh`, or `git config --local --unset core.hooksPath` in that repo: Claude can't, the write is
+denied above). Includes (`include.path`) and a `GIT_DIR` or `GIT_CONFIG_*` set in the command are not read (Gate scope), and a
+checkout outside `/srv/CodeServer` is covered only while it is the session's own. A canonical push is also checked by git's own
+value in the directory it runs in (Push shape). `--no-verify` is no longer one of the push options the gate allows (Push shape).
 
 The stubs in `~/.claude/git-hooks` are protected like the installed hooks (Tamper protection): a Write, or a Bash command
 that writes there, blocks. The lines git sends are saved to a temp file first; if that save fails (full disk, file size
