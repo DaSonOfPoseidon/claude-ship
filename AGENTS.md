@@ -25,6 +25,9 @@ Codex's PR review and the pre-push review gate both follow this section. Rate ev
   - a link, copy or rename onto a protected file;
   - a setting changed only to skip a check (`HOME`, `GIT_CONFIG_*`, `-c` keys that turn hooks off).
 
+  Checks that block a literal form today stay (a `cp`, `mv` or `ln` that names a protected path); what is out
+  of scope is a finding that a variant of these classes gets past them.
+
   Branch protection doesn't read command text: a way past it that a plausible command takes is in scope.
   `docs/gate.md` › Threat model has the examples.
 

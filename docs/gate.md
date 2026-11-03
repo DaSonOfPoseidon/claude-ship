@@ -40,6 +40,9 @@ The first three classes include the P0s of claude-ship #191 (`rg --hostname-bin`
 `declare -n ref='a[$(git push)]'`, `PERL5OPT=-M… shasum`, `printf '%n'`, `exec -l bash`): one codex round each,
 none a command Claude would run.
 
+Checks that block a literal form today stay (a `cp`, `mv` or `ln` that names a protected path, the writing-tool
+list in Tamper protection); what is out of scope is a finding that a variant of these classes gets past them.
+
 **Layers that don't read text.** Branch protection requiring `codex-review` blocks a merge whatever the command
 was. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch skips it. A way past
 branch protection that a plausible command takes is in scope.
