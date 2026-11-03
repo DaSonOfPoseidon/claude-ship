@@ -768,7 +768,10 @@ def gitinfo:
 def iscd: .Cmd.Type == "CallExpr" and ((.Cmd | words)[0] == "cd");
 if .Type != "File" then "cand", "shape bad it is no syntax tree"
 else
-	(if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
+	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
+	| ($cds[] | (.Args[1:] | map(wv)) as $cw
+		| if ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cda \($cw[0])" else "cdabad" end),
+	((if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
 	| ($ch[:-1]) as $init
 	| (if ($ch | length) > 0 then ($ch[-1] | pipefirst | gitinfo) else null end) as $g
 	| if $g == null or $g.sub != "push" or (($init | all(iscd)) | not) then empty
@@ -780,7 +783,7 @@ else
 		"Cn \($g.cs | length)",
 		(if ($g.cs | length) == 1 and $g.cs[0] != null and $g.cs[0] != "" and ($g.cs[0] | contains("\n") | not) then "C \($g.cs[0])" else empty end),
 		(try (shape | "shape ok", (.a[] | "a \(.)")) catch "shape bad \(.)")
-	end
+	end)
 end'
 ptree=$(printf '%s' "$tree" | jq -r "$push_jq") || unreadable "command syntax tree"
 cand=
@@ -1070,15 +1073,28 @@ fi
 
 # The repos a `gh api` write names, each checked for opt-in. `{owner}/{repo}` and `here` are whichever repo gh picks
 # from the remotes where it runs, so every GitHub remote counts, in the session's directory, the `cd` target and
-# the `git -C` one.
+# the `git -C` one of a push, and every `cd` the tree shows.
 if [ -n "$api_write" ]; then
 	api_slugs=$(printf '%s\n' "$api_write" | sed -n 's/^repo //p' | sort -u)
 	placeholder=
 	printf '%s\n' "$api_slugs" | grep -Fqx '{owner}/{repo}' && placeholder=1
 	if [ -n "$placeholder" ] || printf '%s\n' "$api_write" | grep -qx here; then
+		# Every `cd` the tree shows counts, whether or not it runs first or the command is a push: gh picks the repo from
+		# wherever it runs. One that is not a single literal path (or is `cd -`) leaves the repo unknown, so it blocks.
+		cd_all=$(printf '%s\n' "$ptree" | sed -n 's/^cda //p')
+		if printf '%s\n' "$ptree" | grep -qx cdabad || printf '%s\n' "$cd_all" | grep -q '^-'; then
+			echo "Blocked: this \`gh api\` call writes with \`{owner}/{repo}\` (or no repo), and the review gate can't tell which repo gh picks after a \`cd\` it can't follow. Use one literal \`cd <dir> &&\`, or name the repo." >&2
+			exit 2
+		fi
 		here=$(
 			remote_slugs
 			for d in "$start" "$cd_dir"; do
+				(cd "$d" 2>/dev/null && remote_slugs)
+			done
+			printf '%s\n' "$cd_all" | while IFS= read -r d; do
+				[ -n "$d" ] || continue
+				d=$(expand_dir "$d")
+				case $d in /*) ;; *) d=$cwd/$d ;; esac
 				(cd "$d" 2>/dev/null && remote_slugs)
 			done
 		)

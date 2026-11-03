@@ -133,7 +133,9 @@ shows `gh api` and its tree names a literal `gh` anywhere (`gh`, `/usr/bin/gh`, 
 run by `sh -c` or `eval`; a string the gate can't parse counts as naming one). A heredoc body, an `echo` or a `grep` that only
 mentions `gh api -X DELETE …` names no `gh`, so it is data and passes. A scanned call writes when its method isn't GET (gh's
 default once it has fields or an `--input`), and passes only if it is one of the writes the ship skill makes (REST allowlist
-below). `tests/gate-api.sh` covers it.
+below). A write that names `{owner}/{repo}` goes to whichever repo gh finds where it runs, so the opt-in lookup also asks the
+directory of every `cd` the tree shows, whether or not the command is a push (a `cd` that is not one literal path blocks).
+`tests/gate-api.sh` and `tests/gate-push.sh` cover it.
 
 `git` and `gh` may be named by a path (`/usr/bin/git`, `./gh`), so `/` counts as a word boundary before them in the text
 checks; `.`, `_` and `-` don't (`.git/`, `my-gh`).
