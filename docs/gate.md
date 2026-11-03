@@ -248,8 +248,9 @@ repo also blocks unless `git config --get core.hooksPath` there is `${CLAUDE_HOM
 `pre-push` is executable, with no reading of the command's text: a push the gate does not start a review for is left to the hook,
 and a repo's own `core.hooksPath` (husky and the like, often set by an install script) replaces ours for every push, so the
 check can only be known to hold by looking at the setting. The value git would use counts, a repo's own included. It looks at
-the session's directory (a canonical push is also asked in the directory it `cd`s or `-C`s to), and only while the hook is off
-does it ask GitHub for the opt-in, so a normal setup costs two `git` calls and a repo that never opted in is left alone. The
+the session's directory and every literal `cd` and `git -C` target in the command (from the tree, whether or not it runs first;
+a target built at run time is out of scope), and only while the hook is off does it ask GitHub for the opt-in, so a normal
+setup costs two `git` calls per directory and a repo that never opted in is left alone. The
 block tells the user what to run (`./install.sh`, or `git config --local --unset core.hooksPath` in the repo: Claude can't, the
 write is denied above). `--no-verify` is no longer one of the push options the gate allows (Push shape).
 

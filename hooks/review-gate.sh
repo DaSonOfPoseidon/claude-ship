@@ -771,6 +771,7 @@ else
 	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
 	| ($cds[] | (.Args[1:] | map(wv)) as $cw
 		| if ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cda \($cw[0])" else "cdabad" end),
+	([.. | objects | select(.Type == "CallExpr") | words | select(length > 0 and .[0] != null and (.[0] | bn) == "git") | gitopts(.) | .cs[] | select(. != null and . != "" and (contains("\n") | not))] | unique[] | "cdc \(.)"),
 	((if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
 	| ($ch[:-1]) as $init
 	| (if ($ch | length) > 0 then ($ch[-1] | pipefirst | gitinfo) else null end) as $g
@@ -820,18 +821,46 @@ no_hooks() {
 	echo "Blocked: the review gate's pre-push check isn't active in this repo (core.hooksPath is '$(git config --get core.hooksPath)'), so a push that isn't a plain \`git push\` would skip the review. Ask the user to fix it: run claude-ship's ./install.sh, and \`git config --local --unset core.hooksPath\` here if the repo sets its own." >&2
 	exit 2
 }
-# Only the session's repo is asked, and only while it is off: the lookup of the opt-in variable (GitHub) runs just then.
-if [ -d "$cwd" ] && (cd "$cwd" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1) && ! (cd "$cwd" && hooks_ok); then
-	hk_slugs=$(cd "$cwd" && remote_slugs)
+# `~` and `~/…` are the home directory; the tree reads `~name` as not literal.
+expand_dir() {
+	case $1 in
+	'~') printf '%s' "$hn" ;;
+	\~/*) printf '%s%s' "$hn" "${1#\~}" ;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+# The directories a command may run git in: the session's, and every literal `cd` and `git -C` target the tree shows, whether or
+# not it runs first (a relative one is taken from the session's directory). A target that is not a literal path (a variable, a
+# substitution) is built at run time, outside the gate's scope (AGENTS.md › Gate scope). Only a repo with the hook off is
+# asked for its opt-in, so a normal setup costs two `git` calls per directory.
+hooks_in() {
+	[ -d "$1" ] || return 0
+	(cd "$1" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1) || return 0
+	(cd "$1" && hooks_ok) && return 0
+	hk_slugs=$(cd "$1" && remote_slugs)
 	readable_slugs "$hk_slugs"
 	for hk_slug in $hk_slugs; do
 		if ! hk_flag=$(autonomous "$hk_slug"); then
-			echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $hk_slug from GitHub, and the pre-push check isn't active here. Check \`gh auth status\` and retry." >&2
+			echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $hk_slug from GitHub, and the pre-push check isn't active in $1. Check \`gh auth status\` and retry." >&2
 			exit 2
 		fi
-		[ -z "$hk_flag" ] || { (cd "$cwd" && no_hooks) || exit 2; }
+		[ -z "$hk_flag" ] || { (cd "$1" && no_hooks) || exit 2; }
 	done
-fi
+}
+hooks_in "$cwd"
+hk_dirs=$(printf '%s\n' "$ptree" | sed -n 's/^cd[ac] //p' | sort -u)
+hk_ifs=$IFS
+IFS=$tamper_nl
+set -f
+for hk_d in $hk_dirs; do
+	IFS=$hk_ifs
+	hk_d=$(expand_dir "$hk_d")
+	case $hk_d in /*) ;; *) hk_d=$cwd/$hk_d ;; esac
+	hooks_in "$hk_d"
+	IFS=$tamper_nl
+done
+set +f
+IFS=$hk_ifs
 gh_api='(^|[^[:alnum:]_.-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
 # Nothing else is the gate's to read: a command that is neither a canonical push nor a `gh api` call passes, whatever its text
 # says, since the pre-push check refuses an unreviewed push however it started (docs/gate.md › Command reading). A `gh api`
@@ -1054,14 +1083,6 @@ where=$cwd
 cant_tell() {
 	echo "Blocked: the review gate can't tell which repo this pushes: $1. Push from the worktree itself, or use \`cd <dir> &&\` or \`git -C <dir> push\` with one literal path (\`~\` is fine; not \`-\`, a variable or a second \`cd\`)." >&2
 	exit 2
-}
-# `~` and `~/…` are the home directory; the tree reads `~name` as not literal.
-expand_dir() {
-	case $1 in
-	'~') printf '%s' "$hn" ;;
-	\~/*) printf '%s%s' "$hn" "${1#\~}" ;;
-	*) printf '%s' "$1" ;;
-	esac
 }
 if [ -n "$cand" ]; then
 	cdn=$(printf '%s\n' "$ptree" | sed -n 's/^cdn //p')
