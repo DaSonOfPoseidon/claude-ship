@@ -829,6 +829,23 @@ expand_dir() {
 	*) printf '%s' "$1" ;;
 	esac
 }
+# The directories the tree's `cd` (prefix `cda`) and `git -C` (`cdc`) targets may name, one per line, `~` expanded: an absolute
+# one as it is; a relative one from the session's directory and from the directory of the target before it (`cd a && cd b`, or
+# `cd a && git -C b …`), the two ways a chain can read it.
+tree_dirs() {
+	printf '%s\n' "$ptree" | sed -n "s/^$1 //p" | awk -v cwd="$cwd" -v hn="$hn" '
+		!seen[$0]++ {
+			d = $0
+			if (d == "~") d = hn
+			else if (substr(d, 1, 2) == "~/") d = hn substr(d, 2)
+			if (substr(d, 1, 1) == "/") { print d; chain = d }
+			else {
+				print cwd "/" d
+				if (chain != "") print chain "/" d
+				chain = (chain == "" ? cwd : chain) "/" d
+			}
+		}'
+}
 # The directories a command may run git in: the session's, and every literal `cd` and `git -C` target the tree shows, whether or
 # not it runs first (a relative one is taken from the session's directory). A target that is not a literal path (a variable, a
 # substitution) is built at run time, outside the gate's scope (AGENTS.md › Gate scope). Only a repo with the hook off is
@@ -848,14 +865,12 @@ hooks_in() {
 	done
 }
 hooks_in "$cwd"
-hk_dirs=$(printf '%s\n' "$ptree" | sed -n 's/^cd[ac] //p' | sort -u)
+hk_dirs=$(tree_dirs 'cd[ac]')
 hk_ifs=$IFS
 IFS=$tamper_nl
 set -f
 for hk_d in $hk_dirs; do
 	IFS=$hk_ifs
-	hk_d=$(expand_dir "$hk_d")
-	case $hk_d in /*) ;; *) hk_d=$cwd/$hk_d ;; esac
 	hooks_in "$hk_d"
 	IFS=$tamper_nl
 done
@@ -1138,10 +1153,7 @@ if [ -n "$api_write" ]; then
 			for d in "$start" "$cd_dir"; do
 				(cd "$d" 2>/dev/null && remote_slugs)
 			done
-			printf '%s\n' "$cd_all" | while IFS= read -r d; do
-				[ -n "$d" ] || continue
-				d=$(expand_dir "$d")
-				case $d in /*) ;; *) d=$cwd/$d ;; esac
+			tree_dirs cda | while IFS= read -r d; do
 				(cd "$d" 2>/dev/null && remote_slugs)
 			done
 		)
