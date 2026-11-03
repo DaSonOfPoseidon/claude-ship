@@ -122,8 +122,9 @@ not look at the chain, and the hook refuses the push if the new commit has no re
 for real). `gh pr create` starts no review either: the PR covers a HEAD the hook already stopped from being pushed unreviewed.
 
 The pre-push check is the layer that binds the cases the gate lets by. What the gate still reads in *every* command is the
-tamper check, the waiver and variable checks, and the denials that keep the hook on (`push --no-verify`, a write of
-`core.hooksPath`: Pre-push check › The gate keeps it on), all before the trigger above.
+tamper check, the waiver and variable checks, the denials that keep the hook on (`push --no-verify`, a write of
+`core.hooksPath`) and whether the hook is on in the session's repo (all in Pre-push check › The gate keeps it on), all before
+the trigger above.
 
 **Quoting.** A canonical push, or a command with a `gh api` call, whose quoting the scanner can't read (it already holds a
 marker, or the push's own words have literal separators, quotes, `$` or newlines) can't be checked word by word, so it blocks.
@@ -242,10 +243,15 @@ git does. The stubs `exec sh '<dest>/hooks/git-hook.sh' <name> "$@"`.
 
 **The gate keeps it on.** `push --no-verify` and a write of `core.hooksPath` (`git config` in any form but a read,
 `-c core.hooksPath=…`, `--config-env=core.hooksPath=…`, the key in any case) are denied wherever the gate sees them, read
-from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped). A pushing command in an opted-in repo
-also blocks unless `git config --get core.hooksPath` is `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` and its `pre-push` is
-executable: otherwise the push would skip the check (run `./install.sh`). The value git would use counts, a repo's own
-included. `--no-verify` is no longer one of the push options the gate allows (Push shape).
+from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped). Every Bash command run in an opted-in
+repo also blocks unless `git config --get core.hooksPath` there is `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` and its
+`pre-push` is executable, with no reading of the command's text: a push the gate does not start a review for is left to the hook,
+and a repo's own `core.hooksPath` (husky and the like, often set by an install script) replaces ours for every push, so the
+check can only be known to hold by looking at the setting. The value git would use counts, a repo's own included. It looks at
+the session's directory (a canonical push is also asked in the directory it `cd`s or `-C`s to), and only while the hook is off
+does it ask GitHub for the opt-in, so a normal setup costs two `git` calls and a repo that never opted in is left alone. The
+block tells the user what to run (`./install.sh`, or `git config --local --unset core.hooksPath` in the repo: Claude can't, the
+write is denied above). `--no-verify` is no longer one of the push options the gate allows (Push shape).
 
 The stubs in `~/.claude/git-hooks` are protected like the installed hooks (Tamper protection): a Write, or a Bash command
 that writes there, blocks. The lines git sends are saved to a temp file first; if that save fails (full disk, file size

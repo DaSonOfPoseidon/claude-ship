@@ -141,15 +141,32 @@ chmod -x "$HOME/.claude/git-hooks/pre-push"
 expect 2 'git push -u origin HEAD'
 rm -f "$HOME/.claude/git-hooks/pre-push"
 expect 2 'git push -u origin HEAD'
-# A command that is no push is not held to it, and neither is a repo that never opted in.
-expect 0 'git status'
+# Every Bash command in an opted-in repo is held to it, not only a push: a push that is no canonical push is left to the
+# pre-push check, so the check must be on whatever the command says (docs/gate.md › Pre-push check). Here the executable
+# pre-push is gone, so a plain `ls` blocks too.
+expect 2 'git status'
+expect 2 'ls'
 printf '#!/bin/sh\nexit 0\n' >"$HOME/.claude/git-hooks/pre-push"
 chmod +x "$HOME/.claude/git-hooks/pre-push"
 # A repo-level override of core.hooksPath is what git would use, so it counts.
 git -C "$repo" config core.hooksPath /elsewhere
 expect 2 'git push -u origin HEAD'
+# A repo's own core.hooksPath (husky and the like) switches the pre-push check off for any push, however it starts: every command
+# blocks, with advice for the user, and the global setup passes everything that is no canonical push.
+git -C "$repo" config core.hooksPath .husky
+expect 2 'git commit -m x && git push'
+expect 2 "bash -c 'git push'"
+expect 2 'ls'
+grep -q 'core.hooksPath is .\.husky' "$tmp/err" && grep -q 'unset' "$tmp/err" || {
+	echo "FAIL: the block for a repo-local core.hooksPath lacks its advice"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
 git -C "$repo" config --unset core.hooksPath
 expect 0 'git push -u origin HEAD'
+expect 0 'ls'
+expect 0 'git commit -m x && git push'
+expect 0 "bash -c 'git push'"
 # The deployed location follows CLAUDE_HOME, as install.sh does.
 mkdir -p "$tmp/chome/git-hooks"
 printf '#!/bin/sh\nexit 0\n' >"$tmp/chome/git-hooks/pre-push"
@@ -269,6 +286,11 @@ expect_off() {
 	fi
 }
 expect_off 0 'git push origin HEAD && echo done'
+# A repo that never opted in is none of the gate's business, whatever its core.hooksPath says.
+git -C "$repo" config core.hooksPath .husky
+expect_off 0 'ls'
+expect_off 0 'git commit -m x && git push'
+git -C "$repo" config --unset core.hooksPath
 expect_off 0 'git push origin HEAD > out.txt'
 # ...but a directory the gate can't read could be an opted-in repo, so a canonical push from one blocks there too.
 expect_off 2 'cd "$d" && git push origin HEAD'
