@@ -163,6 +163,18 @@ grep -q 'core.hooksPath is .\.husky' "$tmp/err" && grep -q 'unset' "$tmp/err" ||
 	fail=1
 }
 git -C "$repo" config --unset core.hooksPath
+# ...also in another opted-in repo the command reaches by a literal `cd` or `git -C`, not only the session's own.
+git init -q -b feat "$tmp/husky"
+git -C "$tmp/husky" remote add origin https://github.com/acme/other.git
+git -C "$tmp/husky" config core.hooksPath .husky
+expect 2 "cd $tmp/husky && git commit -m x && git push"
+expect 2 "git -C $tmp/husky commit -m x && git -C $tmp/husky push"
+expect 2 "true || cd $tmp/husky; ls"
+expect 2 "git -C ../husky status"
+expect 0 "ls $tmp/husky"
+expect 0 "cd $tmp && ls"
+git -C "$tmp/husky" config --unset core.hooksPath
+expect 0 "cd $tmp/husky && git commit -m x && git push"
 expect 0 'git push -u origin HEAD'
 expect 0 'ls'
 expect 0 'git commit -m x && git push'
