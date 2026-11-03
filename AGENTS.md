@@ -46,7 +46,7 @@ or anything CI already checks (shellcheck, actionlint).
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,
   `cut`, `tr`, `head`, `tail`, `cp`, `printf`, …), plus `git`, `gh`, `jq`, and the widely supported extras already
   in use: `grep -o`, `grep -m`, `grep -A` (tests), `sed -E`, `head -N` and `tail -N` (POSIX is `-n N`), `mktemp`,
-  `timeout`, `date -u +FORMAT`, and awk writing to `/dev/stderr`. No GNU-only flags (`sed -i`, `date -d`,
+  `timeout`, `date -u +FORMAT` and `date +%s`, and awk writing to `/dev/stderr`. No GNU-only flags (`sed -i`, `date -d`,
   `grep -P`, `readlink -f`, `stat -c`).
 - Every reviewer run logs its cost. Keep usage low: Sonnet finds, Haiku verifies and checks docs, and no
   reviewer uses Opus. In orchestrated mode, only the user's own main session runs on Opus; the agents run on

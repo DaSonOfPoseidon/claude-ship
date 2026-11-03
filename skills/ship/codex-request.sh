@@ -61,7 +61,8 @@ if [ "$head_repo" != - ]; then
 		--jq ".[] | select(.activity_type == \"push\" or .activity_type == \"force_push\" or .activity_type == \"branch_creation\") | select(.after == \"$want\") | .timestamp")
 	pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 	if [ -n "$pushed_at" ]; then
-		# Only the owner and collaborators can request a review. ISO 8601 times to the second compare as text.
+		# Only requests from the owner and collaborators count (anyone can comment `@codex review`).
+		# ISO 8601 times to the second compare as text.
 		requests=$(gh api --paginate "repos/$slug/issues/$pr/comments" \
 			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
 		requested_at=$(printf '%s\n' "$requests" | cut -c1-19 | sort | tail -1)

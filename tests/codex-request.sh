@@ -149,7 +149,7 @@ run 'answered request' 0 1 1 o/r "$sha"
 setup "$sha" 600 '300 OWNER'
 answer 500
 run 'answer before the request' 0 0 1 o/r "$sha"
-# Only the owner and collaborators can request.
+# Only requests from the owner and collaborators count.
 setup "$sha" 600 '300 NONE
 200 MEMBER'
 run 'outsiders do not count' 0 1 1 o/r "$sha"
