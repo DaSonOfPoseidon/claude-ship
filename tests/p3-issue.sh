@@ -3,9 +3,12 @@
 # label, only labels the repo has, and an opt-in milestone from the branch's PR or fixed issues (claude-ship #54).
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tests/lib/gitenv.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
+# Its repos push to a local bare repo: nothing of the machine's git config (core.hooksPath above all) applies.
+isolate_git "$tmp"
 # The fake gh reads repo variables from V_<name>, labels from $tmp/labels, the PR's milestone from PR_MS and
 # issue N's from MS_<N>. `issue create` logs one argument per line to $tmp/args and fails on a milestone
 # named `closed` or the label `area:typo`, which the repo doesn't have.

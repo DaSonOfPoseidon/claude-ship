@@ -7,6 +7,9 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp/home"
+# git's global config: every install below gets its own file (GIT_CONFIG_GLOBAL), never the machine's.
+GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_NOSYSTEM
 mkdir -p "$HOME" "$tmp/src/scripts"
 git() { command git -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@"; }
 fail=0
@@ -54,7 +57,7 @@ mkdir -p "$tmp/dest/agents"
 : >"$tmp/dest/agents/mine.md"
 printf '%s\n' "$both" >"$tmp/dest/settings.json"
 cp "$tmp/dest/settings.json" "$tmp/settings.before"
-if ! CLAUDE_HOME="$tmp/dest" sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1; then
+if ! GIT_CONFIG_GLOBAL="$tmp/gitconfig-main" CLAUDE_HOME="$tmp/dest" sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1; then
 	echo "FAIL: install.sh exited non-zero"
 	sed 's/^/  /' "$tmp/out"
 	fail=1
@@ -121,7 +124,7 @@ run_case() {
 	rm -rf "$cdir"
 	mkdir -p "$cdir"
 	[ -f "$start" ] && cp "$start" "$cdir/settings.json"
-	CLAUDE_HOME=$cdir PATH=$case_path "$sh_bin" "${install_sh:-$tmp/checkout/install.sh}" >"$tmp/out" 2>&1
+	GIT_CONFIG_GLOBAL="$tmp/gitconfig-$1" CLAUDE_HOME=$cdir PATH=$case_path "$sh_bin" "${install_sh:-$tmp/checkout/install.sh}" >"$tmp/out" 2>&1
 	rc=$?
 	if [ -f "$start" ]; then
 		cmp -s "$start" "$cdir/settings.json" || {
@@ -351,11 +354,139 @@ has agent-hook-missing "The gate is registered"
 	fail=1
 }
 
+# The git hook stubs and core.hooksPath (docs/gate.md › Pre-push check). hk_run <dest> <global git config>: installs with
+# that config as git's global one.
+hk_run() {
+	GIT_CONFIG_GLOBAL=$2 CLAUDE_HOME=$1 sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1
+	rc=$?
+}
+# One stub per hook git 2.34 runs from the hooks directory (`git help hooks`), except the three whose presence alone changes
+# what git does.
+want_stubs='applypatch-msg commit-msg post-checkout post-commit post-index-change post-merge post-receive post-rewrite post-update
+p4-changelist p4-post-changelist p4-pre-submit p4-prepare-changelist pre-applypatch pre-auto-gc pre-commit pre-merge-commit
+pre-push pre-rebase pre-receive prepare-commit-msg post-applypatch reference-transaction sendemail-validate update'
+want_stubs=$(printf '%s\n' $want_stubs | sort)
+left_out='push-to-checkout proc-receive fsmonitor-watchman'
+gc=$tmp/gc-hooks
+: >"$gc"
+# Each destination has a valid registration, so the exit status is about the hooks alone.
+for d in hk-dest hk-dest2 hk-dest3; do
+	mkdir -p "$tmp/$d"
+	printf '%s\n' "$both" >"$tmp/$d/settings.json"
+done
+hk=$tmp/hk-dest
+hk_run "$hk" "$gc"
+[ "$rc" = 0 ] || {
+	echo "FAIL: hooks: the install exited $rc"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+[ "$(ls "$hk/git-hooks" | sort)" = "$want_stubs" ] || {
+	echo "FAIL: hooks: the stubs aren't the expected set"
+	printf '%s\n' "$want_stubs" >"$tmp/stubs.want"
+	ls "$hk/git-hooks" | sort >"$tmp/stubs.got"
+	diff "$tmp/stubs.want" "$tmp/stubs.got" | sed 's/^/  /'
+	fail=1
+}
+for h in $left_out; do
+	[ ! -e "$hk/git-hooks/$h" ] || {
+		echo "FAIL: hooks: a stub for $h, whose presence alone changes what git does"
+		fail=1
+	}
+done
+# Against git's own list, when its manual is installed.
+if listed=$(git help hooks 2>/dev/null | sed -n 's/^   \([a-z0-9-]*\)$/\1/p' | sort) && [ -n "$listed" ]; then
+	for h in $left_out; do listed=$(printf '%s\n' "$listed" | grep -vx "$h"); done
+	[ "$listed" = "$want_stubs" ] || echo "note: this git runs other hooks than the stub list (git help hooks): $(printf '%s\n' "$listed" | tr '\n' ' ')"
+fi
+for h in $want_stubs; do
+	f=$hk/git-hooks/$h
+	[ -x "$f" ] || {
+		echo "FAIL: hooks: $h isn't executable"
+		fail=1
+	}
+	[ "$(sed -n 1p "$f")" = '#!/bin/sh' ] && [ "$(sed -n 2p "$f")" = "exec sh '$hk/hooks/git-hook.sh' $h \"\$@\"" ] && [ "$(wc -l <"$f")" -eq 2 ] || {
+		echo "FAIL: hooks: $h isn't the expected stub:"
+		sed 's/^/  /' "$f"
+		fail=1
+	}
+done
+[ "$(git config -f "$gc" core.hooksPath)" = "$hk/git-hooks" ] || {
+	echo "FAIL: hooks: core.hooksPath isn't set to the stubs"
+	fail=1
+}
+has hooks "Git now runs repos' own hooks through the stubs in $hk/git-hooks"
+[ -x "$hk/hooks/git-hook.sh" ] && [ -f "$hk/hooks/gate-common.sh" ] || {
+	echo "FAIL: hooks: git-hook.sh or gate-common.sh wasn't deployed"
+	fail=1
+}
+# The stubs work: a repo's own hook runs through the deployed stub, with its arguments.
+mkdir -p "$tmp/hkrepo"
+git -C "$tmp/hkrepo" init -q
+printf '#!/bin/sh\necho "$@" >"%s/own.args"\nexit 3\n' "$tmp" >"$tmp/hkrepo/.git/hooks/post-checkout"
+chmod +x "$tmp/hkrepo/.git/hooks/post-checkout"
+(cd "$tmp/hkrepo" && "$hk/git-hooks/post-checkout" a b c)
+[ $? = 3 ] && [ "$(cat "$tmp/own.args")" = "a b c" ] || {
+	echo "FAIL: hooks: the repo's own hook didn't run through its stub"
+	fail=1
+}
+(cd "$tmp/hkrepo" && "$hk/git-hooks/pre-commit") || {
+	echo "FAIL: hooks: a stub for a hook the repo doesn't have failed"
+	fail=1
+}
+# A second run changes nothing and exits 0.
+cp -R "$hk/git-hooks" "$tmp/hk-before"
+cp "$gc" "$tmp/gc-before"
+hk_run "$hk" "$gc"
+[ "$rc" = 0 ] || {
+	echo "FAIL: hooks: the second install exited $rc"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+diff -r "$tmp/hk-before" "$hk/git-hooks" >/dev/null && cmp -s "$tmp/gc-before" "$gc" || {
+	echo "FAIL: hooks: a second install changed the stubs or the config"
+	fail=1
+}
+# core.hooksPath already something else: left alone, with its value in the message, and the exit says so.
+gc2=$tmp/gc-hooks2
+git config -f "$gc2" core.hooksPath /somewhere/else
+cp "$gc2" "$tmp/gc2-before"
+hk_run "$tmp/hk-dest2" "$gc2"
+[ "$rc" = 1 ] || {
+	echo "FAIL: hooks: another core.hooksPath should exit 1, got $rc"
+	fail=1
+}
+has hooks-other "/somewhere/else"
+has hooks-other "$tmp/hk-dest2/git-hooks"
+cmp -s "$tmp/gc2-before" "$gc2" || {
+	echo "FAIL: hooks: another core.hooksPath was changed"
+	fail=1
+}
+[ -x "$tmp/hk-dest2/git-hooks/pre-push" ] && [ -x "$tmp/hk-dest2/hooks/review-gate.sh" ] || {
+	echo "FAIL: hooks: the rest wasn't deployed next to another core.hooksPath"
+	fail=1
+}
+# Unrelated settings in the config survive the set.
+gc3=$tmp/gc-hooks3
+git config -f "$gc3" user.name keepme
+hk_run "$tmp/hk-dest3" "$gc3"
+[ "$rc" = 0 ] && [ "$(git config -f "$gc3" user.name)" = keepme ] && [ "$(git config -f "$gc3" core.hooksPath)" = "$tmp/hk-dest3/git-hooks" ] || {
+	echo "FAIL: hooks: setting core.hooksPath lost other settings or failed (exit $rc)"
+	fail=1
+}
+# A destination that isn't an absolute path can't be the value the gate wants.
+(cd "$tmp" && GIT_CONFIG_GLOBAL=$tmp/gc-hooks4 CLAUDE_HOME=relative-dest sh "$tmp/checkout/install.sh") >"$tmp/out" 2>&1
+rc=$?
+[ "$rc" = 1 ] && grep -q 'absolute path' "$tmp/out" || {
+	echo "FAIL: hooks: a relative CLAUDE_HOME should exit 1 naming the absolute path (got $rc)"
+	fail=1
+}
+
 # Without jq the registration can't be read, so the check fails (the gate needs jq too).
 nojq="$tmp/nojq-bin"
 mkdir -p "$nojq"
 unset -f git
-for t in git tar mktemp mkdir cp rm cat dirname awk sed grep tr head cmp env sort sh cut; do
+for t in git tar mktemp mkdir cp rm cat dirname awk sed grep tr head cmp env sort sh cut chmod; do
 	p=$(command -v "$t")
 	case $p in /*) ln -s "$p" "$nojq/$t" ;; esac
 done

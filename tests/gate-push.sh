@@ -4,6 +4,7 @@
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/tests/lib/shfmt.sh"
+. "$root/tests/lib/gitenv.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home"
@@ -11,6 +12,8 @@ link_shfmt "$tmp/home"
 printf '#!/bin/sh\necho true\n' >"$tmp/bin/gh"
 chmod +x "$tmp/bin/gh"
 export HOME="$tmp/home"
+# The gate wants the pre-push check active before it lets a push through (docs/gate.md › Pre-push check).
+gate_git_hooks "$HOME"
 fail=0
 n=0
 
@@ -69,6 +72,104 @@ expect 0 "'git' push \"origin\" HEAD"
 expect 0 'git pu\
 sh origin HEAD'
 expect 0 'git push origin HEAD 3>&-'
+# The git hook that checks Claude's pushes (hooks/git-hook.sh) must stay on: `--no-verify` and a write of
+# core.hooksPath skip it, so they block, with or without a push, in any spelling the tree shows. Reading the setting,
+# `git commit --no-verify` and text that only mentions the name are fine.
+expect 2 'git push --no-verify origin HEAD'
+expect 2 'git push origin HEAD --no-verify'
+expect 2 'git -C . push --no-verify'
+expect 2 'git push -u --no-verify origin HEAD'
+expect 2 "cd $repo && git push --no-verify"
+expect 2 'git push origin HEAD --no-verify 2>&1 | tail -3'
+expect 2 'sh -c "git push --no-verify"'
+expect 2 'sudo git push --no-verify'
+expect 2 'git config --global core.hooksPath /dev/null'
+expect 2 'git config core.hooksPath /dev/null'
+expect 2 'git config --unset core.hookspath'
+expect 2 'git config --global --unset-all core.hooksPath'
+expect 2 'git config --global --add core.hooksPath /x'
+expect 2 'git config --replace-all CORE.HOOKSPATH /x'
+expect 2 'git config -f /tmp/c core.hooksPath /x'
+expect 2 'git config set core.hooksPath /x'
+expect 2 'git config unset core.hooksPath'
+expect 2 'git -c core.hooksPath=/dev/null push'
+expect 2 'git -c core.hooksPath=/dev/null status'
+expect 2 'git -c core.hookspath=/dev/null status'
+expect 2 'git -ccore.hooksPath=/dev/null status'
+expect 2 'git -c user.name=t -c core.hooksPath= status'
+expect 2 'git --config-env=core.hooksPath=X status'
+expect 2 'git --config-env core.hooksPath=X status'
+expect 2 'git -C . -c core.hooksPath=/x commit -m x'
+expect 2 'sh -c "git config --global core.hooksPath /dev/null"'
+expect 2 'env FOO=1 git config core.hooksPath /x'
+expect 0 'git config --get core.hooksPath'
+expect 0 'git config --global --get core.hooksPath'
+expect 0 'git config --get-all core.hooksPath'
+expect 0 'git config --get-regexp hooks'
+expect 0 'git config --list'
+expect 0 'git config -l'
+expect 0 'git config core.hooksPath'
+expect 0 'git config --global core.hooksPath'
+expect 0 'git config get core.hooksPath'
+expect 0 'git config user.name t'
+expect 0 'git -c user.name=t status'
+expect 0 'git commit --no-verify -m x'
+expect 0 'git grep hooksPath'
+expect 0 'git log --grep hooksPath'
+expect 0 'grep -n hooksPath docs/gate.md'
+expect 0 'echo "core.hooksPath"'
+# The check before a push: the gate wants the hook active where the push runs (core.hooksPath at ours, with an
+# executable pre-push), else a push would skip the review the hook enforces. The harness HOME above has both.
+gitcfg=$HOME/.gitconfig
+cp "$gitcfg" "$tmp/gitconfig.good"
+: >"$gitcfg"
+expect 2 'git push -u origin HEAD'
+grep -q "core.hooksPath is ''" "$tmp/err" && grep -q 'install.sh' "$tmp/err" || {
+	echo "FAIL: the unset-hooksPath block lacks its advice"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+git config -f "$gitcfg" core.hooksPath /elsewhere
+expect 2 'git push -u origin HEAD'
+grep -q "core.hooksPath is '/elsewhere'" "$tmp/err" || {
+	echo "FAIL: the block doesn't name the other path"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+cp "$tmp/gitconfig.good" "$gitcfg"
+chmod -x "$HOME/.claude/git-hooks/pre-push"
+expect 2 'git push -u origin HEAD'
+rm -f "$HOME/.claude/git-hooks/pre-push"
+expect 2 'git push -u origin HEAD'
+# A command that is no push is not held to it, and neither is a repo that never opted in.
+expect 0 'git status'
+printf '#!/bin/sh\nexit 0\n' >"$HOME/.claude/git-hooks/pre-push"
+chmod +x "$HOME/.claude/git-hooks/pre-push"
+# A repo-level override of core.hooksPath is what git would use, so it counts.
+git -C "$repo" config core.hooksPath /elsewhere
+expect 2 'git push -u origin HEAD'
+git -C "$repo" config --unset core.hooksPath
+expect 0 'git push -u origin HEAD'
+# The deployed location follows CLAUDE_HOME, as install.sh does.
+mkdir -p "$tmp/chome/git-hooks"
+printf '#!/bin/sh\nexit 0\n' >"$tmp/chome/git-hooks/pre-push"
+chmod +x "$tmp/chome/git-hooks/pre-push"
+jq -nc --arg c 'git push -u origin HEAD' --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+	CLAUDE_HOME=$tmp/chome PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+[ $? = 2 ] && grep -q "core.hooksPath is '$HOME/.claude/git-hooks'" "$tmp/err" || {
+	echo "FAIL: CLAUDE_HOME's git-hooks isn't the directory the gate wants"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+git config -f "$gitcfg" core.hooksPath "$tmp/chome/git-hooks"
+jq -nc --arg c 'git push -u origin HEAD' --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+	CLAUDE_HOME=$tmp/chome PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+[ $? = 0 ] || {
+	echo "FAIL: a push with CLAUDE_HOME's hooks active was blocked"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+cp "$tmp/gitconfig.good" "$gitcfg"
 # Anything the tree doesn't describe blocks: a word that isn't literal text, an assignment, a group, a second command,
 # a redirect to a file, a here-string, a second `cd`, or a pipe into anything but tail, head, cat and grep.
 expect 2 'git push origin "$b"'

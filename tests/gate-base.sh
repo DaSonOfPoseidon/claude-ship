@@ -4,10 +4,12 @@
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/tests/lib/shfmt.sh"
+. "$root/tests/lib/gitenv.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home"
 link_shfmt "$tmp/home"
+gate_git_hooks "$tmp/home"
 export HOME="$tmp/home"
 # The fake gh reports $DEFAULT as the default branch (and fails when it's empty); every repo opted in.
 cat >"$tmp/bin/gh" <<'EOF'
@@ -53,6 +55,14 @@ expect() {
 
 # HEAD is master's tip, so there's nothing to review once the gate diffs against master.
 expect 0 master
+# The gate allowed it, so the pre-push hook must too: an empty diff records a pass for HEAD (the hook reads only .pass and
+# .waived).
+[ -e "$repo/.git/review-gate/$(git -C "$repo" rev-parse HEAD).pass" ] || {
+	echo "FAIL: an empty branch diff was allowed without a .pass for HEAD"
+	fail=1
+}
+# Forget it, so the cases below reach the default-branch lookup again.
+rm -f "$repo/.git/review-gate/"*.pass
 # GitHub must say which branch: a missing one, one origin doesn't have, or a bad ref name blocks.
 expect 2 ''
 expect 2 main

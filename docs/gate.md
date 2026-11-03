@@ -166,8 +166,9 @@ fully-qualified host's trailing dot (`github.com.`). A URL whose host is github.
 parse prints as `?<url>`, and callers fail closed on it. Other hosts and local paths aren't GitHub.
 
 Only these push options pass: `-u`, `--set-upstream`, `-f`, `--force`, `--force-with-lease*`,
-`--force-if-includes`, `-q`, `--quiet`, `-v`, `--verbose`, `-n`, `--dry-run`, `--no-verify`, `--progress`, `--atomic`. Any other option
-blocks, since some (`--all`, `--mirror`, `--tags`, `--delete`) send other refs. A refspec's destination is checked as well as its source: `HEAD:other` or `HEAD:refs/tags/x` writes a ref
+`--force-if-includes`, `-q`, `--quiet`, `-v`, `--verbose`, `-n`, `--dry-run`, `--progress`, `--atomic`. Any other option
+blocks, since some (`--all`, `--mirror`, `--tags`, `--delete`) send other refs; `--no-verify` is one of them now, because it
+skips the [pre-push check](#pre-push-check), which also refuses an unreviewed push this shape check doesn't recognise. A refspec's destination is checked as well as its source: `HEAD:other` or `HEAD:refs/tags/x` writes a ref
 the review didn't cover. Config that changes what a bare push sends blocks too: `push.default` `matching`, or
 `upstream`/`tracking` when the branch tracks another one; `remote.origin.push`; `push.followTags`;
 `push.recurseSubmodules` `on-demand` or `only`; `remote.origin.mirror`.
@@ -233,6 +234,63 @@ go unchecked, and a repo that hasn't opted in is none of the gate's business: `g
 replaces the directory, but other calls in the command still run in the `cd` target. For a command with the push
 shape the `-C` directory is the tree's word, so `-C "dir with space"` and a later `git -C …` inside a quoted string
 can't change it; for any other command, which blocks if it pushes, it is still read as text.
+
+## Pre-push check
+
+The gate reads command text, so a push that starts some other way (a script, `gh pr create`, a compound command it
+misreads) could still reach an opted-in repo unreviewed. Git itself closes that: `install.sh` sets the global
+`core.hooksPath` to `~/.claude/git-hooks`, and `hooks/git-hook.sh` runs from the stubs there. Its `pre-push` refuses
+Claude's push of a commit with no `.pass` or `.waived` in the review state, whatever started the push. It is a backstop
+for the gate, not a second reviewer: it only reads the state the gate writes (and the user's waiver).
+
+**Whose pushes.** The check applies to Claude's pushes only, so the user's own pushes are untouched. A push is Claude's when
+`CLAUDE_CODE_CHILD_SESSION` is `1` (the variable Claude Code sets for the processes it starts; the npm install runs as
+`node`, so the process name alone would miss it) or a process named `claude` is among the hook's ancestors (walked with
+`ps`, at most 64 steps, stopping at PID 1; this covers `sudo` and `env -i`). The user's `!` commands inside Claude Code
+count as Claude's: `! git push --no-verify` skips the check. Without `ps` and without the variable, a push counts as the
+user's.
+
+**What it checks.** The destination is found first: the remote's configured push URLs (`remote.<name>.pushurl`, else
+`remote.<name>.url`, before any `insteadOf` rewrite), the first argument itself (a push by URL passes the URL as typed
+there, and the rewritten one as `$2`) and the URL git resolved (`$2`), read with `github_slugs`, so a `pushurl` that
+differs from the `url`, or a push by URL that a rewrite turns into a non-GitHub one, can't hide a GitHub repo. A destination that isn't GitHub is not
+checked. Each repo's `CLAUDE_AUTONOMOUS` is read with `autonomous` (both in `hooks/gate-common.sh`, shared with the
+gate): opted in means enforce, not found means the next repo, and an error (GitHub down, `gh` missing or logged out) refuses
+the push, as the gate does. Then each line git sends (`<local ref> <local sha> <remote ref> <remote sha>`) is judged
+on its own, by the commit it pushes and not by HEAD:
+
+| Line | Result |
+|---|---|
+| local sha is all zeros (a delete) | allowed |
+| the sha isn't a full object name, or isn't a commit (a tag is peeled to its commit) | refused |
+| `<common dir>/review-gate/<commit>.pass` or `.waived` exists | allowed |
+| anything else, including a malformed line | refused |
+
+One refused line refuses the whole push. The state is the common directory's, shared by the worktrees. Every push the
+gate lets through for an opted-in repo therefore leaves a `.pass` for HEAD, including a branch whose diff against the
+default branch is empty (nothing to review counts as passed). The refusal tells
+Claude to run a plain `git push` on its own so the gate reviews HEAD, not to skip the check, and to ask the user to waive
+a wrong review.
+
+**Chaining.** Setting `core.hooksPath` makes git stop running a repo's own `.git/hooks`, so every stub runs the repo's hook
+of the same name (`<common dir>/hooks/<name>`) with git's arguments and stdin, and exits with its status; `pre-push` does
+so after its own check (and only if that passes). One stub exists for each hook git 2.34 runs from the hooks directory
+(`git help hooks`) except `push-to-checkout`, `proc-receive` and `fsmonitor-watchman`, whose presence alone changes what
+git does. The stubs `exec sh '<dest>/hooks/git-hook.sh' <name> "$@"`.
+
+**The gate keeps it on.** `push --no-verify` and a write of `core.hooksPath` (`git config` in any form but a read,
+`-c core.hooksPath=…`, `--config-env=core.hooksPath=…`, the key in any case) are denied wherever the gate sees them, read
+from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped). A pushing command in an opted-in repo
+also blocks unless `git config --get core.hooksPath` is `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` and its `pre-push` is
+executable: otherwise the push would skip the check (run `./install.sh`). The value git would use counts, a repo's own
+included. `--no-verify` is no longer one of the push options the gate allows (Push shape).
+
+The stubs in `~/.claude/git-hooks` are protected like the installed hooks (Tamper protection): a Write, or a Bash command
+that writes there, blocks. The lines git sends are saved to a temp file first; if that save fails (full disk, file size
+limit) the push is refused, not read as an empty list.
+
+Not covered: a Claude push that never reaches a git hook (the GitHub API, MCP writes: those are the gate's), and a
+setting changed with a command the gate can't read (Threat model).
 
 ## MCP writes
 
@@ -305,7 +363,7 @@ and process substitutions, and inside an unquoted heredoc body, since those run)
 A word is *literal* when all its parts are plain text or quoted text without expansions (escapes and quotes are
 resolved, a leading `~` stays text, `$HOME` and `${HOME}` alone are the home directory); a variable, a substitution,
 a glob, a brace list or `$'...'` makes it *dynamic*. The protected paths are the home directory, then
-`.claude/(hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate`. A path is compared **after it is
+`.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate`. A path is compared **after it is
 resolved** (below), never as the text it was written as. The command blocks when:
 
 - a write redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, and `>&` when its word isn't a descriptor or `-`) has a

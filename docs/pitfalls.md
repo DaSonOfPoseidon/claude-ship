@@ -246,3 +246,8 @@ review finds a new class.
   timeout; read as a result, the same status (failed while a thread is open) would also read as a CI failure no code
   change fixes (claude-ship #118). Name the checks that are the thing being gated and leave them out, by exact name,
   of what you wait on and of what you count as failed; test a lookalike name.
+- **An error message matched as text can be a different error.** `autonomous` read any `gh variable get` failure containing
+  "not found" as "the repo never opted in", and a shell without `gh` prints `gh: not found`, so a missing `gh` let the
+  push through. Check that the tool exists before reading its output (the shell's own messages are not the tool's), and test
+  the error text with the tool missing. Git hooks add a second case: setting `core.hooksPath` makes git stop running the
+  repo's own `.git/hooks`, so whatever replaces them must chain to the repo's hook of the same name.

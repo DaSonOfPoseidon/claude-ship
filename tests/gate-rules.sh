@@ -6,10 +6,12 @@
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/tests/lib/shfmt.sh"
+. "$root/tests/lib/gitenv.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/rbin" "$tmp/home"
 link_shfmt "$tmp/home"
+gate_git_hooks "$tmp/home"
 export HOME="$tmp/home"
 cat >"$tmp/rbin/gh" <<'EOT'
 #!/bin/sh

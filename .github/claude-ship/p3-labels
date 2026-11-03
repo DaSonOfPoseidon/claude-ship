@@ -4,6 +4,7 @@
 # issues by priority) picks the issue up. tests/p3-issue.sh checks it for every tracked file.
 hooks/*                  area:gate
 tests/gate-*             area:gate
+tests/git-hook.sh        area:gate
 tests/evals/*            area:gate
 tests/lib/*              area:gate
 tests/p3-issue.sh        area:gate
