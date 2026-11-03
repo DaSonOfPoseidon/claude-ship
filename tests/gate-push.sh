@@ -170,25 +170,28 @@ jq -nc --arg c 'git push -u origin HEAD' --arg d "$repo" '{tool_name: "Bash", to
 	fail=1
 }
 cp "$tmp/gitconfig.good" "$gitcfg"
-# Anything the tree doesn't describe blocks: a word that isn't literal text, an assignment, a group, a second command,
-# a redirect to a file, a here-string, a second `cd`, or a pipe into anything but tail, head, cat and grep.
+# The gate starts a review only for a canonical push: one statement, `git push ARGS` or `cd DIR && git push ARGS` (or either
+# piped on), whose git command is the first of its pipeline. Anything else passes to the pre-push check (docs/gate.md ›
+# Command reading). A canonical push that the tree doesn't describe as the push shape blocks: a word that isn't literal text,
+# an assignment, a negation, `&`, a redirect to a file, a here-string, a second `cd`, or a pipe into anything but tail, head,
+# cat and grep.
 expect 2 'git push origin "$b"'
 expect 2 'git push $(echo origin) HEAD'
 expect 2 'git push origin HEAD*'
 expect 2 'git push origin {HEAD,main}'
 expect 2 'git push origin "$(echo HEAD)"'
 expect 2 'cd "$d" && git push'
-expect 2 'cd ~ && git push'
+expect 0 'cd ~ && git push'
 expect 2 'cd -P . && git push'
 expect 2 'cd a b && git push'
 expect 2 'cd "" && git push'
 expect 2 'cd a && cd b && git push'
-expect 2 'cd a && git push && cd b'
+expect 0 'cd a && git push && cd b'
 expect 2 'x=1 git push'
 expect 2 'GIT_DIR=/x git push'
-expect 2 '(git push origin HEAD)'
-expect 2 '{ git push; }'
-expect 2 'git push origin HEAD; echo'
+expect 0 '(git push origin HEAD)'
+expect 0 '{ git push; }'
+expect 0 'git push origin HEAD; echo'
 expect 2 'git push origin HEAD;'
 expect 2 'git push & '
 expect 2 '! git push origin HEAD'
@@ -202,11 +205,11 @@ expect 2 'git push origin HEAD | sh'
 expect 2 'git push | tee f'
 expect 2 'git push | grep "$x"'
 expect 2 'git push origin HEAD | ./tail'
-expect 2 'git push origin HEAD || true'
+expect 0 'git push origin HEAD || true'
 expect 2 "git push '' HEAD"
-expect 2 'cat x | git push origin HEAD'
-expect 2 'if true; then git push origin HEAD; fi'
-expect 2 'git push origin HEAD
+expect 0 'cat x | git push origin HEAD'
+expect 0 'if true; then git push origin HEAD; fi'
+expect 0 'git push origin HEAD
 git push origin HEAD'
 expect 2 'git push -c push.default=matching'
 expect 2 'git -c push.default=matching push'
@@ -214,14 +217,44 @@ expect 2 'git -C . -C . push origin HEAD'
 expect 2 'git -C "$d" push origin HEAD'
 expect 2 'git --git-dir=x push origin HEAD'
 expect 2 'git push origin HEAD:other'
-# A `cd` or `-C` that may not run is no reason to look elsewhere: the push is judged where the session is, and a command
-# that is not the push shape blocks before any directory is followed (Codex round 1).
-expect 2 'if false; then cd /tmp; fi; git push origin HEAD'
-expect 2 'true || cd /tmp; git push origin HEAD'
-expect 2 'true || git -C /tmp push origin HEAD'
-expect 2 '{ cd /tmp; git push origin HEAD; }'
-# The shape rules apply where the gate does: a repo that has not opted in, or a remote that isn't GitHub's, is left alone,
-# whatever else the command runs (Codex round 2).
+# The directory of `cd DIR && git push` and `git -C DIR push` is one literal path, `~` expanded to the home directory and a
+# relative one resolved from the session's directory; anything else can't be followed.
+cp -R "$repo" "$HOME/hrepo"
+expect 0 'cd ~/hrepo && git push origin HEAD'
+expect 0 'git -C ~/hrepo push origin HEAD'
+expect 0 "git -C ../$(basename "$HOME")/hrepo push origin HEAD"
+rm -f "$HOME"/hrepo/.git/review-gate/*.pass
+expect 2 'cd ~/hrepo && git push origin HEAD'
+expect 2 'git -C ~/hrepo push origin HEAD'
+rm -rf "$HOME/hrepo"
+expect 2 'cd ~nobody/x && git push'
+expect 2 'git -C ~nobody/x push'
+expect 2 'git -C "$d" push'
+expect 2 'git -C "" push'
+expect 2 'cd - && git push'
+expect 2 'cd -P . && git push'
+expect 2 'git -C a -C b push'
+# A command that is not a canonical push is left to the pre-push check (docs/gate.md › Command reading), whatever else it
+# mentions: a wrapper, a shell, a compound command, a script or an alias; the heredoc and the `Foo=1` word of #193 and #192.
+expect 0 'git add -A && git commit -m x && git push'
+expect 0 '(cd x; git push)'
+expect 0 "bash -c 'git push'"
+expect 0 'xargs git push </dev/null'
+expect 0 './scripts/release.sh'
+expect 0 'git p'
+expect 0 'gh pr create --fill'
+expect 0 'timeout 60 git push'
+expect 0 'git commit -m "Closes=1 note" && echo Foo=bar'
+expect 0 'cat >/tmp/x <<'\''EOF'\''
+git push origin HEAD
+EOF'
+# A `cd` or `-C` that may not run is not followed: such a command is not a canonical push, so the gate leaves it to the
+# pre-push check.
+expect 0 'if false; then cd /tmp; fi; git push origin HEAD'
+expect 0 'true || cd /tmp; git push origin HEAD'
+expect 0 'true || git -C /tmp push origin HEAD'
+expect 0 '{ cd /tmp; git push origin HEAD; }'
+# The shape rules apply where the gate does: a repo that has not opted in, or a remote that isn't GitHub's, is left alone.
 mkdir -p "$tmp/offbin"
 printf '#!/bin/sh\necho false\n' >"$tmp/offbin/gh"
 chmod +x "$tmp/offbin/gh"
@@ -236,14 +269,13 @@ expect_off() {
 	fi
 }
 expect_off 0 'git push origin HEAD && echo done'
-expect_off 0 'true || cd /tmp; git push origin HEAD'
-expect_off 0 'true || git -C /tmp push origin HEAD'
-# ...but a directory the gate can't read could be an opted-in repo, so it blocks there too, as for any command.
-expect_off 2 'cd "$d" && git push origin HEAD; echo'
-expect_off 2 'true || cd "$d"; git push origin HEAD'
-expect_off 2 'true || git -C "$d" push origin HEAD'
-# A relative `-C` after a `cd` that may not have run is asked in that `cd`'s directory too: only acme/inrepo has opted in
-# here, and it is reached as <cd target>/sub, while the session's own `sub` is another repo.
+expect_off 0 'git push origin HEAD > out.txt'
+# ...but a directory the gate can't read could be an opted-in repo, so a canonical push from one blocks there too.
+expect_off 2 'cd "$d" && git push origin HEAD'
+expect_off 2 'git -C "$d" push origin HEAD'
+expect_off 2 'cd a && cd b && git push origin HEAD'
+# `cd DIR && git push` and `git -C DIR push` are judged in DIR: only acme/inrepo has opted in here, and it is reached as
+# <cd target>/sub, while the session's own `sub` is another repo.
 mkdir -p "$tmp/selbin" "$tmp/inrepo"
 printf '#!/bin/sh\ncase "$*" in *acme/inrepo*) echo true ;; *) echo false ;; esac\n' >"$tmp/selbin/gh"
 chmod +x "$tmp/selbin/gh"
@@ -251,11 +283,20 @@ git init -q -b feat "$tmp/inrepo/sub"
 git -C "$tmp/inrepo/sub" remote add origin https://github.com/acme/inrepo.git
 git init -q -b feat "$repo/sub"
 git -C "$repo/sub" remote add origin https://github.com/acme/app.git
-jq -nc --arg c "true || cd $tmp/inrepo; git -C sub push origin HEAD" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+jq -nc --arg c "cd $tmp/inrepo && git -C sub push origin HEAD >out.txt" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
 	PATH=$tmp/selbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
 rc=$?
 if [ "$rc" != 2 ] || ! grep -q 'reviews HEAD' "$tmp/err"; then
-	echo "FAIL (exit $rc, want 2 for the shape): a relative -C after a cd that may not run"
+	echo "FAIL (exit $rc, want 2 for the shape): a relative -C after a cd"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+fi
+# The same push from the session's own `sub` (acme/app, not opted in under selbin) is none of the gate's business.
+jq -nc --arg c "git -C sub push origin HEAD >out.txt" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+	PATH=$tmp/selbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+rc=$?
+if [ "$rc" != 0 ]; then
+	echo "FAIL (exit $rc, want 0): a relative -C in a repo that did not opt in"
 	sed 's/^/  /' "$tmp/err"
 	fail=1
 fi
@@ -263,9 +304,9 @@ rm -rf "$repo/sub"
 fixture /tmp/elsewhere.git
 expect 0 'git push origin HEAD && echo done'
 fixture https://github.com/acme/app.git
-expect 2 'true || cd /tmp; gh pr create --title t'
-expect 2 'if false; then cd /tmp; fi; gh pr create --title t'
-expect 2 '{ cd /tmp; gh pr create --title t; }'
+expect 0 'true || cd /tmp; gh pr create --title t'
+expect 0 'if false; then cd /tmp; fi; gh pr create --title t'
+expect 0 '{ cd /tmp; gh pr create --title t; }'
 expect 2 'git push origin HEAD # x'
 expect 2 'git push origin HEAD # && rm x'
 expect 2 'git push origin HEAD
@@ -284,8 +325,8 @@ expect 0 'gh pr create --title t --body "see git push"'
 # (Blocked before the syntax-tree filter, which sees that no git runs: claude-ship #135.)
 expect 0 'echo "git push" && echo done'
 expect 0 'gh pr create --body "costs $5, see git push"'
-expect 2 'gh pr create --body "see git push" && git config push.followTags true'
-expect 2 'gh pr create --body "$(git config push.followTags true; git push origin HEAD)"'
+expect 0 'gh pr create --body "see git push" && git config push.followTags true'
+expect 0 'gh pr create --body "$(git config push.followTags true; git push origin HEAD)"'
 # A gh comment/close body that mentions a push, however often or in whatever form, is data (#56).
 expect 0 'gh issue comment 36 --body "a && git push origin HEAD and b && git push origin HEAD"'
 expect 0 'gh issue comment 36 --body "./echo && git push origin HEAD and /tmp/ls && git push origin HEAD both exit 2"'
@@ -294,40 +335,40 @@ expect 0 'gh issue comment 36 --body "git push -c x upstream main"'
 expect 0 'gh pr comment 7 --body "git push --force other main"'
 expect 0 'gh issue close 36 --comment "fixed; git push origin HEAD was read twice: git push origin HEAD"'
 expect 0 'gh pr close 7 -c "git push origin HEAD"'
-# Outside that single command the push is real, or the gate can't tell, so it still blocks.
-expect 2 'gh issue comment 1 --body "x" && git push origin main'
-expect 2 'gh issue comment 1 --body "x" && git push origin HEAD'
-expect 2 'gh issue comment 1 --body "$(git push)"'
-expect 2 'gh issue comment 1 --body "`git push origin HEAD`"'
-expect 2 'gh issue comment 1 --body "a git push origin HEAD b git push origin HEAD" ; git push origin main'
-expect 2 'gh issue comment 1 --body x
+# Outside that single command the chain is no canonical push: the gate lets it by and the pre-push check judges the push.
+expect 0 'gh issue comment 1 --body "x" && git push origin main'
+expect 0 'gh issue comment 1 --body "x" && git push origin HEAD'
+expect 0 'gh issue comment 1 --body "$(git push)"'
+expect 0 'gh issue comment 1 --body "`git push origin HEAD`"'
+expect 0 'gh issue comment 1 --body "a git push origin HEAD b git push origin HEAD" ; git push origin main'
+expect 0 'gh issue comment 1 --body x
 git push origin main'
-expect 2 'gh issue close 1 --comment "x" && git push origin main'
-expect 2 'FOO=1 gh issue comment 1 --body "git push" && git push origin main'
-expect 2 'gh -R o/r issue comment 1 --body "git push" && git push origin main'
-expect 2 'gh issue comment 1 --body "git push" & git push origin main'
-expect 2 'gh issue comment 1 --body "git push" | git push origin main'
-expect 2 'gh issue comment 1 --body "git push" > out && git push origin main'
-expect 2 'gh issue comment 1 --body-file <(git push origin main) --body "git push"'
-expect 2 'gh pr merge 1 --body "git push origin HEAD and git push origin HEAD"'
+expect 0 'gh issue close 1 --comment "x" && git push origin main'
+expect 0 'FOO=1 gh issue comment 1 --body "git push" && git push origin main'
+expect 0 'gh -R o/r issue comment 1 --body "git push" && git push origin main'
+expect 0 'gh issue comment 1 --body "git push" & git push origin main'
+expect 0 'gh issue comment 1 --body "git push" | git push origin main'
+expect 0 'gh issue comment 1 --body "git push" > out && git push origin main'
+expect 0 'gh issue comment 1 --body-file <(git push origin main) --body "git push"'
+expect 0 'gh pr merge 1 --body "git push origin HEAD and git push origin HEAD"'
 # A quoted push still runs under `sh -c` and `eval`.
-expect 2 'sh -c "git config push.followTags true; git push origin HEAD"'
-expect 2 "bash -c 'git status && git push origin HEAD'"
-expect 2 'eval "git status; git push origin HEAD"'
+expect 0 'sh -c "git config push.followTags true; git push origin HEAD"'
+expect 0 "bash -c 'git status && git push origin HEAD'"
+expect 0 'eval "git status; git push origin HEAD"'
 
 # Anything else in the command may change what the push sends after the gate read it.
 # Codex round 2: `--output` rewrites the branch ref; an included config file can have any name.
-expect 2 'git show --format=%H --no-patch --output=.git/refs/heads/feat evil && git push origin HEAD'
-expect 2 "printf '[remote \"origin\"]\\nmirror = true\\n' > /tmp/settings && git push"
-expect 2 'git status && git push origin HEAD'
-expect 2 'git status; git push origin HEAD'
-expect 2 'git ls-remote origin && git push origin HEAD'
-expect 2 'git --no-pager log -1 && git -C . push origin HEAD'
-expect 2 'git diff --output=.git/config && git push'
-expect 2 'echo hi && git push origin HEAD'
-expect 2 'true || git push origin HEAD'
-expect 2 'git push origin HEAD && git status'
-expect 2 'git push origin HEAD; echo done'
+expect 0 'git show --format=%H --no-patch --output=.git/refs/heads/feat evil && git push origin HEAD'
+expect 0 "printf '[remote \"origin\"]\\nmirror = true\\n' > /tmp/settings && git push"
+expect 0 'git status && git push origin HEAD'
+expect 0 'git status; git push origin HEAD'
+expect 0 'git ls-remote origin && git push origin HEAD'
+expect 0 'git --no-pager log -1 && git -C . push origin HEAD'
+expect 0 'git diff --output=.git/config && git push'
+expect 0 'echo hi && git push origin HEAD'
+expect 0 'true || git push origin HEAD'
+expect 0 'git push origin HEAD && git status'
+expect 0 'git push origin HEAD; echo done'
 expect 2 'git push origin HEAD > out.txt'
 expect 2 'git push origin HEAD 2>err.log'
 expect 2 'git push origin HEAD >&2.txt'
@@ -342,37 +383,37 @@ expect 2 'git push origin HEAD >&2,x'
 expect 2 "git push origin HEAD >&2'.txt'"
 expect 2 "git push origin HEAD >/dev/null'x'"
 expect 2 "git push origin HEAD &>/dev/null'x'"
-expect 2 'git push origin HEAD 2>&1; tail -1 x'
+expect 0 'git push origin HEAD 2>&1; tail -1 x'
 expect 2 'git push origin HEAD >> /dev/null.x'
 expect 2 'git push origin HEAD | tee out.txt'
 expect 2 'git push origin HEAD | sh'
-expect 2 'git push origin HEAD | tail -3 && git status'
-expect 2 "cd $repo && echo x && git push origin HEAD"
+expect 0 'git push origin HEAD | tail -3 && git status'
+expect 0 "cd $repo && echo x && git push origin HEAD"
 expect 2 'git push origin HEAD $(git status)'
 expect 2 'git push origin HEAD `git status`'
-expect 2 '(git status; git push origin HEAD)'
+expect 0 '(git status; git push origin HEAD)'
 expect 2 'git push origin HEAD &'
 expect 2 'git push origin HEAD < input'
-expect 2 'git push origin HEAD
+expect 0 'git push origin HEAD
 git status'
 expect 2 'FOO=1 git push origin HEAD'
 # A fetch can move the branch the gate just reviewed (`--update-head-ok`).
-expect 2 'git fetch --update-head-ok origin main:feat && git push origin HEAD'
+expect 0 'git fetch --update-head-ok origin main:feat && git push origin HEAD'
 # Config written earlier in the same command is read by the push but not by the gate.
-expect 2 'git config push.followTags true && git push origin HEAD'
-expect 2 'git -C . config remote.origin.mirror true; git push origin HEAD'
-expect 2 'git remote set-url --push origin https://github.com/acme/other.git && git push origin HEAD'
-expect 2 'git branch -u origin/main && git push'
-expect 2 'git commit -qm x && git push origin HEAD'
-expect 2 'git symbolic-ref HEAD refs/heads/other && git push'
-expect 2 'git --no-pager config push.followTags true && git push origin HEAD'
-expect 2 'git -p remote set-url origin /tmp/x && git push origin HEAD'
-expect 2 'git -C . --no-pager branch -u origin/main && git push'
-expect 2 'sh -c "git config push.default matching" && git push'
-expect 2 'echo "[push] followTags = true" >> .git/config && git push origin HEAD'
-expect 2 'printf x >> ~/.gitconfig; git push origin HEAD'
-expect 2 'cat x >> ~/.config/git/config; git push origin HEAD'
-expect 2 'cat x >> /etc/gitconfig; git push'
+expect 0 'git config push.followTags true && git push origin HEAD'
+expect 0 'git -C . config remote.origin.mirror true; git push origin HEAD'
+expect 0 'git remote set-url --push origin https://github.com/acme/other.git && git push origin HEAD'
+expect 0 'git branch -u origin/main && git push'
+expect 0 'git commit -qm x && git push origin HEAD'
+expect 0 'git symbolic-ref HEAD refs/heads/other && git push'
+expect 0 'git --no-pager config push.followTags true && git push origin HEAD'
+expect 0 'git -p remote set-url origin /tmp/x && git push origin HEAD'
+expect 0 'git -C . --no-pager branch -u origin/main && git push'
+expect 0 'sh -c "git config push.default matching" && git push'
+expect 0 'echo "[push] followTags = true" >> .git/config && git push origin HEAD'
+expect 0 'printf x >> ~/.gitconfig; git push origin HEAD'
+expect 0 'cat x >> ~/.config/git/config; git push origin HEAD'
+expect 0 'cat x >> /etc/gitconfig; git push'
 
 # A fetch URL that isn't the pushed repo, even one that isn't GitHub's, supplies the review's base and rules.
 fixture /tmp/base.git
@@ -453,313 +494,80 @@ fixture_unreviewed
 expect_review 0 'gh pr comment 7 --body "git push --force other main"' none
 expect_review 0 'gh issue create --title t --body "then git push"' none
 expect_review 0 'gh issue close 36 --comment "fixed; git push origin HEAD"' none
-# `gh pr create` is gated like a push (the PR would cover an unreviewed HEAD), so it still gets its review.
-expect_review 2 'gh pr create --title t --body "x"' started
-expect_review 2 'gh pr create --title t --body "see git push"' started
-# A real push still gets its review, and a command that is not data-only is still blocked (before any review).
+# `gh pr create` starts no review: the PR covers a HEAD that the pre-push check already refused to push unreviewed.
+expect_review 0 'gh pr create --title t --body "x"' none
+expect_review 0 'gh pr create --title t --body "see git push"' none
+# A real push still gets its review.
 expect_review 2 'git push origin HEAD' started
-expect_review 2 'gh pr comment 7 --body "x" && git push origin HEAD' none
+expect_review 0 'gh pr comment 7 --body "x" && git push origin HEAD' none
 
-# A command whose syntax tree runs no git or gh (only tools that don't run their arguments) never reaches the quoting,
-# `gh api` or push checks, however much its text mentions them (claude-ship #135). A heredoc body or a quoted
-# argument is data. `gh pr create` in the printf is the one that started a review before.
-# The two heredoc-to-file cases below are blocked as on main: codex round 5 of #191 (a P0) found that a file the command
-# writes can replace a program on PATH that a listed name then runs, so any write redirect keeps the old checks until a
-# follow-up settles a safe way to allow them.
-expect_review 2 'cat >/tmp/x <<'\''EOF'\''
+# The gate starts a review only for a canonical push (docs/gate.md › Command reading); every other command passes, whatever
+# its text says, because the pre-push check (hooks/git-hook.sh) refuses an unreviewed push however it started. None of
+# these starts a review, though HEAD has no pass.
+expect_review 0 'git add -A && git commit -qm x && git push' none
+expect_review 0 'git add -A && git commit -qm x && git push origin HEAD 2>&1 | tail -5' none
+expect_review 0 'cd /tmp && git add -A && git push' none
+expect_review 0 '(cd x; git push)' none
+expect_review 0 "bash -c 'git push'" none
+expect_review 0 'eval "git push"' none
+expect_review 0 'xargs git push </dev/null' none
+expect_review 0 './scripts/release.sh' none
+expect_review 0 'git p' none
+expect_review 0 'gh pr create --fill' none
+expect_review 0 'timeout 60 git push' none
+expect_review 0 'sudo git push' none
+expect_review 0 'env git push' none
+expect_review 0 'time git push' none
+expect_review 0 'flock /tmp/l git push' none
+expect_review 0 'ssh host git push' none
+expect_review 0 'find . -name x -exec git push \;' none
+expect_review 0 'echo "git push" | sh' none
+expect_review 0 'git push origin HEAD; echo done' none
+expect_review 0 'git push origin HEAD && git status' none
+expect_review 0 'git status && git push origin HEAD' none
+expect_review 0 'true || git push origin HEAD' none
+expect_review 0 'if true; then git push origin HEAD; fi' none
+expect_review 0 'f(){ git push; }; f' none
+expect_review 0 'cat x | git push origin HEAD' none
+expect_review 0 'x=git; $x push' none
+expect_review 0 '$(echo git) push' none
+# A heredoc written to a file, whose body mentions a push or a PR (claude-ship #193), and a word shaped like an assignment
+# (#192), are not a push either.
+expect_review 0 'cat >/tmp/x <<'\''EOF'\''
 ## Plan
 
 Run `gh pr create --title "x" | tee y; (cd z)` then $HOME and git push origin HEAD;
 EOF
 wc -l /tmp/x' none
-expect_review 2 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
+expect_review 0 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''
 Never run gh api -X DELETE repos/a/b here.
 EOF' none
+expect_review 0 'git commit -m "Closes=1 note" && echo Foo=bar' none
 expect_review 0 'echo "run git push later"' none
 expect_review 0 'grep -n "gh api" hooks/review-gate.sh' none
-# (printf is not trusted in any form, so this falls back to the old checks and starts a review: a known limit of #191.)
-expect_review 2 "printf '%s\\n' 'gh pr create' >/tmp/y" started
 expect_review 0 'echo "gh api -X DELETE repos/a/b"' none
-expect_review 0 'cut -f1 f; echo "git push"' none
-expect_review 2 'echo "git push"; bash -c '\''true'\''; bash -ec '\''true'\''; printf "%s\n" "git push" | xargs echo' none
-expect_review 2 'echo $((1+2)) "git push"; echo $x' none
-expect_review 2 'cat <<EOF | tee /tmp/y
-git push origin HEAD, $HOME `date`
-EOF' none
-expect_review 2 'mkdir -p "$d" && cd "$d" && cat > x <<'\''EOF'\''
-git push && gh pr create
-EOF' none
-expect_review 2 'for f in a b; do cat "$f"; echo "gh api $f"; done' none
-expect_review 2 'sudo cat /etc/hosts "git push"; env a=1 echo "git push"; timeout 5 grep "git push" f' none
-expect_review 2 "bash -c 'echo \"git push\"'" none
-expect_review 0 'echo "git push" >&2' none
-# A real gh call still gets every text check: a heredoc body for `gh issue comment` with quoting it can't read
-# blocks, as before.
-expect_review 2 'gh issue comment 135 --body-file - <<'\''EOF'\''
-Body with `backticks` and $HOME and (parens); git push
-EOF' none
-expect_review 2 'gh pr create --title t --body x' started
+expect_review 0 "printf '%s\\n' 'gh pr create' >/tmp/y" none
+# A canonical push still gets its review, in each spelling the shape allows.
 expect_review 2 'git push' started
-expect_review 2 'echo "gh pr create" ; shellcheck x.sh' started
-# Whatever might run git or gh (a command the gate has no reason to trust, a word it can't read, an interpreter or
-# a script) keeps every check. These blocked or started a review before, and still do, or passed (0) and still pass.
-expect_review 2 "bash -c 'git push origin HEAD'" none
-expect_review 2 'eval "git push"' none
-expect_review 0 'x=git; $x push' none
-expect_review 0 '$(echo git) push' none
-expect_review 0 'export g=git; $g push' none
-expect_review 0 'for c in git; do $c push; done' none
-expect_review 0 'bash -c "$x"' none
-expect_review 2 'flock /tmp/l git push' none
-expect_review 2 'watch git push' none
-expect_review 2 'ssh host git push' none
-expect_review 2 "busybox sh -c 'git push'" none
-expect_review 2 'xargs git push </dev/null' none
+expect_review 2 'git push -u origin HEAD' started
+expect_review 2 "cd $repo && git push" started
+expect_review 2 "git -C $repo push" started
+expect_review 2 'git push 2>&1 | tail -5' started
 expect_review 2 '/usr/bin/git push' started
 expect_review 2 '"git" push' started
 expect_review 2 'g\it push' started
-expect_review 2 'sudo git push' none
-expect_review 2 'env git push' none
-expect_review 2 'timeout 5 git push' none
-expect_review 2 'time git push' none
-expect_review 2 'find . -name x -exec git push \;' none
-expect_review 2 "find . -name x -exec sh -c 'git push' \\;" none
-expect_review 0 "python3 -c 'import subprocess; subprocess.run([\"git\",\"push\"])'" none
-expect_review 2 "echo 'import os; os.system(\"git push\")' | python3" none
-expect_review 2 'python3 <<'\''EOF'\''
-import os
-os.system("git push")
-EOF' none
-expect_review 2 'echo "git push" | sh' none
-expect_review 2 'echo "git push" | xargs -I{} sh -c '\''{}'\''' none
-expect_review 2 'bash <<'\''EOF'\''
-git push
-EOF' none
-expect_review 0 'sh </tmp/script' none
-expect_review 2 'echo "git push" > /tmp/s.sh; sh /tmp/s.sh' none
-expect_review 2 'echo "git push" > /tmp/s.sh; chmod +x /tmp/s.sh; /tmp/s.sh' none
-expect_review 2 "shopt -s expand_aliases; alias g='git push'; g" none
-expect_review 2 "trap 'git push' EXIT; true" none
-expect_review 2 'f(){ git push; }; f' none
-expect_review 2 'f(){ "$@"; }; f git push' none
-expect_review 2 'git(){ echo; }; git push' none
-expect_review 2 'cat <<EOF
-$(git push)
-EOF' none
-expect_review 2 'echo $(git push)' none
-expect_review 2 'echo "$(echo "$(git push)")"' none
-expect_review 2 'bash -c '\''bash -c "bash -c \"bash -c \\\"git push\\\"\""'\''' none
-expect_review 2 'x='\''$(git push)'\''; echo $((x))' none
-expect_review 2 'x='\''$(git push)'\''; echo ${x@P}' none
-expect_review 2 "x='git push'; y=x; echo \${!y}" none
-expect_review 2 "printf -v 'a[\$(git push)]' x" none
-expect_review 2 'cat f | rg --pre '\''git push'\'' x' none
-expect_review 2 'awk '\''BEGIN{system("git push")}'\''' none
-expect_review 2 '[[ $a -eq 1 ]] && echo "git push"' none
-expect_review 2 'for ((i=0;i<3;i++)); do echo "git push"; done' none
-expect_review 2 'echo ${x:1:n} "git push"' none
-expect_review 2 'declare -i x; echo "git push"' none
-expect_review 2 '(( n=1 )); echo "git push"' none
-expect_review 2 'echo ${x:1:2} "git push"; (( 1+1 )); echo $((0x1f + 2))' none
-expect_review 2 'a[$(git push)]=1' none
-expect_review 2 'echo "git push" ; ./run.sh' none
-# A variable that changes which program a listed name runs makes the name unknown too.
-expect_review 2 'echo "git push"; PATH=. cat x' none
-expect_review 2 'echo "git push"; env PATH=. cat x' none
-expect_review 2 'export PATH=.:$PATH; echo "git push"; cat x' none
-expect_review 2 'PATH=. ; echo "git push"; cat x' none
-expect_review 2 'echo "git push"; sudo PATH=. cat x' none
-expect_review 2 'echo "git push"; LD_PRELOAD=./x.so cat x' none
-expect_review 0 'echo "git push"; foo=1 cat x; patx=1 cat x' none
-# Options that make a tool run a program, shells that read startup code, and wrappers that run what they are handed
-# (codex round 1 of #191).
-expect_review 2 'printf "#!/bin/sh\n git push\n" > /tmp/h; chmod +x /tmp/h; rg --hostname-bin=/tmp/h --hyperlink-format=default x f' none
-expect_review 2 'echo "git push"; rg -v x f' none
-expect_review 2 'printf "git push\n" > /tmp/rc; bash --rcfile /tmp/rc -ic true' none
-expect_review 2 'echo "git push"; bash -lc true' none
-expect_review 2 'echo "git push"; bash --login -c true' none
-expect_review 2 'echo "git push"; zsh -c true' none
-expect_review 2 "mkdir -p '/tmp/review dir'; printf '#!/bin/sh\\n git push\\n' > '/tmp/review dir/cat'; chmod +x '/tmp/review dir/cat'; '/tmp/review dir/cat'" none
-expect_review 2 'printf "git push\n" | xargs env' none
-expect_review 2 'printf "git push\n" | xargs sudo' none
-expect_review 2 'printf "git push\n" | xargs env FOO=1' none
-expect_review 2 'echo "git push"; sort --compress-prog=/tmp/x f' none
-expect_review 2 'echo "git push"; printf "%s\0" --compress-program=/tmp/h /tmp/in | xargs -0 sort' none
-expect_review 2 'echo "git push"; find . -name x -exec sort {} +' none
-expect_review 2 'echo "git push"; echo a | xargs printf' none
-expect_review 2 'echo "git push"; echo a | xargs cat; sort -u f | printf "%s\n" a' none
-# Declarations that evaluate text: a nameref runs a subscript when it is assigned through.
-expect_review 2 'declare -n ref='\''a[$(git push)]'\''; ref=1' none
-expect_review 2 'echo "git push"; declare -nr ref=x' none
-expect_review 2 'echo "git push"; typeset -n ref=x' none
-expect_review 2 'echo "git push"; f(){ local -n r=x; }' none
-expect_review 2 'echo "git push"; declare "-n" ref=x' none
-expect_review 2 'echo "git push"; declare '\''-i'\'' ref=x' none
-expect_review 2 'echo "git push"; declare $f ref=x' none
-expect_review 2 'echo "git push"; declare -$f ref=x' none
-expect_review 2 'echo "git push"; export "$v"' none
-expect_review 2 'echo "git push"; declare -r ref=x; declare -x other=y; export plain' none
-# A path named like a listed tool or wrapper is a script, not that tool.
-expect_review 2 'printf '\''git push'\'' > ./cat; chmod +x ./cat; ./cat' none
-expect_review 2 '/tmp/ls "git push"' none
-expect_review 2 'echo "git push"; /tmp/env x' none
-expect_review 2 'echo "git push"; ./nohup cat x' none
-expect_review 2 'echo "git push"; env ./cat x' none
-expect_review 2 'echo "git push"; sudo ./sh x' none
-expect_review 2 'echo "git push"; xargs /tmp/echo' none
-expect_review 0 'echo "see docs/ls for git push"; cat docs/cat.md' none
-expect_review 2 'echo "git push" ; node -e '\''x'\''' none
-# Round 3 of #191: xargs hands arguments the tree can't see to the command, and `find` runs them as `-exec` predicates;
-# a variable that loads code into a tool; a printf that assigns; options that run a program (#190).
-expect_review 2 'printf "%s\0" -exec sh -c "git push" ";" | xargs -0 find . -maxdepth 0 -exec true ";"' none
-expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 nice find . -maxdepth 0' none
-expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 timeout 5 find .' none
-expect_review 2 'echo "git push"; printf "%s\0" -exec sh -c x ";" | xargs -0 /usr/bin/find .' none
-expect_review 2 'echo "git push"; find . -maxdepth 0 -exec xargs find . -exec true ";" ";"' none
-expect_review 2 'echo "git push"; printf "%s\n" a | xargs grep -l x; find . -name x -exec cat {} +' none
-expect_review 2 'echo "git push"; PERL5OPT=-MReviewHook PERL5LIB=/tmp shasum /dev/null' none
-expect_review 2 'echo "git push"; PERL5OPT=-Mx cat x' none
-expect_review 2 'echo "git push"; PYTHONSTARTUP=/tmp/x md5sum f' none
-expect_review 2 'echo "git push"; env RUBYOPT=-rx cat f' none
-expect_review 2 'echo "git push"; NODE_OPTIONS=--require=/tmp/x cat f' none
-expect_review 2 'echo "git push"; GIT_SSH_COMMAND=x cat f' none
-expect_review 2 'echo "git push"; export PERL5LIB=/tmp; cat f' none
-expect_review 2 'echo "git push"; IFS=x cat f' none
-expect_review 2 'echo "git push"; PS4='\''$(git push)'\'' cat f' none
-expect_review 2 'echo "git push"; for PERL5OPT in a; do :; done' none
-expect_review 2 'echo "git push"; : ${PATH:=.}; cat f' none
-expect_review 2 'echo "git push"; readonly PATH=.; cat f' none
-expect_review 2 'echo "git push"; Foo=1 cat f' none
-expect_review 0 'echo "git push"; LC_ALL=C cut -f1 f; TZ=UTC date; lower=1 cat f; for i in a; do echo i; done' none
-expect_review 2 'echo "git push"; : ${x:=1}' none
-expect_review 2 'echo "git push"; echo ${y=2}' none
-expect_review 2 'echo "git push"; cat {PATH}</dev/null' none
-expect_review 2 'echo "git push"; exec {PERL5OPT}>/dev/null' none
-expect_review 2 'echo "git push"; coproc PATH { :; }' none
-expect_review 2 'echo "git push"; select PATH in a b; do :; done' none
-expect_review 0 'echo "git push"; cat {fd}</dev/null; coproc job { true; }; cat 2>/dev/null' none
-expect_review 2 'echo "git push"; printf '\''%n'\'' PATH' none
-expect_review 2 'echo "git push"; printf -- '\''%hhn'\'' PATH' none
-expect_review 2 'echo "git push"; printf '\''%1$n'\'' PATH' none
-expect_review 2 'echo "git push"; printf '\''x%5ny'\'' PATH' none
-expect_review 2 'echo "git push"; printf -vPATH x' none
-expect_review 2 'echo "git push"; printf '\''%s %d%%n\n'\'' a 1; printf "100%% sure\n"' none
-expect_review 2 'echo "git push"; read PATH' none
-expect_review 2 'echo "git push"; hash -p /tmp/x cat; cat' none
-expect_review 2 'echo "git push"; enable -f /tmp/x.so x' none
-expect_review 2 'echo "git push"; alias cat=x' none
-expect_review 2 'echo "git push"; getopts a PATH' none
-expect_review 2 'echo "git push"; mapfile PATH </dev/null' none
-expect_review 2 'echo "git push"; unset PATH; cat' none
-expect_review 2 'echo "git push"; set -x; cat' none
-expect_review 2 'echo "git push"; sort --compress-program=/tmp/x f' none
-expect_review 2 'echo "git push"; sort --compress=/tmp/x f' none
-expect_review 2 'echo "git push"; sort --co /tmp/x f' none
-expect_review 2 'echo "git push"; rg --pre /tmp/x a f' none
-expect_review 2 'echo "git push"; rg --pre-glob x a f' none
-expect_review 0 'echo "git push"; cut -s -f2 --complement f' none
-# Round 4 of #191, and the decision to stop patching one case at a time: the safe list is plain external read-only
-# tools with literal arguments. A declaration builtin, exec, eval, a shell, a wrapper, printf, a file-changing tool or a
-# dynamic argument makes the command unknown.
-expect_review 2 'declare -a a='\''($(git push origin HEAD))'\''' none
-expect_review 2 'echo "git push"; typeset -a a='\''($(x))'\''' none
-expect_review 2 'echo "git push"; local -a a=x' none
-expect_review 2 'echo "git push"; declare -r ref=x' none
-expect_review 2 'echo "git push"; export plain' none
-expect_review 2 'echo "git push"; readonly plain=1' none
-expect_review 2 'printf '\''git push origin HEAD\n'\'' > "$HOME/.bash_profile"; exec -l bash -c true' none
-expect_review 2 'echo "git push"; exec -l bash -c true' none
-expect_review 2 'echo "git push"; exec cat f' none
-expect_review 2 'echo "git push"; eval true' none
-expect_review 2 'echo "git push"; source /tmp/x' none
-expect_review 2 'echo "git push"; . /tmp/x' none
-expect_review 2 'echo "git push"; trap true EXIT' none
-expect_review 2 'echo "git push"; let x=1' none
-expect_review 2 'echo "git push"; shopt -s nullglob' none
-expect_review 2 'echo "git push"; builtin echo x' none
-expect_review 2 'echo "git push"; command -p cat x' none
-expect_review 2 'echo "git push"; command cat x' none
-expect_review 2 'echo "git push"; env cat x' none
-expect_review 2 'echo "git push"; nice cat x' none
-expect_review 2 'echo "git push"; nohup cat x' none
-expect_review 2 'echo "git push"; timeout 5 cat x' none
-# `time` is a keyword: the command behind it is what is judged.
-expect_review 0 'echo "git push"; time cat x' none
-expect_review 2 'echo "git push"; sudo cat x' none
-expect_review 2 'echo "git push"; stdbuf -o0 cat x' none
-expect_review 2 'echo "git push"; setsid cat x' none
-expect_review 2 'echo "git push"; xargs echo x' none
-expect_review 2 'echo "git push"; find . -name x' none
-expect_review 2 'echo "git push"; printf x' none
-expect_review 2 'echo "git push"; printf "%s\n" x' none
-expect_review 2 'echo "git push"; pushd /tmp' none
-expect_review 2 'echo "git push"; tee f' none
-expect_review 2 'echo "git push"; mkdir -p d' none
-expect_review 2 'echo "git push"; touch f' none
-expect_review 2 'echo "git push"; cp a b' none
-expect_review 2 'echo "git push"; mv a b' none
-expect_review 2 'echo "git push"; rm f' none
-expect_review 2 'echo "git push"; chmod +x f' none
-expect_review 2 'echo "git push"; ln -s a b' none
-expect_review 2 'echo "git push"; mktemp' none
-expect_review 2 'echo "git push"; : x' none
-expect_review 2 'echo "git push"; cat "$f"' none
-expect_review 2 'echo "git push"; sort $opt f' none
-expect_review 2 'echo "git push"; cat *.md' none
-expect_review 2 'echo "git push"; echo $x' none
-expect_review 2 'echo "git push"; cat $(echo f)' none
-expect_review 2 'echo "git push"; bash -c true' none
-expect_review 2 'echo "git push"; sh -c "echo x"' none
-expect_review 2 'echo "git push"; sed s/a/b/ f' none
-expect_review 2 'echo "git push"; awk 1 f' none
-expect_review 2 'echo "git push"; test -f f' none
-expect_review 2 'echo "git push"; [ -f f ]' none
-# Round 5 of #191: a write can replace a program on PATH that a listed name then runs, so any write redirect makes the
-# command unknown (except to /dev/null and descriptor duplicates), and so does any option or argument that makes a listed
-# tool write a file.
-expect_review 2 'echo '\''#!/bin/sh git push origin HEAD'\'' > /tmp/hostname; hostname' none
-expect_review 2 'echo "git push" > /tmp/f; cat f' none
-expect_review 2 'echo "git push" >> /tmp/f' none
-expect_review 2 'echo "git push" >| /tmp/f' none
-expect_review 2 'echo "git push" 2> /tmp/f' none
-expect_review 2 'echo "git push" 1>/tmp/f' none
-expect_review 2 'echo "git push" &> /tmp/f' none
-expect_review 2 'echo "git push" &>> /tmp/f' none
-expect_review 2 'echo "git push" <> /tmp/f' none
-expect_review 2 'echo "git push" >&/tmp/f' none
-expect_review 2 'echo "git push" >"$f"' none
-expect_review 2 'echo "git push"; { echo x; } > /tmp/f' none
-expect_review 2 'echo "git push"; (echo x) >/tmp/f' none
-expect_review 2 'echo "git push"; for i in a; do echo x; done > /tmp/f' none
-expect_review 2 'echo "git push"; sort -o /tmp/f f' none
-expect_review 2 'echo "git push"; sort -uo /tmp/f f' none
-expect_review 2 'echo "git push"; sort -o/tmp/f f' none
-expect_review 2 'echo "git push"; sort --output=/tmp/f f' none
-expect_review 2 'echo "git push"; sort --ou /tmp/f f' none
-expect_review 2 'echo "git push"; uniq in /tmp/out' none
-expect_review 2 'echo "git push"; uniq -c in out' none
-expect_review 2 'echo "git push"; xxd -r in /tmp/out' none
-expect_review 2 'echo "git push"; xxd f' none
-expect_review 2 'echo "git push"; base64 -o /tmp/out f' none
-expect_review 2 'echo "git push"; base64 --output=/tmp/out f' none
-expect_review 2 'echo "git push"; uniq - /tmp/bin/hostname <<'\''EOT'\''
-#!/bin/sh
-git push origin HEAD
-EOT
-hostname' none
-expect_review 2 'echo "git push"; uniq -c - /tmp/out' none
-expect_review 2 'echo "git push"; uniq f /tmp/out' none
-expect_review 2 'echo "git push"; sort f' none
-expect_review 2 'echo "git push"; uniq f' none
-expect_review 2 'echo "git push"; base64 f' none
-expect_review 0 'echo "git push" >/dev/null; echo "git push" 2>/dev/null; echo "git push" &>/dev/null; echo "git push" >>/dev/null; echo "git push" 2>&1; echo "git push" >&2; echo "git push" >&-' none
-expect_review 0 'cat <<EOF
-git push
-EOF
-cat <<< "git push"; wc -l < f; cut -d: -f1 f; tr a b < f' none
-expect_review 0 'echo "git push"; cat f; grep -n "gh api" f | wc -l; head -3 f | cut -d: -f1; ls -la; diff a b; jq . f; date; pwd; true; false' none
-expect_review 0 'echo "git push" 2>&1 >/dev/null; stat f; basename /a/b; wc -l < f; sleep 1; seq 3; id -u; uname -a' none
-expect_review 2 'echo "git push" ; flock l true' none
+# ...and one the shape can't read still blocks, before any review.
+expect_review 2 'git push origin "$b"' none
+expect_review 2 'cd "$d" && git push' none
+expect_review 2 'cd a && cd b && git push' none
+expect_review 2 'git push --all' none
+expect_review 2 'git push --tags' none
+expect_review 2 'git push --mirror' none
+expect_review 2 'git push other HEAD' none
+expect_review 2 'git push --no-verify' none
+# A real gh call still gets the `gh api` scan.
+expect_review 2 'gh api -X DELETE repos/acme/app/git/refs/heads/x' none
+expect_review 2 'echo "gh api" && gh api -X DELETE repos/acme/app/git/refs/heads/x' none
 
 # The reviewers share one time budget (claude-ship #103): REVIEW_GATE_BUDGET seconds from the gate's start, each
 # run capped at 1100 s and at what is left, and no run starts with fewer than REVIEW_GATE_MIN_SECS left. A fake
