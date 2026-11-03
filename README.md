@@ -131,8 +131,15 @@ same section.
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), and fetches shfmt into ~/.claude/bin
+./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, and fetches shfmt into ~/.claude/bin
 ```
+
+`./install.sh` also sets git's global `core.hooksPath` to `~/.claude/git-hooks` when it is unset (any other value is left
+alone and makes the exit non-zero: the gate blocks pushes until it is ours). The stubs there run a pre-push check on
+Claude's pushes: a commit with no passing review is refused, however the push started (docs/gate.md › Pre-push check).
+Git stops running a repo's own `.git/hooks` once `core.hooksPath` is set, so each stub also runs the repo's hook of the same
+name. Your own pushes are untouched, but a command you run with `!` inside Claude Code counts as Claude's: `! git push
+--no-verify` skips the check.
 
 Register the hook once in `~/.claude/settings.json`:
 

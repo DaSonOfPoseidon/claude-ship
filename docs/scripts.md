@@ -470,6 +470,19 @@ from the working tree it runs in (the pitfall of a step reading the current chec
 for a first review: no PR, no threads, no filed issues. A run that is interrupted removes its worktree and temp
 directory in a trap.
 
+## `hooks/git-hook.sh` and `hooks/gate-common.sh`
+
+`git-hook.sh <hook name> [git's arguments]` is what each stub in `~/.claude/git-hooks` runs. It chains to the repo's
+own hook of that name (`install.sh` sets `core.hooksPath`, which stops git from running `.git/hooks`), and `pre-push`
+checks Claude's pushes first; the design is in [`gate.md`](gate.md#pre-push-check). It exits 1 to refuse (git then
+aborts the push; 2 is a usage error, no hook name). It saves git's stdin to a temp file so
+the repo's own `pre-push` gets the same lines, and removes it on exit. `tests/git-hook.sh` runs it through real pushes
+to bare repos, with a stub `gh` and a stub `ps` for the process tree.
+
+`gate-common.sh` holds the two helpers the gate and the hook share, `autonomous` and `github_slugs`. It is sourced,
+never run. `autonomous` fails when `gh` is missing: the shell's `gh: not found` would otherwise match the "not found"
+that means a repo never opted in.
+
 ## `install.sh`
 
 Only `origin/main` is deployed, so what runs has passed review. That holds for the installer too: after
@@ -493,6 +506,13 @@ After deploying, it also checks that every hook path named in a deployed ship ag
 executable (`~/.claude/` read as the target directory). A missing one prints `install: <agent> names <path>, which
 isn't deployed or isn't executable; its Bash runs unrestricted` and makes the exit 1, because such a hook fails
 with a non-blocking error and the agent would run without it (#122).
+
+It also writes the git hook stubs into `$dest/git-hooks` (one per hook git 2.34 runs from the hooks directory except
+`push-to-checkout`, `proc-receive` and `fsmonitor-watchman`; each is `#!/bin/sh` and `exec sh '<dest>/hooks/git-hook.sh'
+<name> "$@"`, mode 755) and sets git's global `core.hooksPath` to that directory when it is unset or already that path.
+Any other value is printed and left alone, and the exit is 1. `$dest` must be an absolute path without a single quote, since
+the gate compares the value with `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` as text. The tests give each install its own
+`GIT_CONFIG_GLOBAL`.
 
 After the files, it runs `scripts/fetch-shfmt.sh` from main's archive to put shfmt at `$dest/bin/shfmt` (#135). A
 failure prints `couldn't install shfmt` and makes the exit non-zero, but the rest of the install still runs, so the
