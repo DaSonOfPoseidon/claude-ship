@@ -1428,6 +1428,9 @@ branch_changed=$(git diff --name-only "$upstream"...HEAD) || {
 	exit 2
 }
 if [ -z "$branch_changed" ]; then
+	# Nothing to review, which counts as passed: the pre-push hook refuses a commit with no .pass or .waived, so the push
+	# this allows needs one (docs/gate.md › Pre-push check).
+	: >"$state/$head.pass"
 	exit 0
 fi
 

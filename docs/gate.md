@@ -265,7 +265,9 @@ on its own, by the commit it pushes and not by HEAD:
 | `<common dir>/review-gate/<commit>.pass` or `.waived` exists | allowed |
 | anything else, including a malformed line | refused |
 
-One refused line refuses the whole push. The state is the common directory's, shared by the worktrees. The refusal tells
+One refused line refuses the whole push. The state is the common directory's, shared by the worktrees. Every push the
+gate lets through for an opted-in repo therefore leaves a `.pass` for HEAD, including a branch whose diff against the
+default branch is empty (nothing to review counts as passed). The refusal tells
 Claude to run a plain `git push` on its own so the gate reviews HEAD, not to skip the check, and to ask the user to waive
 a wrong review.
 
