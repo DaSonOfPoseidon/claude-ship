@@ -300,6 +300,25 @@ if [ "$rc" != 0 ]; then
 	sed 's/^/  /' "$tmp/err"
 	fail=1
 fi
+# A `gh api` write with gh's `{owner}/{repo}` placeholder goes to whichever repo gh finds where it runs, so a `cd` before it counts
+# even when the command is no canonical push: here the session's repo has not opted in and the `cd` target has.
+gh_here() {
+	jq -nc --arg c "$2" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH=$tmp/selbin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != "$1" ]; then
+		echo "FAIL (exit $rc, want $1): $2"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+gh_here 0 'gh api -X POST repos/{owner}/{repo}/pulls'
+gh_here 0 'cd sub && gh api -X POST repos/{owner}/{repo}/pulls'
+gh_here 2 "cd $tmp/inrepo/sub && gh api -X POST repos/{owner}/{repo}/pulls"
+gh_here 2 "cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls | cat"
+gh_here 2 "true || cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls"
+gh_here 2 'cd "$d" && gh api -X POST repos/{owner}/{repo}/pulls'
+gh_here 2 "cd $tmp/inrepo/sub && cd - && gh api -X POST repos/{owner}/{repo}/pulls"
 rm -rf "$repo/sub"
 fixture /tmp/elsewhere.git
 expect 0 'git push origin HEAD && echo done'
