@@ -171,6 +171,14 @@ expect 2 "cd $tmp/husky && git commit -m x && git push"
 expect 2 "git -C $tmp/husky commit -m x && git -C $tmp/husky push"
 expect 2 "true || cd $tmp/husky; ls"
 expect 2 "git -C ../husky status"
+# A relative target after a `cd` is taken from that `cd`'s directory too.
+mkdir -p "$tmp/hk2"
+git init -q -b feat "$tmp/hk2/inner"
+git -C "$tmp/hk2/inner" remote add origin https://github.com/acme/other2.git
+git -C "$tmp/hk2/inner" config core.hooksPath .husky
+expect 2 "cd $tmp/hk2 && cd inner && ls"
+expect 2 "cd $tmp/hk2 && git -C inner status"
+expect 0 "cd $tmp/hk2 && ls"
 expect 0 "ls $tmp/husky"
 expect 0 "cd $tmp && ls"
 git -C "$tmp/husky" config --unset core.hooksPath
@@ -350,6 +358,7 @@ gh_here 0 'gh api -X POST repos/{owner}/{repo}/pulls'
 gh_here 0 'cd sub && gh api -X POST repos/{owner}/{repo}/pulls'
 gh_here 2 "cd $tmp/inrepo/sub && gh api -X POST repos/{owner}/{repo}/pulls"
 gh_here 2 "cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls | cat"
+gh_here 2 "cd $tmp/inrepo && cd sub && gh api -X POST repos/{owner}/{repo}/pulls"
 gh_here 2 "true || cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls"
 gh_here 2 "sh -c 'cd $tmp/inrepo/sub && gh api -X POST repos/{owner}/{repo}/pulls'"
 gh_here 2 "sh -c \"echo x; cd $tmp/inrepo/sub; gh api -X POST repos/{owner}/{repo}/pulls\""
