@@ -251,8 +251,9 @@ count as Claude's: `! git push --no-verify` skips the check. Without `ps` and wi
 user's.
 
 **What it checks.** The destination is found first: the remote's configured push URLs (`remote.<name>.pushurl`, else
-`remote.<name>.url`, before any `insteadOf` rewrite) and the URL git resolved (`$2`), read with `github_slugs`, so a
-`pushurl` that differs from the `url`, or a push by URL, can't hide a GitHub repo. A destination that isn't GitHub is not
+`remote.<name>.url`, before any `insteadOf` rewrite), the first argument itself (a push by URL passes the URL as typed
+there, and the rewritten one as `$2`) and the URL git resolved (`$2`), read with `github_slugs`, so a `pushurl` that
+differs from the `url`, or a push by URL that a rewrite turns into a non-GitHub one, can't hide a GitHub repo. A destination that isn't GitHub is not
 checked. Each repo's `CLAUDE_AUTONOMOUS` is read with `autonomous` (both in `hooks/gate-common.sh`, shared with the
 gate): opted in means enforce, not found means the next repo, and an error (GitHub down, `gh` missing or logged out) refuses
 the push, as the gate does. Then each line git sends (`<local ref> <local sha> <remote ref> <remote sha>`) is judged
@@ -283,6 +284,10 @@ from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped
 also blocks unless `git config --get core.hooksPath` is `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` and its `pre-push` is
 executable: otherwise the push would skip the check (run `./install.sh`). The value git would use counts, a repo's own
 included. `--no-verify` is no longer one of the push options the gate allows (Push shape).
+
+The stubs in `~/.claude/git-hooks` are protected like the installed hooks (Tamper protection): a Write, or a Bash command
+that writes there, blocks. The lines git sends are saved to a temp file first; if that save fails (full disk, file size
+limit) the push is refused, not read as an empty list.
 
 Not covered: a Claude push that never reaches a git hook (the GitHub API, MCP writes: those are the gate's), and a
 setting changed with a command the gate can't read (Threat model).
@@ -358,7 +363,7 @@ and process substitutions, and inside an unquoted heredoc body, since those run)
 A word is *literal* when all its parts are plain text or quoted text without expansions (escapes and quotes are
 resolved, a leading `~` stays text, `$HOME` and `${HOME}` alone are the home directory); a variable, a substitution,
 a glob, a brace list or `$'...'` makes it *dynamic*. The protected paths are the home directory, then
-`.claude/(hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate`. A path is compared **after it is
+`.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate`. A path is compared **after it is
 resolved** (below), never as the text it was written as. The command blocks when:
 
 - a write redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, and `>&` when its word isn't a descriptor or `-`) has a

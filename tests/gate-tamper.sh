@@ -163,6 +163,14 @@ expect 2 "rm ~/.claude/'hooks'/x"
 expect 2 'rm ~/.claude/"hooks"/x'
 expect 2 'rm ~/.claude/ho""oks/x'
 
+# The git hook stubs (the pre-push check) are protected like the hooks.
+expect 2 'rm ~/.claude/git-hooks/pre-push'
+expect 2 'echo exit 0 > ~/.claude/git-hooks/pre-push'
+expect 2 'sh -c "chmod -x ~/.claude/git-hooks/pre-push"'
+expect 2 "echo x >$tmp/home/.claude/git-hooks/pre-commit"
+expect 2 'cd ~/.claude && rm git-hooks/pre-push'
+expect 0 'cat ~/.claude/git-hooks/pre-push'
+expect 0 'ls ~/.claude/git-hooks-notes'
 # The home directory written out is as protected as `~`.
 expect 2 "rm $tmp/home/.claude/hooks/x"
 expect 2 "echo x >$tmp/home/.claude/settings.json"
@@ -488,6 +496,10 @@ write 2 "$tmp/home/.claude/agents/ship-implementer.md"
 write 2 "$tmp/home/.claude/skills/ship/orchestrate.md"
 write 2 "$tmp/home/.claude/hooks/review-lib.sh"
 write 2 "$tmp/home/.claude/bin/shfmt"
+# The git hook stubs run the pre-push check; replacing one would switch it off while the executable-file check passed.
+write 2 "$tmp/home/.claude/git-hooks/pre-push"
+write 2 "$tmp/home/.claude/./git-hooks/pre-push"
+write 0 "$tmp/home/.claude/git-hooks-notes.md"
 write 0 "$tmp/home/.claude/agents/mine.md"
 write 0 "$tmp/home/.claude/bin-notes.md"
 # The path is resolved first: `.`, `//`, `..` and a relative path spell the same file (claude-ship #187).

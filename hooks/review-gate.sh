@@ -124,7 +124,7 @@ Write | Edit | MultiEdit | NotebookEdit)
 	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq '\.claude/settings'; then
 		written=$(printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")') || unreadable "text written"
 	fi
-	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|settings|skills/ship/|agents/ship-|bin/)|\.git/review-gate(/|$)" ||
+	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|git-hooks/|settings|skills/ship/|agents/ship-|bin/)|\.git/review-gate(/|$)" ||
 		printf '%s' "$written" | grep -q disableAllHooks; then
 		echo "Blocked: the review gate's script, prompts, settings and state are the user's to change." >&2
 		exit 2
@@ -202,9 +202,9 @@ fi
 # prot_re is the protected paths as a regex for jq: ~ or the home directory, then the gate's files; `.git/review-gate`
 # is the gate's state in any repo.
 home_re=$(printf '%s' "$HOME" | sed 's/[][\.*^$(){}?+|]/\\&/g')
-prot_re="(~|$home_re)/\\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
+prot_re="(~|$home_re)/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
 # The same for a path already resolved (an absolute, folded one): anchored at the home directory.
-prot_res="^$hn_re/\\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
+prot_res="^$hn_re/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
 # The jq definitions both tree programs share (tamper_jq, push_jq): the last part of a path, and the literal value of a
 # word (`wv`: null when it is not literal).
 tree_defs='
@@ -268,7 +268,7 @@ def reaches:
 	if test("\\.git/review-gate") then true
 	else ($home + "/.claude") as $r
 	| if . == $r then true
-	elif startswith($r + "/") then (.[($r | length) + 1:] as $m | any(["hooks", "settings", "skills/ship/", "agents/ship-", "bin/"][]; . as $t | ($t | startswith($m)) or ($m | startswith($t))))
+	elif startswith($r + "/") then (.[($r | length) + 1:] as $m | any(["hooks", "git-hooks", "settings", "skills/ship/", "agents/ship-", "bin/"][]; . as $t | ($t | startswith($m)) or ($m | startswith($t))))
 	else false end end;
 # The absolute paths a word names, from each candidate working directory; $keep keeps a trailing slash.
 def abs($cs; $keep): tilde as $t
@@ -630,7 +630,7 @@ end'
 # variable or substitution hides from the tree.
 text_tamper() {
 	protected=$(printf '%s' "$cmd_all" |
-		grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|settings|skills/ship|agents/ship-|bin/)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
+		grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
 	if [ -n "$protected" ]; then
 		write=$(printf '%s' "$cmd_all" |
 			sed -E 's/[0-9]*>&([0-9]+|-)['\''"]?([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)['\''"]?([[:space:];&|)]|$)#\3#g' |

@@ -38,7 +38,8 @@ refuse() {
 }
 saved=$(mktemp) || refuse "couldn't save the ref lines to check them (mktemp failed)."
 trap 'rm -f "$saved"' EXIT
-cat >"$saved"
+# A lines list that couldn't be saved in full (a full disk, a file size limit) is not an empty list.
+cat >"$saved" || refuse "couldn't save the ref lines to check them."
 
 # Is this Claude's push? The variable Claude Code sets for the processes it starts (the npm install runs as `node`, so the
 # process name alone would miss it), or a process named `claude` among the ancestors (covers `sudo` and `env -i`).
@@ -80,13 +81,14 @@ dir=$(cd "$(dirname "$0")" && pwd)
 . "$dir/gate-common.sh"
 
 # The destination, as GitHub repos: the remote's configured push URLs (pushurl, else url; as configured, before insteadOf
-# rewrites them) and the URL git resolved, so a pushurl that differs from the url, or a rewrite, can't hide one.
+# rewrites them), the first argument itself (a push by URL passes the URL as typed there, and the rewritten one as the
+# second) and the URL git resolved, so a pushurl that differs from the url, or a rewrite, can't hide one.
 urls=
 if [ -n "${1:-}" ]; then
 	urls=$(git config --get-all "remote.$1.pushurl" 2>/dev/null)
 	[ -n "$urls" ] || urls=$(git config --get-all "remote.$1.url" 2>/dev/null)
 fi
-urls=$(printf '%s\n%s\n' "$urls" "${2:-}" | sed '/^$/d')
+urls=$(printf '%s\n%s\n%s\n' "$urls" "${1:-}" "${2:-}" | sed '/^$/d')
 slugs=$(printf '%s\n' "$urls" | github_slugs)
 # Not a GitHub destination: nothing to check.
 [ -n "$slugs" ] || run_own "$@"

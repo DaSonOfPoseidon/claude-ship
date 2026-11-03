@@ -324,6 +324,16 @@ git -C "$repo" config remote.origin.pushurl "$bare"
 gpush "$repo" origin main
 want_push "a GitHub url with a local pushurl (pushes to the local one)" yes
 
+# A push by URL: git passes the URL as typed and the rewritten one (insteadOf) as the second argument, so the GitHub
+# repo is only in the first; the rewritten destination here is a local path.
+mkrepo
+commit second
+gpush "$repo" https://github.com/o/r.git main
+want_push "a push by URL that insteadOf rewrites to a local path" no
+mkrepo
+gpush "$repo" https://github.com/o/r.git main
+want_push "a push by URL, reviewed" yes
+
 # --- called directly, with the arguments and lines git documents ---
 # hook <remote> <url> <lines>: pre-push in $repo, with the lines on stdin.
 hook() {
@@ -365,6 +375,12 @@ for bogus in 'garbage' 'refs/heads/main' 'refs/heads/main zzzz refs/heads/main 0
 	fi
 	want_push "direct: malformed line '$bogus'" no
 done
+# Ref lines that can't be saved (a full disk, a file size limit) are not an empty list: the push is refused.
+# The limit applies to files only (the gh stub's log goes to /dev/null), so the status comes back through the pipe.
+rc=$(printf '%s' "refs/heads/main $bad refs/heads/main $zero
+" | (cd "$repo" && ulimit -f 0 && env GH_LOG=/dev/null CLAUDE_CODE_CHILD_SESSION=1 FAKE_ANCESTRY=none GH_MODE=$mode PATH=$tmp/bin:$PATH sh "$root/hooks/git-hook.sh" pre-push origin https://github.com/o/r.git >/dev/null 2>&1; echo $?))
+: >"$tmp/out"
+want_push "direct: ref lines that can't be saved" no other
 # Push by URL: both arguments are the URL, and it is the destination.
 hook https://github.com/o/r.git https://github.com/o/r.git "refs/heads/main $bad refs/heads/main $zero
 "
