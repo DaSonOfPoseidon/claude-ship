@@ -103,9 +103,11 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    and run the Codex rounds", plus `model: haiku` for a trivial unit. Keep its agent id for this PR. The
    implementer starts a `ship-codex` agent after each push, which first waits for CI (a red head goes back to the
    implementer with the failing jobs' log tails, and Codex isn't requested), then requests the review, waits,
-   reads the findings, and applies the rule-decided outcomes (the ship skill's step 4 table: P3, and P2 in round 3,
-   are filed as issues). The implementer reads each finding it is sent in full and judges it: it fixes the valid
-   ones, answers the invalid ones with evidence, pushes, and starts the next round, up to 3 rounds. You are not
+   reads the findings, and applies the rule-decided outcomes (the ship skill's step 4 table: a P3 is filed as an
+   issue unless the round also has a P0-P2 finding, and then it goes to the implementer with the other fixes; P2 in
+   round 3 is filed). The implementer reads each finding it is sent in full and judges it, the P0-P2 ones first: it
+   fixes the valid ones, answers the invalid ones with evidence, fixes or answers the round's P3s too if it
+   committed anything (if not, `ship-codex` files them), pushes, and starts the next round, up to 3 rounds. You are not
    in that loop: you wait for its final report.
 4. **Read its report.** Its `codex:` line is the last round's outcome, and its `ci:` line is CI's.
    - **No report:** the agent ended (an error, a usage-limit stop, a killed session) and its last result has no
@@ -169,6 +171,12 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      `{"thread": "<id>", "outcome": "resolve"}` entry (one `codex-triage.sh` call for the whole round), before
      the next wait or recheck. The script ends with the status recheck, since the implementer's push ran while
      those threads were still open.
+     - **P3s of a fix round.** Send them with the fixes whenever the round has a P0-P2 finding (a valid one means a
+       commit, so another review comes anyway), and tell the implementer to judge the P0-P2 findings first and
+       to touch the P3s only if one of those gets a commit. If its report shows a commit, the P3s are among its
+       `replied:` threads: resolve them like the rest. If it shows none, the P3s are untouched: add them to the
+       round's triage file as `issue` entries (the **Not valid / file an issue** format) in that same call, and
+       don't request the next round.
    - **Nothing to fix:** the script has already rechecked the status (`gh workflow run codex-review.yml`).
 
    Then wait again. Rounds are capped at 3 as in the ship skill.

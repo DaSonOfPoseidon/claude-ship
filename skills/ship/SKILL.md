@@ -133,7 +133,12 @@ comments API. For each finding, by priority and round:
 |---|---|---|
 | P0 / P1 | fix | **stop and ask the user**: fix or defer (a P0 is always fixed) |
 | P2 | fix | file an issue |
-| P3 and lower | file an issue | file an issue |
+| P3 and lower | fix if this round also fixes a P0–P2 finding, else file an issue | file an issue |
+
+Judge the P0–P2 findings (and `P?`, which counts as P1) first. "Another review is coming anyway" means at least
+one of them is valid and gets a commit, and only then is a P3 of the same round judged like any other finding
+(valid: fix it in that push; not valid: answer it; beyond this PR's scope: file an issue). When none of them gets a
+commit, every P3 of the round is filed. This is about Codex's P3s. The gate files its own (step 2).
 
 Every finding ends with one outcome (fixed, not valid, deferred to an issue, or beyond this PR's scope → issue), and its
 thread is resolved once it has one. A user-approved fix after round 3 gets one more review, with the same
@@ -167,8 +172,9 @@ done: run just `gh workflow run codex-review.yml -R <slug> -f pr=<pr>` again, no
 
 Then:
 - **Something was fixed:** go back to step 2 (the gate reviews only the new commits) and request the next
-  round.
-- **Nothing was fixed** (everything was filed or answered): the script has already run
+  round. A P3 is fixed only in a round that fixes something else, so every P3 of that round has an outcome
+  before the push: none is left open into the next round.
+- **Nothing was fixed** (everything was filed or answered, the round's P3s included): the script has already run
   `gh workflow run codex-review.yml` so the status rechecks with the resolved threads. No new round is needed.
 
 ## 5. Done
