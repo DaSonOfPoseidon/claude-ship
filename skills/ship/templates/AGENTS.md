@@ -12,8 +12,8 @@ Codex's PR review and the pre-push review gate both follow this section. Rate ev
 - **P2**: an edge case that breaks (0, max, max+1, empty, error paths), a doc or comment promise the code
   doesn't keep, a test that can pass while the code is wrong, or CI/script behaviour that differs from its
   description.
-- **P3**: a minor issue a strict reviewer might still flag. P3s are filed as follow-up issues, not fixed in
-  the PR that found them.
+- **P3**: a minor issue a strict reviewer might still flag. The gate files its P3s as follow-up issues.
+  A Codex P3 is filed too, unless the round already needs another review; then it is fixed in that round.
 
 Every finding needs a concrete failure scenario (input or state → wrong result). Don't flag style, naming,
 or anything CI already checks (formatting, lints, tests).

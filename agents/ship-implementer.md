@@ -59,7 +59,8 @@ finding costs a full extra round, so care here is cheaper than speed.
   - **After a third block on this branch,** stop and report.
 - Never work around the gate: no other remote, branch, refspec or force-push it would not allow, and no MCP
   writes.
-- Confirmed P3s are filed as issues by the gate itself. Don't fix them here.
+- Confirmed P3s from the gate are filed as issues by the gate itself. Don't fix them here. (This is about the gate's
+  P3s. A Codex P3 follows the rule in **Fixing a `fix:` thread**.)
 
 ## Open the PR and run the Codex rounds
 
@@ -97,7 +98,7 @@ wait for the review yourself and the orchestrator sees only your final report.
    |---|---|
    | `clean`, `ci: pass` or `pending` | done: final report |
    | `clean`, `ci: fail` | Codex has nothing left but CI is red: run `~/.claude/skills/ship/ci-failures.sh <pr> <slug>` yourself and do a **CI fix round** with its output |
-   | `fix` | fix its `fix:` threads (below), then start a new `ship-codex` with every thread you replied to as `replied`, and `mode: resolve-only` if you made no commit. At most 3 rounds in all: its `round:` says which one it was. A `ci: fail` here needs nothing more: the push re-runs CI, and the next `ship-codex` reads it before it requests |
+   | `fix` | fix its `fix:` threads (below), then start a new `ship-codex` with every thread you replied to as `replied`, and `mode: resolve-only` if you made no commit (the P3 threads are handled as below). At most 3 rounds in all: its `round:` says which one it was. A `ci: fail` here needs nothing more: the push re-runs CI, and the next `ship-codex` reads it before it requests |
    | `ci-fail` | a **CI fix round** with its `ci-failures:` block. It requested no review, so it used no Codex round |
    | `stop`, `round-cap`, `stalled`, `timeout`, `ci-timeout`, `error` | don't act on it: final report with its lines (`stop:`, `denied:`, `done:` and `file:` lines word for word) |
 
@@ -124,11 +125,27 @@ wait for the review yourself and the orchestrator sees only your final report.
    was wrong only about this one diff. Either way, don't resolve it (auto mode denies subagents that call, #100): the next
    `ship-codex` resolves the threads you pass as `replied`. Leave threads it didn't send you alone.
 
-   **When you judged every thread not valid** and made no commit, there is nothing new to review: the head is
+   **P3 threads go last.** `ship-codex` sends a P3 in its `fix:` lines only when the round has a P0-P2 (or `P?`)
+   thread too, because a valid one gets a commit and so another review comes anyway. Judge the P0-P2 and `P?`
+   threads first, then handle the P3s by what that produced:
+
+   | The P0-P2 / `P?` threads | The round's P3 threads |
+   |---|---|
+   | at least one valid, so you commit | judge each like any thread: valid, fix it in the same push; not valid, reply with evidence; beyond this PR's scope, file it (below). Reply to all of them and pass them as `replied` |
+   | none valid, so no commit | don't read, reply to or pass them: `mode: resolve-only` with the replied P0-P2 ids files them |
+
+   A P3 beyond this PR's scope is filed with `sh ~/.claude/hooks/p3-issue.sh <slug> <finding.json> <pr>`, where the JSON
+   (written with the Write tool to your scratchpad) has string fields `file`, `title` and `body`: `file` and `title`
+   as in a triage file's `issue`, `body` the finding with `<path>:<line>` and the PR number. It prints the issue's URL:
+   reply on the thread with that link. If the call is denied, stop and report it. Never leave a P3 thread open and
+   unanswered across a normal round: an open thread keeps the status at `failure`, so the next wait returns at once.
+
+   **When you judged every P0-P2 thread not valid** and made no commit, there is nothing new to review: the head is
    the one Codex already reviewed, and another request would spend a round on it. Start `ship-codex` with
-   `mode: resolve-only` and the replied thread ids. It resolves them (the script then rechecks the status) and
-   reports `clean` only if no Codex thread is left. When at least one fix was committed and pushed, start a
-   normal round on the new head, with every thread you replied to (fixed or not) as `replied`.
+   `mode: resolve-only` and the replied thread ids (the P0-P2 ones: the P3s stay untouched, and it files them). It
+   resolves the replied threads (the script then rechecks the status), files any P3 left and reports `clean` only if
+   no other Codex thread is left. When at least one fix was committed and pushed, start a normal round on the new
+   head, with every thread you replied to (fixed or not) as `replied`.
 4. If the Agent call itself fails (no such agent, or you can't start agents), fall back to the old flow so the
    orchestrator can wait: `~/.claude/skills/ship/codex-round.sh <pr>`, and below 3,
    `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). Then report
@@ -138,7 +155,9 @@ wait for the review yourself and the orchestrator sees only your final report.
 
 The orchestrator sends the Codex findings to fix, each with its thread id.
 
-- Fix them as above: test-first, sweep, checks, commit, push through the gate.
+- Fix them as above: test-first, sweep, checks, commit, push through the gate. Judge the P0-P2 findings first.
+  A P3 among them is judged only if one of those gets a commit; with no commit, leave the P3 threads alone (no
+  read, no reply, not in `replied:`) and say so in the report: the orchestrator files them.
 - For each fixed finding, reply on its thread naming the fixing commit (GraphQL
   `addPullRequestReviewThreadReply` with the thread id). **Don't resolve it**: the orchestrator resolves the
   threads you list in `replied:`, after your report, since auto mode denies subagents the resolve call (#100).

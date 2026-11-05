@@ -127,14 +127,19 @@ no request, so they don't wait for CI).
 
 ## Resolve only
 
-The implementer sends this when it judged every finding of a round not valid, so it made no commit and a new
-review would only cost a round for the same head. Don't request or wait. `replied` must hold the thread ids
-(none: `outcome: error`).
+The implementer sends this when it judged every P0-P2 finding of a round not valid, so it made no commit and a new
+review would only cost a round for the same head. It left the round's P3 threads untouched (a P3 is judged only
+when a P0-P2 finding gets a commit), so they may still be open. Don't request or wait. `replied` must hold the
+thread ids (none: `outcome: error`).
 1. Write the triage file with one `resolve` entry per id and run `codex-triage.sh` (see **Triage file**). It ends
    by rechecking the status itself. Denied or failed: `outcome: error` with the `denied:` and `done:` lines, stop.
 2. `codex-round.sh <pr> <slug>` for the round, then `ci-failures.sh <pr> <slug>` (for `ci:`) and `codex-findings.sh <pr> <slug>`.
-   No thread left: `outcome: clean`. Otherwise sort what is left by the **Outcomes** table at that round and
-   report as for a round (`reviewed: -`).
+   No thread left: `outcome: clean`. Otherwise sort what is left by the **Outcomes** table at that round. The
+   P0-P2 threads it was sent are resolved by now, so a P3 left here has no `fix` thread beside it and sorts as
+   `issue` (a P0-P2 thread nobody replied to still sorts as `fix`, and keeps its P3s `fix` with it). Triage the
+   `issue` threads as in a round: rewrite the triage file (Read it first) with only their entries, since the
+   `resolve` entries are done, and run `codex-triage.sh` again. `outcome: clean` follows when only `issue` threads
+   were left. Report as for a round (`reviewed: -`).
 
 ## Triage only
 
@@ -147,7 +152,8 @@ anything first.
    It may be 0 if the review was started outside the skill; treat that as round 1.
 2. `ci-failures.sh <pr> <slug>` (for `ci:`), then `codex-findings.sh <pr> <slug>`. No thread left: `outcome: clean`. A status of
    `failure` with no thread is `outcome: error`. Otherwise sort the threads by the **Outcomes** table at that
-   round, triage the `issue` ones, and report as for a round (`reviewed: -`).
+   round, triage the `issue` ones, and report as for a round (`reviewed: -`). A P3 beside a `fix` thread is `fix`
+   too (see **Outcomes**): it goes in a `fix:` line, and the orchestrator sends it on with the rest.
 
 ## Outcomes
 
@@ -157,7 +163,13 @@ Sort every thread by its priority and round (`P?` counts as P1). Nothing else de
 |---|---|---|
 | P0, P1, P? | `fix` | `stop` |
 | P2 | `fix` | `issue` |
-| P3 | `issue` | `issue` |
+| P3 and lower | `fix` if another thread here is `fix`, else `issue` | `issue` |
+
+A P3 rides along with the round's other `fix` threads: a valid P0-P2 finding means a commit and so another review
+anyway, and a P3 fixed in that push costs no round. A P3 beside a `P?` thread rides along too, since `P?` counts as
+P1. A P3 with no `fix` thread beside it is filed, as before. You don't judge validity, so every P3 of a `fix` round
+goes to the implementer in a `fix:` line. It judges the P0-P2 threads first. If none gets a commit it leaves the P3s
+untouched and starts `resolve-only`, which files them (above). In round 3 nothing rides along: no review follows.
 
 `issue` threads you triage yourself (below). Then the outcome is: `stop` if any thread is `stop`; else `fix` if
 any is `fix`; else `clean` (no thread, or only issue threads, now triaged).
