@@ -11,6 +11,12 @@ export HOME="$tmp/home"
 GIT_CONFIG_NOSYSTEM=1
 export GIT_CONFIG_NOSYSTEM
 mkdir -p "$HOME" "$tmp/src/scripts"
+# Never the machine's /etc/claude-code: a managed dir under the temp dir. Unless a case says otherwise it can't be written
+# (its parent is a file), so the gate stays registered in user settings only and the checks below see no drop-in.
+: >"$tmp/blocker"
+blocked=$tmp/blocker/managed
+CLAUDE_SHIP_MANAGED_DIR=$blocked
+export CLAUDE_SHIP_MANAGED_DIR
 git() { command git -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@"; }
 fail=0
 
@@ -31,7 +37,7 @@ fi
 both=$(printf '%s\n%s\n' "$gate" "$hint" | jq -s '.[0] * .[1]')
 
 # main: this tree's installer, then a commit whose installer also deploys a marker file.
-cp -R "$root/agents" "$root/hooks" "$root/skills" "$root/install.sh" "$root/README.md" "$tmp/src/"
+cp -R "$root/agents" "$root/hooks" "$root/skills" "$root/settings" "$root/install.sh" "$root/README.md" "$tmp/src/"
 cp "$root/scripts/codex-status.sh" "$tmp/src/scripts/"
 # A stand-in for scripts/fetch-shfmt.sh (which has its own test): writes a small shfmt at its argument's path (install.sh
 # must run what it fetched), fails when FETCH_FAIL is set, or leaves a file that can't run when FETCH_BROKEN is set.
@@ -505,6 +511,118 @@ rc=$?
 	fail=1
 }
 
+# The managed-settings drop-in (claude-ship #189): settings/claude-ship.json goes to $CLAUDE_SHIP_MANAGED_DIR/managed-settings.d,
+# where user and project settings can't turn it off. It is the gate's registration, so the check accepts it alone.
+dropin_want="$root/settings/claude-ship.json"
+managed_case() {
+	# managed_case <name>: run_case with a managed dir of its own, then back to the unwritable one.
+	CLAUDE_SHIP_MANAGED_DIR=$tmp/managed-$1
+	run_case "$1"
+	CLAUDE_SHIP_MANAGED_DIR=$blocked
+}
+rm -f "$start"
+managed_case drop-in-only
+expect drop-in-only 0 0
+has drop-in-only "managed settings drop-in"
+has drop-in-only "$tmp/managed-drop-in-only/managed-settings.d/claude-ship.json"
+has drop-in-only '"Enterprise managed settings (drop-ins)"'
+lacks drop-in-only "the gate isn't registered"
+cmp -s "$dropin_want" "$tmp/managed-drop-in-only/managed-settings.d/claude-ship.json" || {
+	echo "FAIL: drop-in-only: the drop-in isn't a byte-for-byte copy of settings/claude-ship.json"
+	fail=1
+}
+jq -e . "$tmp/managed-drop-in-only/managed-settings.d/claude-ship.json" >/dev/null 2>&1 || {
+	echo "FAIL: drop-in-only: the installed drop-in isn't valid JSON"
+	fail=1
+}
+[ "$(ls -A "$tmp/managed-drop-in-only/managed-settings.d")" = claude-ship.json ] || {
+	echo "FAIL: drop-in-only: managed-settings.d holds more than claude-ship.json"
+	ls -A "$tmp/managed-drop-in-only/managed-settings.d"
+	fail=1
+}
+# A second install over the first changes nothing.
+cp -R "$tmp/managed-drop-in-only" "$tmp/managed-again"
+CLAUDE_SHIP_MANAGED_DIR=$tmp/managed-again
+run_case drop-in-again
+CLAUDE_SHIP_MANAGED_DIR=$blocked
+expect drop-in-again 0 0
+diff -r "$tmp/managed-drop-in-only" "$tmp/managed-again" >/dev/null || {
+	echo "FAIL: drop-in-again: a second install changed the managed dir"
+	fail=1
+}
+# Also in user settings: the same handler, which Claude Code runs once. Said once, no warning, the entry left alone.
+printf '%s\n' "$both" >"$start"
+managed_case drop-in-and-user
+expect drop-in-and-user 0 0
+has drop-in-and-user "runs a handler that appears in both once"
+has drop-in-and-user '"Enterprise managed settings (drop-ins)"'
+has drop-in-and-user "you can remove the gate's entry from"
+lacks drop-in-and-user "the gate isn't registered"
+# The user's entry is still judged: a stale one warns as it always did.
+gate_with '.hooks.PreToolUse[0].hooks[0].timeout = 600'
+managed_case drop-in-stale-user
+expect drop-in-stale-user 0 1
+# Other policy files in the managed dir stay as they are.
+mkdir -p "$tmp/managed-others/managed-settings.d"
+printf '{"permissions": {"deny": ["Bash(rm -rf /)"]}}\n' >"$tmp/managed-others/managed-settings.json"
+printf '{"env": {"A": "1"}}\n' >"$tmp/managed-others/managed-settings.d/10-other.json"
+cp -R "$tmp/managed-others" "$tmp/managed-others.before"
+managed_case others
+expect others 0 1
+rm "$tmp/managed-others/managed-settings.d/claude-ship.json"
+diff -r "$tmp/managed-others.before" "$tmp/managed-others" >/dev/null || {
+	echo "FAIL: others: the managed dir's other files changed"
+	fail=1
+}
+# Not writable (not root): the gate stays registered in user settings only, and everything else is installed.
+gate_with '.'
+run_case unwritable
+expect unwritable 0 0
+has unwritable "stays registered in user settings only"
+has unwritable "The gate is registered in"
+# Nowhere registered, and no drop-in: the old failure.
+rm -f "$start"
+run_case unwritable-none
+expect unwritable-none 1
+has unwritable-none "isn't registered"
+has unwritable-none "stays registered in user settings only"
+# A template that isn't a valid drop-in stops the install before anything is changed or written: a managed file that
+# isn't valid JSON stops Claude Code from starting. bad_main <name> <content> makes a main whose template is that.
+bad_main() {
+	cp -R "$tmp/src" "$tmp/src-$1"
+	printf '%s\n' "$2" >"$tmp/src-$1/settings/claude-ship.json"
+	git -C "$tmp/src-$1" add -A
+	git -C "$tmp/src-$1" commit -qm "bad template"
+	git clone -q --bare "$tmp/src-$1" "$tmp/origin-$1.git"
+	git clone -q "$tmp/origin-$1.git" "$tmp/checkout-$1"
+}
+gate_with '.'
+seed=$tmp/old-install
+nodeploy=1
+bad_main t-not-json 'not json {'
+bad_main t-no-onfailure "$(jq -c 'del(.hooks.PreToolUse[0].hooks[0].onFailure)' "$dropin_want")"
+bad_main t-no-hooks '{}'
+bad_main t-empty ''
+bad_main t-command-type "$(jq -c '.hooks.PreToolUse[0].hooks[0].command = 7' "$dropin_want")"
+for t in t-not-json t-no-onfailure t-no-hooks t-empty t-command-type; do
+	install_sh=$tmp/checkout-$t/install.sh
+	CLAUDE_SHIP_MANAGED_DIR=$tmp/managed-$t
+	run_case "$t"
+	CLAUDE_SHIP_MANAGED_DIR=$blocked
+	expect "$t" 1 0
+	has "$t" "settings/claude-ship.json"
+	has "$t" "nothing was installed"
+	[ ! -e "$tmp/managed-$t" ] || {
+		echo "FAIL: $t: the managed dir was created"
+		fail=1
+	}
+	[ "$(cat "$tmp/case-$t/hooks/review-gate.sh")" = "old gate" ] && [ ! -e "$tmp/case-$t/skills" ] || {
+		echo "FAIL: $t: something was deployed"
+		fail=1
+	}
+done
+unset seed nodeploy install_sh
+
 # Without jq the registration can't be read, so the check fails (the gate needs jq too).
 nojq="$tmp/nojq-bin"
 mkdir -p "$nojq"
@@ -515,10 +633,14 @@ for t in git tar mktemp mkdir cp mv rm cat dirname awk sed grep tr head cmp env 
 done
 printf '%s\n' "$both" >"$start"
 case_path=$nojq
+seed=$tmp/old-install
+nodeploy=1
 run_case no-jq
+unset seed nodeploy
 case_path=$PATH
 expect no-jq 1
 has no-jq "jq not found"
+has no-jq "nothing was installed"
 
 [ "$fail" = 0 ] && echo "install: ok"
 exit "$fail"

@@ -6,9 +6,11 @@
 # stubs in git-hooks/, which it points git's global core.hooksPath at when that is unset (any other value makes the exit
 # non-zero; docs/gate.md › Pre-push check). Only main
 # is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
-# (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after deploying, this
-# script reads that file (never writes it) and warns about a missing or outdated entry, and says when the PR
-# loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
+# (docs/scripts.md). It also registers the gate in a managed-settings drop-in (settings/claude-ship.json, copied to
+# ${CLAUDE_SHIP_MANAGED_DIR:-/etc/claude-code}/managed-settings.d/ when that is writable, i.e. as root), which user and
+# project settings can't turn off. The gate's hook entry may also live in ~/.claude/settings.json (see README.md): after
+# deploying, this script reads that file (never writes it) and warns about a missing or outdated entry (the drop-in
+# counts as a registration), and says when the PR loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
 # frontmatter was not deployed or is not executable (#122).
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
@@ -20,13 +22,26 @@ if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-git -C "$repo" archive origin/main agents hooks skills scripts/codex-status.sh scripts/fetch-shfmt.sh | tar -x -C "$tmp"
+git -C "$repo" archive origin/main agents hooks skills settings/claude-ship.json scripts/codex-status.sh scripts/fetch-shfmt.sh | tar -x -C "$tmp"
 # shfmt first, into a temp file and run once, before anything installed is touched (#189): the gate blocks every Bash call
 # without a working shfmt, so a failed fetch must not leave a new gate next to a missing one. An installed shfmt is the
 # starting file, so the fetch script's "already current" check still saves the download.
 if [ -f "$dest/bin/shfmt" ]; then cp "$dest/bin/shfmt" "$tmp/shfmt" 2>/dev/null || :; fi
 if ! sh "$tmp/scripts/fetch-shfmt.sh" "$tmp/shfmt" || ! "$tmp/shfmt" --version >/dev/null 2>&1; then
 	echo "install: couldn't install shfmt (see above); the review gate needs it, so nothing was installed." >&2
+	exit 1
+fi
+# The managed-settings drop-in (settings/claude-ship.json), validated before anything is changed or written: Claude Code
+# doesn't start with a managed file that isn't valid JSON, so only a file that passed this is ever copied into the managed dir.
+if ! command -v jq >/dev/null 2>&1; then
+	echo "install: jq not found (the gate needs it, and it validates settings/claude-ship.json); nothing was installed." >&2
+	exit 1
+fi
+# -s: exactly one JSON value (an empty file makes jq run nothing and still succeed).
+if ! jq -es 'length == 1 and (.[0] | (.hooks | keys) == ["PreToolUse"] and (.hooks.PreToolUse | type == "array" and length > 0) and all(.hooks.PreToolUse[];
+	(.matcher | type == "string") and (.hooks | type == "array" and length > 0) and all(.hooks[]; .type == "command" and (.command | type == "string")
+		and (.timeout | type == "number") and .onFailure == "block")))' "$tmp/settings/claude-ship.json" >/dev/null 2>&1; then
+	echo "install: settings/claude-ship.json on origin/main isn't a valid managed-settings drop-in (a bug there); nothing was installed." >&2
 	exit 1
 fi
 mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills" "$dest/bin"
@@ -83,6 +98,24 @@ case $dest in
 	;;
 esac
 
+# The gate's registration in managed settings (docs/gate.md › Tamper protection): Claude Code reads every
+# managed-settings.d/*.json in the managed directory, and user and project settings can't override or disable what it sets.
+# Copied beside its place and moved in, so Claude Code never reads half a file. Without write access (not root) the gate
+# stays registered in user settings only (README.md › Install).
+managed=${CLAUDE_SHIP_MANAGED_DIR:-/etc/claude-code}
+managed_dropin=$managed/managed-settings.d/claude-ship.json
+managed_ok=
+if mkdir -p "$managed/managed-settings.d" 2>/dev/null &&
+	cp "$tmp/settings/claude-ship.json" "$managed/managed-settings.d/.claude-ship.json.new" 2>/dev/null &&
+	chmod 644 "$managed/managed-settings.d/.claude-ship.json.new" &&
+	mv -f "$managed/managed-settings.d/.claude-ship.json.new" "$managed_dropin"; then
+	managed_ok=1
+	echo "Registered the gate in the managed settings drop-in $managed_dropin."
+else
+	rm -f "$managed/managed-settings.d/.claude-ship.json.new" 2>/dev/null || :
+	echo "install: couldn't write $managed (run install.sh as root for that), so the gate stays registered in user settings only (README.md › Install)."
+fi
+
 # Each deployed ship agent's frontmatter hooks (ship-explorer's explorer-bash.sh, ship-codex's codex-bash.sh) are what
 # keep its Bash in bounds. A hook that is missing or not executable fails with a non-blocking error, so the agent's
 # Bash would run unrestricted (#122): check every hook a ship agent's frontmatter names.
@@ -130,10 +163,28 @@ check_settings() {
 	fi
 	# shellcheck disable=SC2088 # the literal text README.md registers
 	jqs() { jq --arg a '~/.claude/hooks/review-gate.sh' --arg b "$dest/hooks/review-gate.sh" "$@"; }
+	# Info lines about the rest of the settings (optional pieces: they never change the exit status).
+	extra_info() {
+		if ! jqs -e 'any(.hooks.UserPromptSubmit[]?.hooks[]?; type == "object" and (.command | tostring | test("orchestrate-hint[.]sh$")))' "$settings" >/dev/null 2>&1; then
+			echo "install: info: orchestrated mode's hint hook isn't registered (optional). To use it, add:"
+			printf '%s\n' "$hint"
+		fi
+		# Under Claude Code's fork mode a subagent's Agent call returns at once, so the PR loop's implementer never
+		# gets ship-codex's report (claude-ship #160). Only the string "0" counts as set.
+		if ! jqs -e '.env | type == "object" and .CLAUDE_CODE_FORK_SUBAGENT == "0"' "$settings" >/dev/null 2>&1; then
+			echo "install: info: the PR loop needs \"env\": {\"CLAUDE_CODE_FORK_SUBAGENT\": \"0\"} in $settings (claude-ship #160); without it, nested agents run in the background."
+		fi
+	}
 	# Every hook that runs the gate, with its entry's matcher: Claude Code runs all of them, so each is judged (#153).
 	gates=$(jqs -c '[.hooks.PreToolUse[]? | select(type == "object") | . as $e | $e.hooks[]? | select(type == "object" and (.command == $a or .command == $b)) | {matcher: $e.matcher, timeout, onFailure}]' "$settings" 2>/dev/null) || gates=
 	count=$(printf '%s' "$gates" | jq -r 'length' 2>/dev/null) || count=0
 	count=${count:-0}
+	if [ "$count" = 0 ] && [ -n "$managed_ok" ]; then
+		echo "The gate is registered in the managed settings drop-in $managed_dropin (not in $settings)."
+		echo "install: info: restart Claude Code, then check that /status lists \"Enterprise managed settings (drop-ins)\"; if it doesn't, add the README's entry to $settings."
+		extra_info
+		return 0
+	fi
 	if [ "$count" = 0 ]; then
 		echo "install: the gate isn't registered in $settings (missing, not valid JSON, or no PreToolUse hook running ~/.claude/hooks/review-gate.sh), so it reviews nothing. Add this:" >&2
 		printf '%s\n' "$snippet" >&2
@@ -177,15 +228,10 @@ VERDICTS
 	else
 		echo "The gate is registered in $settings."
 	fi
-	if ! jqs -e 'any(.hooks.UserPromptSubmit[]?.hooks[]?; type == "object" and (.command | tostring | test("orchestrate-hint[.]sh$")))' "$settings" >/dev/null 2>&1; then
-		echo "install: info: orchestrated mode's hint hook isn't registered (optional). To use it, add:"
-		printf '%s\n' "$hint"
+	if [ -n "$managed_ok" ]; then
+		echo "install: info: the gate is also registered in the managed drop-in $managed_dropin; Claude Code runs a handler that appears in both once. Once /status lists \"Enterprise managed settings (drop-ins)\", you can remove the gate's entry from $settings."
 	fi
-	# Under Claude Code's fork mode a subagent's Agent call returns at once, so the PR loop's implementer never
-	# gets ship-codex's report (claude-ship #160). Only the string "0" counts as set.
-	if ! jqs -e '.env | type == "object" and .CLAUDE_CODE_FORK_SUBAGENT == "0"' "$settings" >/dev/null 2>&1; then
-		echo "install: info: the PR loop needs \"env\": {\"CLAUDE_CODE_FORK_SUBAGENT\": \"0\"} in $settings (claude-ship #160); without it, nested agents run in the background."
-	fi
+	extra_info
 }
 check_settings || rc=1
 [ "$rc" = 0 ] || exit "$rc"
