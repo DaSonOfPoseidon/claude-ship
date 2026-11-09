@@ -78,12 +78,15 @@ review_state=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v
 review_any=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v1 \(.*\) -->$/\1/p' | tail -1 |
 	jq -r --arg h "$head" '.code_review | select(.commit_sha == $h) | .has_any_findings // empty' 2>/dev/null || true)
 stall_secs=${CODEX_STALL_SECS:-900}
-stalled=
-if [ "$review_state" = running ] && [ -n "$summary_at" ]; then
+# quiet: the summary, the latest trusted request and the push are all at least CODEX_STALL_SECS old.
+quiet() {
+	[ -n "$summary_at" ] || return 1
 	quiet_since=$(jq -rn --arg t "${since}Z" '$t | fromdateiso8601')
-	if [ $(($(date +%s) - quiet_since)) -ge "$stall_secs" ]; then
-		stalled=1
-	fi
+	[ $(($(date +%s) - quiet_since)) -ge "$stall_secs" ]
+}
+stalled=
+if [ "$review_state" = running ] && quiet; then
+	stalled=1
 fi
 # A row naming no commit (`—`, #30) counts only if the latest trusted request came after the push and exactly
 # one completion marker follows it; more than one fails closed (docs/scripts.md).
@@ -226,6 +229,9 @@ if [ "$review_state" = completed ] && [ "$review_any" = true ] && echo "$row" | 
 	posted=$(printf '%s\n' "$posted_reviews" | grep . | cut -c1-19 | awk -v f="$floor" '$0 >= f' | grep -c . || true)
 	if [ "$posted" -gt 0 ]; then
 		posting=
+	elif quiet; then
+		# #231: the review never posted; the status stays pending but says so (codex-wait.sh exits 3 on "stalled").
+		posting=stalled
 	fi
 fi
 
@@ -235,6 +241,9 @@ if [ "$findings" -gt 0 ]; then
 elif [ -n "$approved" ]; then
 	state=success
 	description="Owner approved $short for merge (fork PR)"
+elif [ "$posting" = stalled ]; then
+	state=pending
+	description="Codex finished $short with findings but its review never posted (stalled, no update in $((stall_secs / 60)) min); ask again with @codex review"
 elif [ -n "$posting" ]; then
 	state=pending
 	description="Codex finished $short with findings; waiting for its review to post"

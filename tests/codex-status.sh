@@ -337,6 +337,26 @@ summary completed "$sha" '' expect success 'findings key missing' "$h" $p $c "$r
 summary completed 0b996f7000000000000000000000000000000000 true expect success 'state of another commit' "$h" $p $c "$r1" ''
 summary completed '' true expect success 'state names no commit' "$h" $p $c "$r1" ''
 summary 'x"}' '' true expect success 'unreadable state' "$h" $p $c "$r1" ''
+# 6. #231: the review never posts. With the summary's last edit, the latest request and the push all older than
+# CODEX_STALL_SECS (900), the status stays pending but says so (codex-wait.sh exits 3 on it, so the loop asks again).
+stalled_posting='review never posted (stalled, no update in 15 min); ask again with @codex review'
+AGE=960
+with_msg "Codex finished 7ca1cc3 with findings but its $stalled_posting" summary completed "$sha" true expect pending 'findings, no review, 16 min old' "$h" $p $c "$r1" ''
+with_msg "$stalled_posting" summary completed "$sha" true expect pending 'findings, blank row, no review, 16 min old' '—' $p $c "$r1" "$m"
+# ...a fresh summary edit (14 min) is still the plain wait...
+AGE=840
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, no review, 14 min old' "$h" $p $c "$r1" ''
+# ...and so is an old summary with a recent request or push (a re-review in flight).
+AGE=960
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, recent request' "$h" $p $c "$r1
+$(jq -nr 'now - 60 | todate') OWNER" ''
+# A review that did post ends it, however old the summary is (success while its threads are resolved)...
+summary completed "$sha" true expect success 'findings, review posted, 16 min old' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
+# ...and an open thread still fails first.
+echo "$unresolved" >"$tmp/threads.json"
+with_msg 'unresolved Codex thread' summary completed "$sha" true expect failure 'findings, thread open, 16 min old' "$h" $p $c "$r1" ''
+rm -f "$tmp/threads.json"
+AGE=0
 # A state that isn't completed adds nothing here (a running state of the head is a stall, above).
 summary running "$sha" true expect success 'running state, completed row' "$h" $p $c "$r1" ''
 # (An approved fork PR goes through the owner-approval branch first: see the fork cases below.)

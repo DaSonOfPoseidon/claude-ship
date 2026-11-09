@@ -23,6 +23,8 @@ expect() {
 expect 0 'success' 'success: Codex reviewed abc with no findings (abc)'
 expect 0 'failure' 'failure: 1 unresolved Codex thread(s); fix or answer each, then resolve it (abc)'
 expect 3 'stalled' "pending: Codex's review of abc stalled (no update in 15 min, openai/codex#55890); ask again with @codex review (abc)"
+expect 3 'findings never posted' 'pending: Codex finished abc with findings but its review never posted (stalled, no update in 15 min); ask again with @codex review (abc)'
+expect 1 'findings still posting' 'pending: Codex finished abc with findings; waiting for its review to post (abc)'
 expect 3 'finished more than once' 'pending: Codex finished more than once since the last request for abc, so neither is tied to it; ask again with @codex review (abc)'
 expect 3 'not acknowledged' "pending: Codex hasn't acknowledged the request for abc in 5 min; ask again with @codex review (abc)"
 expect 1 'still waiting' 'pending: Waiting for Codex to review abc (abc)'
