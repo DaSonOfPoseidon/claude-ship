@@ -919,6 +919,34 @@ cmp -s "$tmp/flagged.before" "$tmp/flagged.after" || {
 	diff "$tmp/flagged.before" "$tmp/flagged.after" | sed 's/^/  /'
 	fail=1
 }
+# The same when the install is stopped (HUP, INT, TERM) after the lift: a shell dies from a signal without running its EXIT
+# trap, so the signals go through exit. A cp that takes a moment holds the install at its first write.
+slow="$tmp/slowbin"
+mkdir -p "$slow"
+real_cp=$(command -v cp)
+printf '#!/bin/sh\nfor last; do :; done\ncase $last in */agents/) : >"$STUB_STATE/cp.started"; sleep 2 ;; esac\nexec %s "$@"\n' "$real_cp" >"$slow/cp"
+chmod +x "$slow/cp"
+fd9=$tmp/flags-signal
+fresh_dest "$fd9"
+flag_install signal-first "$fd9" "$tmp/flags-managed9"
+sort -u "$STUB_STATE/flagged" >"$tmp/flagged.before"
+rm -f "$STUB_STATE/cp.started"
+CLAUDE_HOME=$fd9 CLAUDE_SHIP_MANAGED_DIR=$tmp/flags-managed9 GIT_CONFIG_GLOBAL="$tmp/gitconfig-signal-first" PATH=$slow:$PATH \
+	sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1 &
+pid=$!
+i=0
+while [ ! -e "$STUB_STATE/cp.started" ] && [ "$i" -lt 100 ]; do
+	sleep 1
+	i=$((i + 1))
+done
+kill -TERM "$pid"
+wait "$pid"
+sort -u "$STUB_STATE/flagged" >"$tmp/flagged.after"
+[ -e "$STUB_STATE/cp.started" ] && cmp -s "$tmp/flagged.before" "$tmp/flagged.after" || {
+	echo "FAIL: signal: the flags weren't put back after the install was terminated"
+	diff "$tmp/flagged.before" "$tmp/flagged.after" | sed 's/^/  /'
+	fail=1
+}
 # Without write access to the managed dir the user files are still flagged, and the managed paths are left out.
 fd4=$tmp/flags-nomanaged
 fresh_dest "$fd4"

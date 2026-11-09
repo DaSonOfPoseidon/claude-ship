@@ -37,6 +37,8 @@ cleanup() {
 	rm -rf "$tmp"
 }
 trap cleanup EXIT
+# A shell killed by a signal doesn't run its EXIT trap: these go through exit, so the flags go back after a Ctrl-C or a kill too.
+trap 'exit 1' HUP INT TERM
 # Under sudo $HOME may be root's, which would put the gate where the user's Claude Code doesn't look.
 if [ -n "${SUDO_USER:-}" ]; then
 	echo "install: note: running under sudo; installing into $dest. If that isn't the ~/.claude Claude Code runs from, run again with sudo --preserve-env=HOME or set CLAUDE_HOME."
