@@ -533,6 +533,19 @@ Any other value is printed and left alone, and the exit is 1. `$dest` must be an
 the gate compares the value with `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` as text. The tests give each install its own
 `GIT_CONFIG_GLOBAL`.
 
+It also registers the gate in managed settings and locks what it installs (docs/gate.md › Tamper protection). In
+order: shfmt (below), then `settings/claude-ship.json` from main's archive is validated with `jq` (a template that isn't one
+JSON value holding the gate's `PreToolUse` hook with `timeout` and `onFailure: "block"` exits 1, nothing installed;
+without `jq` too), then every installed path that has the immutable flag is lifted with `chattr -i`, recursively for
+`skills/ship` and `git-hooks` (an `lsattr` check that a flag is still there stops the install with nothing changed), then the
+files are deployed, then the template is copied to `$CLAUDE_SHIP_MANAGED_DIR/managed-settings.d/claude-ship.json` (default
+`/etc/claude-code`; skipped with a note when that can't be written, i.e. not root) through a temp file and a `mv`, then the
+flags are set again and checked with `lsattr` (a warning naming the paths that lack one, and exit 1 as root;
+one warning without `chattr` or `lsattr`). The registration check accepts the drop-in alone, and when the gate is
+in `settings.json` too it says Claude Code runs a handler that appears in both once. The tests put stubs of `chattr`,
+`lsattr` and `id` first on `PATH` and point `CLAUDE_SHIP_MANAGED_DIR` into their temp directory; they never touch the real
+flags or `/etc`.
+
 Before it changes anything, it runs `scripts/fetch-shfmt.sh` from main's archive into a temp file (starting from the
 installed `$dest/bin/shfmt`, so a current one costs no download) and runs that file once with `--version` (#135). A
 fetch that fails, or a file that doesn't run, prints `couldn't install shfmt`, exits 1 and deploys nothing, so what

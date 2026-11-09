@@ -134,7 +134,7 @@ same section.
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, and fetches shfmt into ~/.claude/bin
+./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, fetches shfmt into ~/.claude/bin, registers the gate in /etc/claude-code/managed-settings.d, and sets the immutable flag (chattr +i) on all of it
 ```
 
 `./install.sh` also sets git's global `core.hooksPath` to `~/.claude/git-hooks` when it is unset (any other value is left
@@ -144,7 +144,20 @@ Git stops running a repo's own `.git/hooks` once `core.hooksPath` is set, so eac
 name. Your own pushes are untouched, but a command you run with `!` inside Claude Code counts as Claude's: `! git push
 --no-verify` skips the check.
 
-Register the hook once in `~/.claude/settings.json`:
+Run `./install.sh` as root. It registers the gate in a managed-settings drop-in,
+`/etc/claude-code/managed-settings.d/claude-ship.json` (a copy of `settings/claude-ship.json`), which user and
+project settings can't turn off, and it sets the immutable flag (`chattr +i`) on everything it installs, the drop-in
+and `/etc/claude-code` included, so no command Claude runs can change the installed gate; Claude's own `chattr` calls are
+blocked. To edit an installed file by hand, lift the flag first with `! chattr -i <path>` (the `!` runs it as you, not
+as Claude; `lsattr <path>` shows the flag); the next `./install.sh` lifts and sets the flags itself. Not root: the drop-in
+is skipped, the flags can't be set (it warns), and the gate stays registered in user settings only, as below. A failed
+shfmt download stops the install before it changes anything.
+
+After installing, restart Claude Code and check that `/status` lists "Enterprise managed settings (drop-ins)". The
+drop-in has the same hook as the snippet below, so while you keep that snippet, Claude Code runs the gate once; once
+`/status` shows the drop-in, you can remove the entry from `~/.claude/settings.json`. Until you've seen it there, keep it:
+it is the gate if Claude Code doesn't read the drop-in. As root or not, you can always register the hook
+in `~/.claude/settings.json`:
 
 ```json
 {"hooks": {"PreToolUse": [{
@@ -159,7 +172,8 @@ must stay above the gate's reviewer budget (2200 s by default, `REVIEW_GATE_BUDG
 and blocks every call without it.
 
 `./install.sh` checks this entry after deploying and prints what to change (the entry above, plus a warning for each
-value that differs); it never edits `settings.json`.
+value that differs); it never edits `settings.json`. A gate registered in the drop-in counts: without the entry above it
+reports the drop-in instead of failing.
 
 For orchestrated mode, also register the hint hook:
 

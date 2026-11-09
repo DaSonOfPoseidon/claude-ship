@@ -349,8 +349,9 @@ a `cd` moves to and a `git -C` one: the call may run before or after either.
 ## Tamper protection
 
 The installed gate, its prompts and lib (`hooks/`), the ship skill and agents, the gate's state (`.git/review-gate/`),
-the settings that register it and shfmt (`~/.claude/bin/`, which the gate reads every Bash command with, so replacing
-it would blind the gate) are the user's to change; claude-ship's source changes through reviewed PRs. `Write`,
+the settings that register it, the managed settings directory (`/etc/claude-code`, where `install.sh` puts the gate's
+drop-in) and shfmt (`~/.claude/bin/`, which the gate reads every Bash command with, so replacing it would blind the
+gate) are the user's to change; claude-ship's source changes through reviewed PRs. `Write`,
 `Edit`, `MultiEdit` and `NotebookEdit` calls on those paths block. A project's own `.claude/settings` may change,
 but not to turn hooks off (`disableAllHooks`).
 
@@ -369,8 +370,10 @@ and process substitutions, and inside an unquoted heredoc body, since those run)
 A word is *literal* when all its parts are plain text or quoted text without expansions (escapes and quotes are
 resolved, a leading `~` stays text, `$HOME` and `${HOME}` alone are the home directory); a variable, a substitution,
 a glob, a brace list or `$'...'` makes it *dynamic*. The protected paths are the home directory, then
-`.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate`. A path is compared **after it is
-resolved** (below), never as the text it was written as. The command blocks when:
+`.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate` and the managed settings
+directory `/etc/claude-code` (the whole directory: a policy file added there could override the gate's registration; it
+is a fixed path because Claude Code reads that one, whatever `CLAUDE_SHIP_MANAGED_DIR` says to the installer). A path is
+compared **after it is resolved** (below), never as the text it was written as. The command blocks when:
 
 - a write redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, and `>&` when its word isn't a descriptor or `-`) has a
   target that is protected once resolved, or
@@ -410,7 +413,7 @@ passes):
   too. `env -C DIR` and `sudo -D DIR` add DIR as one more candidate.
 - A word with a dynamic, glob or brace part is cut at it: when the **literal start** resolves to `~/.claude`, below it, or
   to a path whose rest could still be a protected file (`~/.claude/$x/…`, `~/.claude/hook?/…`, `~/.claude/{hooks,y}/…`,
-  `~/.claude/s*`), a writer with it blocks. `~/.claude/projects/$x` doesn't, and neither does a start of just `~/` or `/`
+  `~/.claude/s*`; likewise `/etc`, `/etc/$x/…` and `/etc/claude-$x/…` for the managed directory), a writer with it blocks. `~/.claude/projects/$x` doesn't, and neither does a start of just `~/` or `/`
   (`rm ~/$x`, `rm ~/.*.swp`): those stay with the fallback, so `rm` of a variable isn't blocked everywhere.
 - The old text comparison still counts as well, on the word as written, so nothing the text check blocked passes now
   (`/dev/null,~/.claude/hooks/x`): a word's `NAME=VALUE` value is resolved too (`of=hooks/x`,
@@ -460,6 +463,41 @@ writing tool whose own arguments aren't protected (`cat ~/.claude/hooks/x | tee 
 read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
 What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`, the other spellings of a protected path
 and the writers above. What neither check covers is out of scope by design: see [Threat model](#threat-model).
+
+**`chattr` is denied** (#189). `chattr` sets and lifts the immutable flag that locks the installed files (below), so any
+call whose effective command is `chattr`, behind the wrappers above and `find -exec`, `xargs` or a string run as shell,
+blocks with a message asking the user to run `! chattr -i <path>` themselves. `lsattr`, and a `chattr` that is only a
+word (`grep -n chattr install.sh`, `echo chattr`, a file called `chattr.md`), pass. The fallback blocks a command it can't
+read when the word `chattr` stands on its own in it (`c=chattr; $c -i x`), since it can't tell a command from an
+argument there. `install.sh` itself is not affected: the gate sees `./install.sh`, not what runs inside it.
+
+**Immutable install** (#189). The text checks above stop what Claude plausibly types; they don't stop a command written to
+get past them. So `install.sh` also takes the files out of reach of any command Claude runs, without relying on how the
+command is spelled:
+
+- **Managed settings.** It copies `settings/claude-ship.json` to
+  `/etc/claude-code/managed-settings.d/claude-ship.json` (`CLAUDE_SHIP_MANAGED_DIR` moves it, for the tests). Managed
+  settings are the machine owner's: user and project settings can't turn the hook off or override it. The hook is the same
+  handler as the README's snippet (a test compares them), so while that snippet stays in `~/.claude/settings.json`,
+  Claude Code runs the gate once, and `install.sh` never edits that file. Once `/status` lists "Enterprise managed
+  settings (drop-ins)", the user can remove the gate's entry from their settings; until then it is the fallback if Claude
+  Code doesn't read the drop-in. The file is validated with `jq` (exactly one JSON value, the gate's `PreToolUse` hook with
+  `timeout` and `onFailure: block`) before the installer changes anything, and moved into place from a temp file
+  beside it, because a managed file that isn't valid JSON stops Claude Code from starting. Without write access to the
+  directory (not root), the install says the gate stays registered in user settings only and goes on.
+- **The flag.** After deploying it runs `chattr +i` on each file in `hooks/`, `skills/ship` and `git-hooks`
+  (recursively), `agents/ship-*.md`, `bin/shfmt`, the drop-in, `managed-settings.d` and the managed directory
+  itself (so no other policy file can be added; the directory's other files are neither lifted nor flagged), then checks each with
+  `lsattr`. A path that isn't flagged is a warning naming it, and makes the exit 1 when running as root (as another user the flag
+  can't be set, which is no fault of the install). Without `chattr` or `lsattr` it warns once and goes on.
+- **Reinstalls.** Before it writes anything (the `rm -rf` of `skills/ship` included), `install.sh` lifts the flag on every
+  one of those paths that exists, and stops with nothing changed when one stays flagged (chattr needs root), so an
+  install is never half done. Between runs only the user lifts a flag: `! chattr -i <path>`, then edit.
+- **The order.** shfmt is fetched and run first, and then the template is validated, both before anything installed is
+  touched: a gate without shfmt blocks every Bash call, and a failed fetch used to leave exactly that (#189).
+
+Root can lift the flag and Claude's own commands run as the user, so this holds against a command Claude runs, not against
+a root shell; a symlink or a filesystem without the flag is out of its reach too (see [Threat model](#threat-model)).
 
 ## Waivers and opt-in flags
 
