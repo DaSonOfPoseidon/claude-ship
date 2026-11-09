@@ -146,6 +146,12 @@ review finds a new class.
   repos whose default is `master` don't have (claude-ship #51). Reading `origin/HEAD` instead would let
   `git remote set-head` point the base at the branch itself and leave nothing to review. Ask GitHub for
   the default branch, and fetch it with an explicit refspec.
+- **A squash-merge commit has no local `.pass`, so "merged" has to be read from the remote.** The pre-push check
+  refused a release tag (`v1` on origin's main) because the commit was made on GitHub and never reviewed here, though it
+  had been through a PR, CI and Codex (claude-ship #230). Letting the tag through when the commit is "on main" by a local
+  ref would open the hole above: `refs/remotes/origin/main` is writable with `git update-ref`. The check asks the
+  remote (`git ls-remote --symref <push URL> HEAD`, the tip fetched from the same URL, `merge-base --is-ancestor`)
+  and refuses whatever it can't read. Test the forged remote-tracking ref first. Branch pushes keep the pass rule.
 - **Another service's job can die without saying so.** About one Codex review in ten here keeps its 👀 and a
   `running` summary forever, with no review, receipt or error (openai/codex#55890). The ship skill waited 15
   minutes, then forbade a retry, so every stall needed the user (claude-ship #61). Bound the wait by the
