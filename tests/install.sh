@@ -17,6 +17,56 @@ mkdir -p "$HOME" "$tmp/src/scripts"
 blocked=$tmp/blocker/managed
 CLAUDE_SHIP_MANAGED_DIR=$blocked
 export CLAUDE_SHIP_MANAGED_DIR
+# The immutable flag is only ever a stub here, never the real chattr on the machine's files: chattr logs each call
+# (with the first line of the installed gate at that moment, so the test sees what was deployed by then) and keeps a list
+# of the paths it flagged, and lsattr reports `i` for those. `id -u` can be faked with FAKE_UID. STUB_CHATTR_FAIL makes chattr
+# fail; STUB_LSATTR_HIDE is a glob of paths lsattr reports as unflagged.
+STUB_STATE=$tmp/stubstate
+export STUB_STATE
+mkdir -p "$tmp/stubbin" "$STUB_STATE"
+: >"$STUB_STATE/log"
+: >"$STUB_STATE/flagged"
+cat >"$tmp/stubbin/chattr" <<'STUB'
+#!/bin/sh
+[ -z "${STUB_CHATTR_FAIL:-}" ] || {
+	echo "chattr: Operation not permitted while setting flags on $*" >&2
+	exit 1
+}
+rec=
+if [ "$1" = -R ]; then
+	rec=1
+	shift
+fi
+op=$1
+shift
+for p; do
+	printf '%s%s %s | %s\n' "${rec:+-R }" "$op" "$p" "$(head -n 1 "$CLAUDE_HOME/hooks/review-gate.sh" 2>/dev/null)" >>"$STUB_STATE/log"
+	if [ -n "$rec" ]; then find "$p" >"$STUB_STATE/paths"; else printf '%s\n' "$p" >"$STUB_STATE/paths"; fi
+	if [ "$op" = +i ]; then
+		cat "$STUB_STATE/paths" >>"$STUB_STATE/flagged"
+	else
+		grep -vxF -f "$STUB_STATE/paths" "$STUB_STATE/flagged" >"$STUB_STATE/flagged.new"
+		mv "$STUB_STATE/flagged.new" "$STUB_STATE/flagged"
+	fi
+done
+STUB
+cat >"$tmp/stubbin/lsattr" <<'STUB'
+#!/bin/sh
+# Only `lsattr -d PATH...` is used.
+shift
+for p; do
+	# shellcheck disable=SC2254 # the glob is the point
+	case $p in
+	${STUB_LSATTR_HIDE:-/nonexistent/never}) printf -- '--------------e------- %s\n' "$p" ;;
+	*) if grep -qxF -- "$p" "$STUB_STATE/flagged"; then printf -- '----i---------e------- %s\n' "$p"; else printf -- '--------------e------- %s\n' "$p"; fi ;;
+	esac
+done
+STUB
+real_id=$(command -v id)
+printf '#!/bin/sh\n[ "$1" = -u ] && [ -n "${FAKE_UID:-}" ] && { echo "$FAKE_UID"; exit 0; }\nexec %s "$@"\n' "$real_id" >"$tmp/stubbin/id"
+chmod +x "$tmp/stubbin/chattr" "$tmp/stubbin/lsattr" "$tmp/stubbin/id"
+PATH=$tmp/stubbin:$PATH
+export PATH
 git() { command git -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@"; }
 fail=0
 
@@ -641,6 +691,186 @@ case_path=$PATH
 expect no-jq 1
 has no-jq "jq not found"
 has no-jq "nothing was installed"
+
+# The immutable flag (claude-ship #189): everything installed is flagged, so no command Claude runs can change the gate;
+# a reinstall lifts the flags before it writes anything and sets them again after. Only the chattr and lsattr stubs run.
+flag_install() {
+	# flag_install <name> <dest> <managed dir>: one install of the checkout over those directories (the output is in
+	# $tmp/out and the status in $rc), with the stubs' log and flag list left as they are.
+	CLAUDE_HOME=$2 CLAUDE_SHIP_MANAGED_DIR=$3 GIT_CONFIG_GLOBAL="$tmp/gitconfig-$1" sh "$tmp/checkout/install.sh" >"$tmp/out" 2>&1
+	rc=$?
+}
+fresh_dest() {
+	# fresh_dest <dir>: a destination whose settings register the gate, so the exit status is about the flags alone.
+	mkdir -p "$1"
+	printf '%s\n' "$both" >"$1/settings.json"
+}
+want_flagged() {
+	grep -qxF -- "$2" "$STUB_STATE/flagged" || {
+		echo "FAIL: $1: not flagged: $2"
+		fail=1
+	}
+}
+want_unflagged() {
+	grep -qxF -- "$2" "$STUB_STATE/flagged" && {
+		echo "FAIL: $1: flagged, and shouldn't be: $2"
+		fail=1
+	}
+}
+fd=$tmp/flags-fresh
+fm=$tmp/flags-managed
+fresh_dest "$fd"
+# Another policy file in the managed dir isn't the installer's: it is neither lifted nor flagged.
+mkdir -p "$fm"
+printf '{}\n' >"$fm/managed-settings.json"
+: >"$STUB_STATE/log"
+: >"$STUB_STATE/flagged"
+flag_install fresh "$fd" "$fm"
+expect fresh 0 0
+for f in "$root"/hooks/*; do want_flagged fresh "$fd/hooks/${f##*/}"; done
+for f in "$root"/agents/ship-*.md; do want_flagged fresh "$fd/agents/${f##*/}"; done
+for f in skills/ship skills/ship/SKILL.md skills/ship/codex-status.sh bin/shfmt git-hooks git-hooks/pre-push git-hooks/pre-commit; do
+	want_flagged fresh "$fd/$f"
+done
+for f in managed-settings.d managed-settings.d/claude-ship.json; do want_flagged fresh "$fm/$f"; done
+want_flagged fresh "$fm"
+for f in "$fd/settings.json" "$fd/hooks" "$fd/bin" "$fd/agents" "$fd/skills" "$fm/managed-settings.json"; do want_unflagged fresh "$f"; done
+grep -qF "managed-settings.json" "$STUB_STATE/log" && {
+	echo "FAIL: fresh: the log mentions another policy file in the managed dir"
+	fail=1
+}
+# Nothing under the destination existed, so there was nothing to lift there (the managed dir did exist, and is lifted).
+grep -E '^(-R )?-i ' "$STUB_STATE/log" | grep -qF "$fd" && {
+	echo "FAIL: fresh: a flag was lifted on a fresh install"
+	fail=1
+}
+
+# A reinstall over flagged files lifts every flag before the first write (the old gate is still there then) and sets them
+# all again after (the new one is).
+printf 'old gate\n' >"$fd/hooks/review-gate.sh"
+sort -u "$STUB_STATE/flagged" >"$tmp/flagged.before"
+: >"$STUB_STATE/log"
+flag_install again "$fd" "$fm"
+expect again 0 0
+want_lift() {
+	grep -qxF -- "$1 | old gate" "$STUB_STATE/log" || {
+		echo "FAIL: again: no lift before the deploy: $1"
+		fail=1
+	}
+}
+for f in "$root"/hooks/*; do want_lift "-i $fd/hooks/${f##*/}"; done
+for f in "$root"/agents/ship-*.md; do want_lift "-i $fd/agents/${f##*/}"; done
+for f in "-i $fd/bin/shfmt" "-R -i $fd/skills/ship" "-R -i $fd/git-hooks" "-i $fm/managed-settings.d/claude-ship.json" "-i $fm/managed-settings.d" "-i $fm"; do
+	want_lift "$f"
+done
+grep -qxF -- "-R -i $fm | old gate" "$STUB_STATE/log" && {
+	echo "FAIL: again: the managed dir was lifted recursively, which would unlock other policy files"
+	fail=1
+}
+grep -E '^(-R )?-i ' "$STUB_STATE/log" | grep -qv ' | old gate$' && {
+	echo "FAIL: again: a flag was lifted after the deploy"
+	fail=1
+}
+grep -E '^(-R )?\+i ' "$STUB_STATE/log" | grep -q ' | old gate$' && {
+	echo "FAIL: again: a flag was set before the deploy"
+	fail=1
+}
+grep -qE '^(-R )?\+i ' "$STUB_STATE/log" || {
+	echo "FAIL: again: no flag was set"
+	fail=1
+}
+sort -u "$STUB_STATE/flagged" >"$tmp/flagged.after"
+cmp -s "$tmp/flagged.before" "$tmp/flagged.after" || {
+	echo "FAIL: again: the flagged paths differ after the reinstall"
+	diff "$tmp/flagged.before" "$tmp/flagged.after" | sed 's/^/  /'
+	fail=1
+}
+[ "$(head -n 1 "$fd/hooks/review-gate.sh")" != "old gate" ] || {
+	echo "FAIL: again: the gate wasn't redeployed"
+	fail=1
+}
+
+# A flag that can't be lifted (chattr fails: not root) stops the install before it writes anything: the files stay as
+# they were, never half replaced.
+printf 'old gate\n' >"$fd/hooks/review-gate.sh"
+STUB_CHATTR_FAIL=1
+export STUB_CHATTR_FAIL
+flag_install stuck "$fd" "$fm"
+unset STUB_CHATTR_FAIL
+expect stuck 1
+has stuck "still immutable"
+has stuck "nothing was installed"
+has stuck "chattr -i"
+[ "$(head -n 1 "$fd/hooks/review-gate.sh")" = "old gate" ] || {
+	echo "FAIL: stuck: the gate was replaced although its flag couldn't be lifted"
+	fail=1
+}
+lacks stuck "Deployed claude-ship"
+
+# A flag that can't be set (as root: a filesystem without chattr; otherwise: not root) is a warning naming the paths, and
+# fails the install only as root. The files are deployed either way.
+fd2=$tmp/flags-cant
+fresh_dest "$fd2"
+STUB_CHATTR_FAIL=1
+FAKE_UID=0
+export STUB_CHATTR_FAIL FAKE_UID
+flag_install cant-root "$fd2" "$tmp/flags-managed2"
+unset STUB_CHATTR_FAIL FAKE_UID
+expect cant-root 1 1
+has cant-root "not immutable"
+has cant-root "$fd2/hooks/review-gate.sh"
+has cant-root "$fd2/git-hooks"
+has cant-root "$tmp/flags-managed2/managed-settings.d/claude-ship.json"
+[ -x "$fd2/hooks/review-gate.sh" ] && [ -f "$tmp/flags-managed2/managed-settings.d/claude-ship.json" ] || {
+	echo "FAIL: cant-root: the files weren't deployed"
+	fail=1
+}
+fresh_dest "$tmp/flags-cant2"
+STUB_CHATTR_FAIL=1
+FAKE_UID=1000
+export STUB_CHATTR_FAIL FAKE_UID
+flag_install cant-user "$tmp/flags-cant2" "$tmp/flags-managed3"
+unset STUB_CHATTR_FAIL FAKE_UID
+expect cant-user 0 1
+has cant-user "not immutable"
+# One path lsattr doesn't show as flagged is named, and only that one.
+fd3=$tmp/flags-hidden
+fresh_dest "$fd3"
+STUB_LSATTR_HIDE="*/hooks/review-prompt.md"
+FAKE_UID=0
+export STUB_LSATTR_HIDE FAKE_UID
+flag_install hidden "$fd3" "$tmp/flags-managed4"
+unset STUB_LSATTR_HIDE FAKE_UID
+expect hidden 1 1
+has hidden "$fd3/hooks/review-prompt.md"
+lacks hidden "$fd3/hooks/review-gate.sh"
+# Without write access to the managed dir the user files are still flagged, and the managed paths are left out.
+fd4=$tmp/flags-nomanaged
+fresh_dest "$fd4"
+: >"$STUB_STATE/log"
+flag_install nomanaged "$fd4" "$blocked"
+expect nomanaged 0 0
+want_flagged nomanaged "$fd4/hooks/review-gate.sh"
+grep -qF "$blocked" "$STUB_STATE/log" && {
+	echo "FAIL: nomanaged: chattr was called on the unwritable managed dir"
+	fail=1
+}
+# No chattr or lsattr on the machine: one warning, the install itself is unaffected and exits 0.
+nochattr="$tmp/nochattr-bin"
+mkdir -p "$nochattr"
+for t in git tar mktemp mkdir cp mv rm cat dirname awk sed grep tr head cmp env sort sh cut chmod jq find id wc tail ls; do
+	p=$(command -v "$t")
+	case $p in /*) ln -s "$p" "$nochattr/$t" ;; esac
+done
+fd5=$tmp/flags-nochattr
+fresh_dest "$fd5"
+PATH=$nochattr flag_install nochattr "$fd5" "$tmp/flags-managed5"
+expect nochattr 0 1
+has nochattr "chattr or lsattr not found"
+[ -x "$fd5/hooks/review-gate.sh" ] || {
+	echo "FAIL: nochattr: the gate wasn't deployed"
+	fail=1
+}
 
 [ "$fail" = 0 ] && echo "install: ok"
 exit "$fail"

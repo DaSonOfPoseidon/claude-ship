@@ -8,13 +8,17 @@
 # is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
 # (docs/scripts.md). It also registers the gate in a managed-settings drop-in (settings/claude-ship.json, copied to
 # ${CLAUDE_SHIP_MANAGED_DIR:-/etc/claude-code}/managed-settings.d/ when that is writable, i.e. as root), which user and
-# project settings can't turn off. The gate's hook entry may also live in ~/.claude/settings.json (see README.md): after
+# project settings can't turn off, and sets the immutable flag (chattr +i) on everything it deploys, lifting it first on a
+# reinstall; only the user lifts it otherwise. The gate's hook entry may also live in ~/.claude/settings.json (see README.md): after
 # deploying, this script reads that file (never writes it) and warns about a missing or outdated entry (the drop-in
 # counts as a registration), and says when the PR loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
 # frontmatter was not deployed or is not executable (#122).
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
+managed=${CLAUDE_SHIP_MANAGED_DIR:-/etc/claude-code}
+managed_dropin=$managed/managed-settings.d/claude-ship.json
+managed_ok=
 if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 	git -C "$repo" fetch -q origin main
 	main=$(git -C "$repo" show origin/main:install.sh)
@@ -22,6 +26,39 @@ if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+
+# The immutable flag (docs/gate.md › Tamper protection): once installed, the gate's files are flagged with chattr +i, so no
+# command Claude runs can change them, whatever it's spelled like; only the user lifts the flag (`! chattr -i PATH`), and
+# so does this script, before it writes and again after. chattr and lsattr are Linux's (e2fsprogs) and the only tools here
+# that aren't POSIX; without them, or without root or a filesystem that has the flag, the install still works and says
+# what isn't locked. lock_list prints what is locked, one path per line after its kind: "r" is a tree (locked recursively),
+# "1" just that path (the managed dir holds other policy files, which are not ours to lock or unlock). Paths with a
+# newline in them are not supported.
+lock_list() {
+	for f in "$tmp"/hooks/*; do printf '1 %s\n' "$dest/hooks/${f##*/}"; done
+	printf 'r %s\n' "$dest/skills/ship"
+	for f in "$tmp"/agents/ship-*.md; do printf '1 %s\n' "$dest/agents/${f##*/}"; done
+	printf '1 %s\n' "$dest/bin/shfmt"
+	printf 'r %s\n' "$dest/git-hooks"
+	# $1 set: the managed paths too (they are lifted whether or not this run writes them, locked only when it did).
+	if [ -n "$1" ]; then printf '1 %s\n' "$managed_dropin" "$managed/managed-settings.d" "$managed"; fi
+}
+# Whether lsattr shows the immutable flag on $1.
+is_flagged() {
+	attrs=$(lsattr -d "$1" 2>/dev/null) || return 1
+	case ${attrs%% *} in *i*) return 0 ;; *) return 1 ;; esac
+}
+# The paths of lock_list (trees walked) that have the immutable flag ($1 = flagged) or lack it ($1 = loose), one per line; $2 as
+# for lock_list.
+flag_report() {
+	lock_list "$2" | while read -r kind p; do
+		[ -e "$p" ] || continue
+		if [ "$kind" = r ]; then find "$p"; else printf '%s\n' "$p"; fi
+	done | while IFS= read -r f; do
+		if is_flagged "$f"; then state=flagged; else state=loose; fi
+		if [ "$state" = "$1" ]; then printf '%s\n' "$f"; fi
+	done
+}
 git -C "$repo" archive origin/main agents hooks skills settings/claude-ship.json scripts/codex-status.sh scripts/fetch-shfmt.sh | tar -x -C "$tmp"
 # shfmt first, into a temp file and run once, before anything installed is touched (#189): the gate blocks every Bash call
 # without a working shfmt, so a failed fetch must not leave a new gate next to a missing one. An installed shfmt is the
@@ -43,6 +80,22 @@ if ! jq -es 'length == 1 and (.[0] | (.hooks | keys) == ["PreToolUse"] and (.hoo
 		and (.timeout | type == "number") and .onFailure == "block")))' "$tmp/settings/claude-ship.json" >/dev/null 2>&1; then
 	echo "install: settings/claude-ship.json on origin/main isn't a valid managed-settings drop-in (a bug there); nothing was installed." >&2
 	exit 1
+fi
+# Lift the flags on everything this script is about to write (also the rm -rf of skills/ship below), and check that it
+# worked: a flag that can't be lifted (not root) must stop the install before the first write, not half way through it.
+have_chattr=
+if command -v chattr >/dev/null 2>&1 && command -v lsattr >/dev/null 2>&1; then have_chattr=1; fi
+if [ -n "$have_chattr" ]; then
+	lock_list 1 | while read -r kind p; do
+		[ -e "$p" ] || continue
+		if [ "$kind" = r ]; then chattr -R -i "$p" 2>/dev/null || :; else chattr -i "$p" 2>/dev/null || :; fi
+	done
+	stuck=$(flag_report flagged 1)
+	if [ -n "$stuck" ]; then
+		echo "install: still immutable, and chattr -i couldn't lift it (it needs root; run install.sh as root, or lift it yourself with \`! chattr -i <path>\`): $(printf '%s\n' "$stuck" | head -n 3 | tr '\n' ' ')" >&2
+		echo "install: nothing was installed." >&2
+		exit 1
+	fi
 fi
 mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills" "$dest/bin"
 # File by file: agents/ also holds the user's own agents.
@@ -102,9 +155,6 @@ esac
 # managed-settings.d/*.json in the managed directory, and user and project settings can't override or disable what it sets.
 # Copied beside its place and moved in, so Claude Code never reads half a file. Without write access (not root) the gate
 # stays registered in user settings only (README.md › Install).
-managed=${CLAUDE_SHIP_MANAGED_DIR:-/etc/claude-code}
-managed_dropin=$managed/managed-settings.d/claude-ship.json
-managed_ok=
 if mkdir -p "$managed/managed-settings.d" 2>/dev/null &&
 	cp "$tmp/settings/claude-ship.json" "$managed/managed-settings.d/.claude-ship.json.new" 2>/dev/null &&
 	chmod 644 "$managed/managed-settings.d/.claude-ship.json.new" &&
@@ -233,5 +283,26 @@ VERDICTS
 	fi
 	extra_info
 }
+# Everything written, flag it, then check with lsattr. The managed paths are flagged when the drop-in was written (or was
+# there already, so that a flag lifted above is never left off).
+lock_managed=$managed_ok
+if [ -z "$lock_managed" ] && [ -f "$managed_dropin" ]; then lock_managed=1; fi
+if [ -z "$have_chattr" ]; then
+	echo "install: warning: chattr or lsattr not found (they are Linux's), so the installed gate isn't locked against edits." >&2
+else
+	lock_list "$lock_managed" | while read -r kind p; do
+		[ -e "$p" ] || continue
+		if [ "$kind" = r ]; then chattr -R +i "$p" 2>/dev/null || :; else chattr +i "$p" 2>/dev/null || :; fi
+	done
+	loose=$(flag_report loose "$lock_managed" | head -n 20 | tr '\n' ' ')
+	if [ -z "$loose" ]; then
+		echo "Set the immutable flag on the installed gate; to change a file by hand, lift it first: ! chattr -i <path>."
+	else
+		echo "install: warning: not immutable, so a command Claude runs could still change it (chattr +i needs root and a filesystem that supports it): $loose" >&2
+		# As root there is no excuse: that is a gate that isn't locked.
+		if [ "$(id -u)" = 0 ]; then rc=1; fi
+	fi
+fi
+
 check_settings || rc=1
 [ "$rc" = 0 ] || exit "$rc"
