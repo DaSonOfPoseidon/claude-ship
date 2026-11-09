@@ -158,7 +158,7 @@ shfmt download stops the install before it changes anything.
 
 The drop-in applies to every Claude Code user of the machine, and its hook is `~/.claude/hooks/review-gate.sh` of whoever runs
 the session. On a machine with other Claude Code users, run `./install.sh` for each of them first (`CLAUDE_HOME=<their
-~/.claude>`), or drop the drop-in (`sudo chattr -i` it, and `/etc/claude-code`, then delete it) and keep the gate in user
+~/.claude>`), or remove the drop-in (`sudo chattr -i /etc/claude-code /etc/claude-code/managed-settings.d /etc/claude-code/managed-settings.d/claude-ship.json`, then delete the file) and keep the gate in user
 settings: a user without the gate installed gets every matching tool call blocked, since the hook is missing and fails closed.
 
 After installing, restart Claude Code and check that `/status` lists "Enterprise managed settings (drop-ins)". The
