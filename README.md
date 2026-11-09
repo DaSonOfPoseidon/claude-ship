@@ -86,7 +86,10 @@ unresolved Codex threads still fail it. Same-repo PRs are unaffected.
 git fetch origin && git tag -f v1 origin/main && git push -f origin v1
 ```
 
-Claude's gate blocks tag pushes, so the owner runs this (it moves the workflow and the action together). The same command creates `v1` the first time. Until
+Claude may run this too (it moves the workflow and the action together): the gate lets a push of one tag through, and the
+pre-push check accepts it because the tag's commit is already on origin's default branch, as GitHub reports it. Claude runs it
+as three commands, since a pushing command may hold only the push (`git fetch origin`, `git tag -f v1 origin/main`, `git push -f origin v1`).
+A tag of a commit that isn't on the default branch is refused. The same command creates `v1` the first time. Until
 `v1` exists, every caller's `codex-review` run fails to resolve the workflow and sets no status, so create it
 right after the PR that added `action.yml` merges, before any repo switches to the action.
 
@@ -188,7 +191,7 @@ The matcher sends the MCP tools that write files, branches or PRs (`push_files`,
 `merge_pull_request`) to the gate by tool name, whatever the server is called, and the gate blocks them in
 opted-in repos.
 
-The gate reviews HEAD, so it lets a push send only HEAD's branch, to origin, and only when every origin URL is
+The gate reviews HEAD, so it lets a push send only HEAD's branch (or one tag of a commit already on the default branch), to origin, and only when every origin URL is
 the same GitHub repo, fetch and push. It reads git config and refs before the command runs, so a pushing
 command may run only the push, an optional leading `cd <dir> &&`, harmless redirects (`2>&1`, `> /dev/null`) and
 trailing read-only filters (`tail`, `head`, `cat`, `grep`); nothing else runs next to it. The push may pass no git

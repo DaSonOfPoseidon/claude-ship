@@ -156,7 +156,7 @@ only `-C`.
 
 ## Push shape
 
-The review covers HEAD, so a push may send only HEAD, to origin, and only when every origin URL (fetch and
+The review covers HEAD, so a push may send only HEAD (or one tag, below), to origin, and only when every origin URL (fetch and
 push) is the same GitHub repo. Git fetches from the first URL and pushes to all of them, and `github_slugs`
 drops URLs that aren't GitHub's, so a local path among them would go unseen. The review diffs against the
 default branch and reads its rules through origin's fetch URL, so that must be the repo the push lands in.
@@ -172,6 +172,13 @@ skips the [pre-push check](#pre-push-check), which also refuses an unreviewed pu
 the review didn't cover. Config that changes what a bare push sends blocks too: `push.default` `matching`, or
 `upstream`/`tracking` when the branch tracks another one; `remote.origin.push`; `push.followTags`;
 `push.recurseSubmodules` `on-demand` or `only`; `remote.origin.mirror`.
+
+**A tag push** is the one other thing a push may send: exactly `git push [-f|--force] origin <tag>` or
+`... origin refs/tags/<tag>` (`tag_push` in `hooks/review-gate.sh`; `-C DIR` and `cd DIR &&` as for any push), where
+`<tag>` is an existing local tag. One tag, no other option, remote or refspec (`--tags`, `HEAD:refs/tags/x`,
+`v1:refs/heads/main`, `+v1`, `--delete`), and a bare name that is also a branch, or `HEAD`, is not a tag. The checks on
+`push.followTags` and `remote.origin.mirror` and on global options still apply. Such a push sends no HEAD, so the gate
+reviews nothing and lets it through: the [pre-push check](#pre-push-check) decides on the tag's commit.
 
 Git global options other than one `-C <dir>` (`-c push.default=matching`, `--git-dir`, ...) can change what's pushed
 or from which repo, and block. Environment overrides never get that far: only the push may run. The tree allows only
@@ -263,8 +270,22 @@ on its own, by the commit it pushes and not by HEAD:
 |---|---|
 | local sha is all zeros (a delete) | allowed |
 | the sha isn't a full object name, or isn't a commit (a tag is peeled to its commit) | refused |
-| `<common dir>/review-gate/<commit>.pass` or `.waived` exists | allowed |
+| the remote ref is under `refs/tags/` and the commit is on the remote's default branch | allowed |
+| the remote ref is under `refs/tags/` and it isn't (a local `.pass` or `.waived` doesn't count) | refused |
+| `<common dir>/review-gate/<commit>.pass` or `.waived` exists (any other ref) | allowed |
 | anything else, including a malformed line | refused |
+
+**Tags of merged commits.** A squash-merge commit never has a local `.pass` (it was made on GitHub), but it went through a PR
+with the gate, CI and Codex, so a tag of it sends nothing unreviewed. A tag is a release, so it is judged by this rule alone,
+before the review state is read: a reviewed feature commit can't be released before it is merged. A tag line is allowed
+when its commit is an ancestor of the default branch's tip **as the remote reports it now**: `git ls-remote --symref <url> HEAD`
+against the URL the push goes to (`$2`), exactly one `HEAD` line with a full object name, the tip fetched from that URL if
+the clone lacks it, then `git merge-base --is-ancestor`. Local refs are not evidence (`refs/remotes/origin/main` is
+whatever `git update-ref` says), so they are never read. Anything it can't tell refuses, naming the reason: no URL, the
+network (a 60 s bound, no credential prompt, no stdin), output it can't read, a tip it can't fetch, a shallow clone. A commit
+only on another remote branch, or only local, is refused. Branch lines keep the table's rule: a merged commit pushed to a
+branch still needs its own review. Redirecting the remote itself (`url.<x>.insteadOf`, `remote.origin.url`) is outside the
+gate's scope (AGENTS.md › Gate scope).
 
 One refused line refuses the whole push. The state is the common directory's, shared by the worktrees. Every push the
 gate lets through for an opted-in repo therefore leaves a `.pass` for HEAD, including a branch whose diff against the

@@ -5,7 +5,8 @@
 # core.hooksPath to that directory, which stops git from running a repo's own .git/hooks, so every hook here first chains
 # to the repo's own hook of that name (same arguments, same stdin), and pre-push also checks Claude's pushes: a commit
 # with no `.pass` or `.waived` in the review state is refused, whatever started the push (a plain push, a script,
-# `gh pr create`, a compound command). The user's own pushes are untouched. Design notes: docs/gate.md › Pre-push check.
+# `gh pr create`, a compound command); a tag is refused unless its commit is on the remote's default branch. The user's own
+# pushes are untouched. Design notes: docs/gate.md › Pre-push check.
 set -u
 
 name=${1:-}
@@ -109,6 +110,48 @@ for slug in $slugs; do
 done
 [ -n "$enforce" ] || run_own "$@"
 
+# git with the network's wait bounded, no prompt for credentials and no stdin (the loop below reads the ref lines from its
+# own, which a fetch over ssh would eat): a hook that waits forever is no answer.
+net_git() {
+	if command -v timeout >/dev/null 2>&1; then
+		GIT_TERMINAL_PROMPT=0 timeout 60 git "$@" </dev/null
+	else
+		GIT_TERMINAL_PROMPT=0 git "$@" </dev/null
+	fi
+}
+# on_default_branch <remote URL> <commit>: is the commit on the remote's default branch, as the remote reports it now?
+# Local refs are state Claude controls (`git update-ref refs/remotes/origin/main` proves nothing), so the tip comes from
+# `ls-remote` against the URL the push goes to, and its commit is fetched from there if this clone lacks it. Anything it
+# can't tell (no URL, the network, output it can't read, a missing object, a shallow clone) fails; $tag_why says why.
+tag_why=
+on_default_branch() {
+	odb_url=$1
+	odb_commit=$2
+	tag_why="it couldn't be checked against the remote's default branch"
+	[ -n "$odb_url" ] || return 1
+	odb_out=$(net_git ls-remote --symref "$odb_url" HEAD 2>/dev/null) || {
+		tag_why="the remote's default branch couldn't be read from $odb_url (\`git ls-remote\` failed)"
+		return 1
+	}
+	# Exactly one line for HEAD, with a full object name: the default branch's tip.
+	odb_tips=$(printf '%s\n' "$odb_out" | awk -F'\t' '$2 == "HEAD" && $1 !~ /[^0-9a-f]/ && (length($1) == 40 || length($1) == 64) { print $1 }')
+	if [ -z "$odb_tips" ] || [ "$(printf '%s\n' "$odb_tips" | wc -l | tr -d '[:space:]')" != 1 ]; then
+		tag_why="the remote at $odb_url gave no single commit for its default branch"
+		return 1
+	fi
+	if ! git cat-file -e "$odb_tips^{commit}" 2>/dev/null; then
+		net_git fetch -q --no-tags "$odb_url" "$odb_tips" >/dev/null 2>&1 || true
+		git cat-file -e "$odb_tips^{commit}" 2>/dev/null || {
+			tag_why="the remote's default branch tip ($(printf '%.8s' "$odb_tips")) couldn't be fetched from $odb_url"
+			return 1
+		}
+	fi
+	git merge-base --is-ancestor "$odb_commit" "$odb_tips" 2>/dev/null || {
+		tag_why="it isn't on the default branch of $odb_url"
+		return 1
+	}
+}
+
 # Every pushed ref's commit needs a pass or a waiver in the common directory's state (shared by the worktrees).
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || refuse "couldn't find the repository's review state."
 state=$common/review-gate
@@ -125,10 +168,21 @@ while IFS=' ' read -r lref lsha rref rsha extra || [ -n "$lref$lsha$rref$rsha" ]
 	# A delete sends no commit.
 	[ -n "$(printf '%s' "$lsha" | tr -d 0)" ] || continue
 	commit=$(git rev-parse --verify --quiet "$lsha^{commit}") || refuse "$(printf '%.8s' "$lsha") ($rref) is not a commit this repository has, so it has no review."
+	short=$(git rev-parse --short "$commit" 2>/dev/null) || short=$(printf '%.8s' "$commit")
+	# A tag is a release: it is pushed only when its commit is already on the remote's default branch, as the remote says now
+	# (a squash merge never gets a local `.pass`, but it went through a PR with this gate, CI and Codex). A local `.pass` or
+	# `.waived` doesn't count for it, or a reviewed feature commit could be released before it is merged.
+	case $rref in
+	refs/tags/*)
+		if on_default_branch "${2:-}" "$commit"; then
+			continue
+		fi
+		refuse "$short ($rref) can't be tagged yet: $tag_why. A tag is pushed only when its commit is already on the remote's default branch (merged through a PR), whatever its local review. Don't skip this check (\`--no-verify\`, \`core.hooksPath\`); if it is wrong, ask the user to push the tag."
+		;;
+	esac
 	if [ -e "$state/$commit.pass" ] || [ -e "$state/$commit.waived" ]; then
 		continue
 	fi
-	short=$(git rev-parse --short "$commit" 2>/dev/null) || short=$(printf '%.8s' "$commit")
 	refuse "$short ($rref) has no passing review. Run a plain \`git push\` (or \`cd <dir> && git push\`) on its own so the review gate reviews HEAD first. Don't skip this check (\`--no-verify\`, \`core.hooksPath\`); if a review is wrong, ask the user to waive it."
 done <"$saved"
 

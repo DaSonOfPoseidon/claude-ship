@@ -273,6 +273,67 @@ expect 2 'git push origin HEAD
 expect 2 '# x
 git push origin HEAD'
 expect 2 'git push --tags origin HEAD'
+# A push of one existing tag to origin sends no HEAD, so HEAD needs no review here (this fixture has none): the pre-push
+# check judges the tag's commit (claude-ship #230). Only these shapes: `git push [-f|--force] origin <tag>` and
+# `... origin refs/tags/<tag>`, with `-C DIR` and `cd DIR &&` as for any push.
+fixture https://github.com/acme/app.git nopass
+git -C "$repo" tag v1
+git -C "$repo" -c user.name=t -c user.email=t@t tag -a -m t v2
+git -C "$repo" branch dev
+git -C "$repo" tag dev
+expect 0 'git push origin v1'
+expect 0 'git push -f origin v1'
+expect 0 'git push --force origin v1'
+expect 0 'git push origin v1 -f'
+expect 0 'git push origin refs/tags/v1'
+expect 0 'git push -f origin refs/tags/v2'
+expect 0 "cd $repo && git push -f origin v1"
+expect 0 "git -C $repo push -f origin v1"
+expect 0 'git push origin v1 2>&1 | tail -3'
+expect 0 'git push origin refs/tags/dev'
+# Anything else still blocks (nothing but HEAD reaches the review, which blocks a HEAD with no pass here).
+expect 2 'git push origin v9'
+expect 2 'git push origin refs/tags/v9'
+expect 2 'git push origin refs/heads/v1'
+expect 2 'git push origin HEAD:refs/tags/v1'
+expect 2 'git push origin v1:refs/heads/main'
+expect 2 'git push origin v1:refs/tags/v1'
+expect 2 'git push origin v1 v2'
+expect 2 'git push origin v1 HEAD'
+expect 2 'git push origin tag v1'
+expect 2 'git push upstream v1'
+expect 2 'git push v1'
+expect 2 'git push --tags origin'
+expect 2 'git push origin v1 --tags'
+expect 2 'git push --delete origin v1'
+expect 2 'git push origin :v1'
+expect 2 'git push origin +v1'
+expect 2 'git push --force-with-lease origin v1'
+expect 2 'git push -u origin v1'
+expect 2 'git push --mirror origin v1'
+expect 2 'git push --no-verify origin v1'
+expect 2 'git push origin "$t"'
+expect 2 'git push origin v*'
+expect 2 'git push origin v1; git push origin v1'
+expect 2 'git status && git push origin v1'
+expect 2 'git push origin v1 && git status'
+expect 2 'git -c push.followTags=false push origin v1'
+expect 2 'git push origin v1 >/tmp/out'
+# A bare name that is also a branch, or HEAD, isn't a tag (git calls the first ambiguous); the HEAD review applies.
+expect 2 'git push origin dev'
+git -C "$repo" tag HEAD
+expect 2 'git push origin HEAD'
+git -C "$repo" tag -d HEAD >/dev/null
+# Settings that make a push send more than its words say still block a tag push.
+git -C "$repo" config push.followTags true
+expect 2 'git push origin v1'
+git -C "$repo" config --unset push.followTags
+git -C "$repo" config remote.origin.mirror true
+expect 2 'git push origin v1'
+git -C "$repo" config --unset remote.origin.mirror
+expect 0 'git push origin v1'
+git -C "$repo" remote add other https://github.com/acme/app.git
+expect 2 'git push other v1'
 # `-C` names the repo that is pushed from, quoted or not, so its state is the one that is checked.
 fixture https://github.com/acme/app.git nopass
 other=$repo

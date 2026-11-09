@@ -168,10 +168,28 @@ commit second
 git -C "$repo" tag -a -m t v-good
 gpush "$repo" origin refs/tags/v-good
 want_push "an annotated tag on an unreviewed commit" no
+# A tag is a release: its commit has to be on the remote's default branch, a local review or waiver doesn't count for it
+# (a reviewed feature commit would otherwise be released before it is merged, Codex round 1).
 mkrepo
 git -C "$repo" tag -a -m t v-good
 gpush "$repo" origin refs/tags/v-good
-want_push "an annotated tag on a reviewed commit" yes
+want_push "an annotated tag on a reviewed commit that isn't on the remote" no
+on_remote refs/tags/v-good && {
+	echo "FAIL: the tag of an unmerged reviewed commit reached the remote"
+	fail=1
+}
+mkrepo
+commit second
+waive
+git -C "$repo" tag v-waived
+gpush "$repo" origin v-waived
+want_push "a tag on a waived commit that isn't on the remote" no
+mkrepo
+git -C "$repo" tag -a -m t v-good
+gpush "$repo" origin main
+want_push "the reviewed commit's branch" yes
+gpush "$repo" origin refs/tags/v-good
+want_push "an annotated tag on a reviewed commit that is on the remote's main" yes
 on_remote refs/tags/v-good || {
 	echo "FAIL: the tag didn't reach the remote"
 	fail=1
@@ -396,6 +414,144 @@ want_push "direct: an unreadable GitHub URL" no
 hook "$bare" "$bare" "refs/heads/main $bad refs/heads/main $zero
 "
 want_push "direct: a local path" yes
+
+# --- a tag of a commit that is already on the remote's default branch ---
+# A squash merge never gets a local `.pass`, but its commit has been through a PR, CI and Codex, so a tag of it is accepted
+# when the remote itself says the commit is on its default branch (docs/gate.md › Pre-push check). Local refs prove
+# nothing: refs/remotes/origin/main is whatever `git update-ref` says.
+# land [<rev> [<branch>]]: the commit arrives on the remote the way a merge does, with no review in this repo.
+land() {
+	git -C "$repo" push -q --no-verify origin "${1:-HEAD}:refs/heads/${2:-main}"
+}
+mkrepo
+commit second
+land
+git -C "$repo" tag v-light
+git -C "$repo" tag -a -m t v-anno
+gpush "$repo" origin refs/tags/v-light
+want_push "a lightweight tag of a commit on the remote's main" yes
+gpush "$repo" origin refs/tags/v-anno
+want_push "an annotated tag of a commit on the remote's main" yes
+on_remote refs/tags/v-light && on_remote refs/tags/v-anno || {
+	echo "FAIL: a tag of a merged commit didn't reach the remote"
+	fail=1
+}
+# A tag may be older than the remote's tip, and a moved tag is the same push with -f.
+commit third
+land
+git -C "$repo" tag -f v-light >/dev/null
+gpush "$repo" -f origin refs/tags/v-light
+want_push "a moved tag (-f) of a commit on the remote's main" yes
+[ "$(git -C "$bare" rev-parse v-light)" = "$(git -C "$repo" rev-parse HEAD)" ] || {
+	echo "FAIL: the moved tag didn't reach the remote"
+	fail=1
+}
+git -C "$repo" tag v-old HEAD~1
+gpush "$repo" origin v-old
+want_push "a tag of an ancestor of the remote's main" yes
+
+# A commit that is only local, or only on another branch, is not merged.
+mkrepo
+commit second
+git -C "$repo" tag v-local
+gpush "$repo" origin refs/tags/v-local
+want_push "a tag of a commit that is not on the remote" no
+grep -q 'default branch' "$tmp/out" || {
+	echo "FAIL: the refusal of an unmerged tag doesn't say why"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+# The key case: a forged remote-tracking ref is not the remote.
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+gpush "$repo" origin refs/tags/v-local
+want_push "a tag of a commit only a forged refs/remotes/origin/main holds" no
+on_remote refs/tags/v-local && {
+	echo "FAIL: the tag of a forged remote-tracking commit reached the remote"
+	fail=1
+}
+mkrepo
+commit second
+land HEAD other
+git -C "$repo" tag v-other
+gpush "$repo" origin refs/tags/v-other
+want_push "a tag of a commit on another remote branch" no
+# "The default branch" is what the remote reports, not a name: here it is trunk.
+mkrepo
+git -C "$bare" symbolic-ref HEAD refs/heads/trunk
+commit second
+land
+git -C "$repo" tag v-trunk
+gpush "$repo" origin v-trunk
+want_push "a tag of a commit on main when the remote's default is trunk" no
+land HEAD trunk
+gpush "$repo" origin v-trunk
+want_push "a tag of a commit on the remote's default branch (trunk)" yes
+# A branch push of a merged commit keeps the rule: it needs its own review.
+mkrepo
+commit second
+land
+gpush "$repo" origin HEAD:refs/heads/copy
+want_push "a branch push of a merged commit" no
+on_remote refs/heads/copy && {
+	echo "FAIL: a branch push of a merged unreviewed commit reached the remote"
+	fail=1
+}
+# The remote's tip may be a commit this clone doesn't have (a merge made since): it is fetched to compare.
+mkrepo
+commit second
+land
+git -C "$repo" tag v-behind
+git clone -q "$bare" "$tmp/other$n"
+git -C "$tmp/other$n" commit -q --allow-empty -m elsewhere
+git -C "$tmp/other$n" push -q --no-verify origin HEAD:refs/heads/main
+gpush "$repo" origin v-behind
+want_push "a tag when the remote's tip is a commit this clone lacks" yes
+
+# The remote can't say: refused, whatever the reason. A fake git answers `ls-remote`, as $LS_OUT and $LS_RC say.
+mkdir -p "$tmp/fakegit"
+real_git=$(command -v git)
+cat >"$tmp/fakegit/git" <<EOT
+#!/bin/sh
+if [ "\$1" = ls-remote ]; then
+	printf '%b' "\$LS_OUT"
+	exit "\${LS_RC:-0}"
+fi
+exec "$real_git" "\$@"
+EOT
+chmod +x "$tmp/fakegit/git"
+mkrepo
+commit second
+land
+git -C "$repo" tag v-fake
+tagline="refs/tags/v-fake $(git -C "$repo" rev-parse v-fake) refs/tags/v-fake $zero
+"
+tip=$(git -C "$repo" rev-parse HEAD)
+# fakels <output> <status>: the hook's check with that answer from ls-remote.
+fakels() {
+	printf '%s' "$tagline" | (cd "$repo" && env LS_OUT="$1" LS_RC="$2" CLAUDE_CODE_CHILD_SESSION=1 FAKE_ANCESTRY=none GH_MODE=$mode PATH=$tmp/fakegit:$tmp/bin:$PATH sh "$root/hooks/git-hook.sh" pre-push origin "$bare" >"$tmp/out" 2>&1)
+	rc=$?
+}
+fakels "ref: refs/heads/main\tHEAD\n$tip\tHEAD\n" 0
+want_push "ls-remote output that is well formed (the fake itself)" yes
+fakels "" 0
+want_push "ls-remote that prints nothing" no
+fakels "garbage\n" 0
+want_push "ls-remote that prints garbage" no
+fakels "ref: refs/heads/main\tHEAD\n" 0
+want_push "ls-remote that gives no commit for HEAD" no
+fakels "zzzz\tHEAD\n" 0
+want_push "ls-remote with a HEAD line that is no object name" no
+fakels "$tip\tHEAD\n$tip\tHEAD\n" 0
+want_push "ls-remote with two HEAD lines" no
+fakels "$tip\trefs/heads/main\n" 0
+want_push "ls-remote with a branch but no HEAD" no
+fakels "1234567890123456789012345678901234567890\tHEAD\n" 0
+want_push "ls-remote naming an object nobody has" no
+fakels "$tip\tHEAD\n" 128
+want_push "ls-remote that fails" no
+hook origin "$tmp/missing.git" "$tagline"
+want_push "a remote that can't be reached" no
 
 # --- the repo's own hooks ---
 # pre-push runs with the same arguments and stdin, for Claude's push and the user's; its failure fails the push.
