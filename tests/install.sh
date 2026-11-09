@@ -844,6 +844,18 @@ unset STUB_LSATTR_HIDE FAKE_UID
 expect hidden 1 1
 has hidden "$fd3/hooks/review-prompt.md"
 lacks hidden "$fd3/hooks/review-gate.sh"
+# Under sudo, $HOME may be root's: the install says where it goes, so a wrong home is seen (and CLAUDE_HOME needs no note).
+fd6=$tmp/flags-sudo
+fresh_dest "$fd6"
+SUDO_USER=someone
+export SUDO_USER
+flag_install sudo "$fd6" "$tmp/flags-managed6"
+unset SUDO_USER
+expect sudo 0 0
+has sudo "running under sudo"
+has sudo "--preserve-env=HOME"
+flag_install nosudo "$fd6" "$tmp/flags-managed6"
+lacks nosudo "running under sudo"
 # Without write access to the managed dir the user files are still flagged, and the managed paths are left out.
 fd4=$tmp/flags-nomanaged
 fresh_dest "$fd4"

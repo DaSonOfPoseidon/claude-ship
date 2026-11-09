@@ -467,7 +467,7 @@ def wcheck($e; $all; $cs):
 		([$a[] | select(startswith("-") | not)] | last) as $l
 		| wbl(if $l != null and ($l | rprot($cs)) then [$l] else [] end; $c)
 	elif $c == "chattr" then
-		{k: "deny", m: "chattr sets and lifts the immutable flag that locks the installed review gate (hooks, skill, ship agents, shfmt, git hooks and the managed settings drop-in). Only the user changes it: ask them to run `! chattr -i <path>`."}
+		{k: "deny", m: "chattr sets and lifts the immutable flag that locks the installed review gate (hooks, skill, ship agents, shfmt, git hooks and the managed settings drop-in). Only the user changes it: ask them to run `! sudo chattr -i <path>`."}
 	elif $c == "git" then
 		gitdeny($a),
 		(gitargs($a) as $g
@@ -595,7 +595,7 @@ text_tamper() {
 	# `chattr` as a word of a command the tree couldn't settle (`c=chattr; $c -i x`): it can't tell the command from an argument,
 	# so it blocks (docs/gate.md › Tamper protection).
 	if printf '%s' "$cmd_all" | grep -Eq '(^|[^[:alnum:]_.-])chattr([^[:alnum:]_.-]|$)'; then
-		echo "Blocked: chattr sets and lifts the immutable flag that locks the installed review gate. Only the user changes it: ask them to run \`! chattr -i <path>\`. (This command has parts the gate can't read, and names chattr.)" >&2
+		echo "Blocked: chattr sets and lifts the immutable flag that locks the installed review gate. Only the user changes it: ask them to run \`! sudo chattr -i <path>\`. (This command has parts the gate can't read, and names chattr.)" >&2
 		exit 2
 	fi
 	protected=$(printf '%s' "$cmd_all" |

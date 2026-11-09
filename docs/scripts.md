@@ -542,7 +542,7 @@ files are deployed, then the template is copied to `$CLAUDE_SHIP_MANAGED_DIR/man
 `/etc/claude-code`; skipped with a note when that can't be written, i.e. not root) through a temp file and a `mv`, then the
 flags are set again and checked with `lsattr` (a warning naming the paths that lack one, and exit 1 as root;
 one warning without `chattr` or `lsattr`). The registration check accepts the drop-in alone, and when the gate is
-in `settings.json` too it says Claude Code runs a handler that appears in both once. The tests put stubs of `chattr`,
+in `settings.json` too it says Claude Code runs a handler that appears in both once. Under `sudo` (`SUDO_USER` set) it notes the directory it installs into, since `$HOME` may be root's (`sudo --preserve-env=HOME`, or `CLAUDE_HOME`). The tests put stubs of `chattr`,
 `lsattr` and `id` first on `PATH` and point `CLAUDE_SHIP_MANAGED_DIR` into their temp directory; they never touch the real
 flags or `/etc`.
 

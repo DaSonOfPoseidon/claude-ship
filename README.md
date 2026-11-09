@@ -144,12 +144,15 @@ Git stops running a repo's own `.git/hooks` once `core.hooksPath` is set, so eac
 name. Your own pushes are untouched, but a command you run with `!` inside Claude Code counts as Claude's: `! git push
 --no-verify` skips the check.
 
-Run `./install.sh` as root. It registers the gate in a managed-settings drop-in,
-`/etc/claude-code/managed-settings.d/claude-ship.json` (a copy of `settings/claude-ship.json`), which user and
-project settings can't turn off, and it sets the immutable flag (`chattr +i`) on everything it installs, the drop-in
-and `/etc/claude-code` included, so no command Claude runs can change the installed gate; Claude's own `chattr` calls are
-blocked. To edit an installed file by hand, lift the flag first with `! chattr -i <path>` (the `!` runs it as you, not
-as Claude; `lsattr <path>` shows the flag); the next `./install.sh` lifts and sets the flags itself. Not root: the drop-in
+Run `./install.sh` as root, for your own `~/.claude`: if you are root that is just `./install.sh`; otherwise use
+`sudo --preserve-env=HOME ./install.sh` (a plain `sudo` may make `$HOME` root's, and the gate would be installed into
+root's `~/.claude` while Claude Code runs the one in yours; `CLAUDE_HOME=<dir>` sets the target directly). It registers the
+gate in a managed-settings drop-in, `/etc/claude-code/managed-settings.d/claude-ship.json` (a copy of
+`settings/claude-ship.json`), which user and project settings can't turn off, and it sets the immutable flag
+(`chattr +i`) on everything it installs, the drop-in and `/etc/claude-code` included, so no command Claude runs can change
+the installed gate; Claude's own `chattr` calls are blocked. Setting and lifting the flag needs root. To edit an installed
+file by hand, lift it first with `! sudo chattr -i <path>` (without `sudo` if you are root; the `!` runs it as you, not as
+Claude; `lsattr <path>` shows the flag); the next `./install.sh` lifts and sets the flags itself. Not root: the drop-in
 is skipped, the flags can't be set (it warns), and the gate stays registered in user settings only, as below. A failed
 shfmt download stops the install before it changes anything.
 

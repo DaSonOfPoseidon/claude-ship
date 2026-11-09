@@ -466,7 +466,7 @@ and the writers above. What neither check covers is out of scope by design: see 
 
 **`chattr` is denied** (#189). `chattr` sets and lifts the immutable flag that locks the installed files (below), so any
 call whose effective command is `chattr`, behind the wrappers above and `find -exec`, `xargs` or a string run as shell,
-blocks with a message asking the user to run `! chattr -i <path>` themselves. `lsattr`, and a `chattr` that is only a
+blocks with a message asking the user to run `! sudo chattr -i <path>` themselves. `lsattr`, and a `chattr` that is only a
 word (`grep -n chattr install.sh`, `echo chattr`, a file called `chattr.md`), pass. The fallback blocks a command it can't
 read when the word `chattr` stands on its own in it (`c=chattr; $c -i x`), since it can't tell a command from an
 argument there. `install.sh` itself is not affected: the gate sees `./install.sh`, not what runs inside it.
@@ -492,7 +492,7 @@ command is spelled:
   can't be set, which is no fault of the install). Without `chattr` or `lsattr` it warns once and goes on.
 - **Reinstalls.** Before it writes anything (the `rm -rf` of `skills/ship` included), `install.sh` lifts the flag on every
   one of those paths that exists, and stops with nothing changed when one stays flagged (chattr needs root), so an
-  install is never half done. Between runs only the user lifts a flag: `! chattr -i <path>`, then edit.
+  install is never half done. Between runs only the user lifts a flag: `! sudo chattr -i <path>`, then edit.
 - **The order.** shfmt is fetched and run first, and then the template is validated, both before anything installed is
   touched: a gate without shfmt blocks every Bash call, and a failed fetch used to leave exactly that (#189).
 

@@ -34,7 +34,7 @@ Codex's PR review and the pre-push review gate both follow this section. Rate ev
 
   The install is immutable: `install.sh` registers the gate in managed settings and sets `chattr +i` on what it
   deploys, so a command that gets past the text checks still can't rewrite the installed gate. The flag is lifted only
-  by the user (`! chattr -i`), and root can always lift it: a finding needs a plausible command that unlocks or
+  by the user (`! sudo chattr -i`), and root can always lift it: a finding needs a plausible command that unlocks or
   bypasses it without root and without the `chattr` the gate denies.
 
 How each finding is handled depends on its priority and on which review found it: the outcome table in
@@ -69,7 +69,7 @@ or anything CI already checks (shellcheck, actionlint).
   backstop for merges. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch
   skips it.
 - Only the user changes the opt-in variables, waives a review, lifts the immutable flag on the installed files
-  (`! chattr -i <path>`), or edits the installed gate, its state or the settings that register it. `install.sh`
+  (`! sudo chattr -i <path>`), or edits the installed gate, its state or the settings that register it. `install.sh`
   deploys only `origin/main`; it lifts the flag itself while it reinstalls and sets it again.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,
   `cut`, `tr`, `head`, `tail`, `cp`, `printf`, …), plus `git`, `gh`, `jq`, and the widely supported extras already

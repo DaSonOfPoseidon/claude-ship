@@ -26,9 +26,13 @@ if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# Under sudo $HOME may be root's, which would put the gate where the user's Claude Code doesn't look.
+if [ -n "${SUDO_USER:-}" ]; then
+	echo "install: note: running under sudo; installing into $dest. If that isn't the ~/.claude Claude Code runs from, run again with sudo --preserve-env=HOME or set CLAUDE_HOME."
+fi
 
 # The immutable flag (docs/gate.md › Tamper protection): once installed, the gate's files are flagged with chattr +i, so no
-# command Claude runs can change them, whatever it's spelled like; only the user lifts the flag (`! chattr -i PATH`), and
+# command Claude runs can change them, whatever it's spelled like; only the user lifts the flag (`! sudo chattr -i PATH`), and
 # so does this script, before it writes and again after. chattr and lsattr are Linux's (e2fsprogs) and the only tools here
 # that aren't POSIX; without them, or without root or a filesystem that has the flag, the install still works and says
 # what isn't locked. lock_list prints what is locked, one path per line after its kind: "r" is a tree (locked recursively),
@@ -92,7 +96,7 @@ if [ -n "$have_chattr" ]; then
 	done
 	stuck=$(flag_report flagged 1)
 	if [ -n "$stuck" ]; then
-		echo "install: still immutable, and chattr -i couldn't lift it (it needs root; run install.sh as root, or lift it yourself with \`! chattr -i <path>\`): $(printf '%s\n' "$stuck" | head -n 3 | tr '\n' ' ')" >&2
+		echo "install: still immutable, and chattr -i couldn't lift it (it needs root; run install.sh as root, or lift it yourself with \`! sudo chattr -i <path>\`): $(printf '%s\n' "$stuck" | head -n 3 | tr '\n' ' ')" >&2
 		echo "install: nothing was installed." >&2
 		exit 1
 	fi
@@ -296,7 +300,7 @@ else
 	done
 	loose=$(flag_report loose "$lock_managed" | head -n 20 | tr '\n' ' ')
 	if [ -z "$loose" ]; then
-		echo "Set the immutable flag on the installed gate; to change a file by hand, lift it first: ! chattr -i <path>."
+		echo "Set the immutable flag on the installed gate; to change a file by hand, lift it first: ! sudo chattr -i <path>."
 	else
 		echo "install: warning: not immutable, so a command Claude runs could still change it (chattr +i needs root and a filesystem that supports it): $loose" >&2
 		# As root there is no excuse: that is a gate that isn't locked.
