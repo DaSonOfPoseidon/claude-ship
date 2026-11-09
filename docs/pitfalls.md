@@ -250,7 +250,9 @@ review finds a new class.
   pending until Codex has reviewed, and the review is requested only after the wait, so every round would end as a
   timeout; read as a result, the same status (failed while a thread is open) would also read as a CI failure no code
   change fixes (claude-ship #118). Name the checks that are the thing being gated and leave them out, by exact name,
-  of what you wait on and of what you count as failed; test a lookalike name.
+  of what you wait on and of what you count as failed; test a lookalike name. The job that sets the status is one of
+  them: `codex-review / codex-status` failed on a transient gh API error with CI green and ended a round as `ci-fail`
+  before any review was requested (claude-ship #228).
 - **An error message matched as text can be a different error.** `autonomous` read any `gh variable get` failure containing
   "not found" as "the repo never opted in", and a shell without `gh` prints `gh: not found`, so a missing `gh` let the
   push through. Check that the tool exists before reading its output (the shell's own messages are not the tool's), and test

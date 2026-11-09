@@ -3,8 +3,8 @@
 # One block per failed check: "<workflow> / <name>  <link>", then, for a GitHub Actions job, the last 60 lines of
 # its failed-step log, indented, without colours or timestamps. Other checks (external statuses): name and link.
 # A cancelled check is listed with the failed ones (it is not green; no log). Then "no failed checks" when none failed, and "pending: <n> checks still running" if any. The `codex-review`
-# status is the review, not CI (pending until Codex has reviewed, failed while a thread is open), so it is
-# ignored. With --wait it first polls until no check is pending (CI_WAIT_POLLS polls, 18, CI_WAIT_INTERVAL
+# status is the review, not CI (pending until Codex has reviewed, failed while a thread is open), and so is the
+# reusable workflow's `codex-status` job that sets it (it can fail on a gh API error), so both are ignored. With --wait it first polls until no check is pending (CI_WAIT_POLLS polls, 18, CI_WAIT_INTERVAL
 # seconds apart, 30: 9 minutes, under a 10-minute Bash timeout). Exit 0 when it printed a result, 3 when --wait
 # gave up with checks still pending (the result is printed), 2 on usage, 1 on a gh failure it couldn't read.
 # Log text is untrusted: it is only printed.
@@ -35,8 +35,10 @@ done
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# The review status, set by the codex-review workflow; not a CI check.
-review=codex-review
+# The review is not CI: the `codex-review` status, and the reusable workflow's job that sets it (gh names it
+# "<caller job> / codex-status", or just "codex-status"). Matched by job name, since the workflow's name is set per
+# repo. A lookalike such as codex-status-lint is still a check. Used by both the pending and the failed filter.
+review_def='def is_review: .name == "codex-review" or .name == "codex-status" or (.name | endswith("/ codex-status"));'
 polls=${CI_WAIT_POLLS:-18}
 interval=${CI_WAIT_INTERVAL:-30}
 n=0
@@ -55,7 +57,7 @@ while :; do
 			exit 1
 		fi
 	fi
-	pending=$(jq --arg r "$review" '[.[] | select(.bucket == "pending" and .name != $r)] | length' "$tmp/checks")
+	pending=$(jq "$review_def"'[.[] | select(.bucket == "pending" and (is_review | not))] | length' "$tmp/checks")
 	[ -n "$wait" ] && [ "$pending" -gt 0 ] || break
 	if [ "$n" -ge "$polls" ]; then
 		timedout=1
@@ -71,7 +73,7 @@ us=$(printf '\037')
 # workflow stays a field). Control characters become spaces first, so a name can't add lines, separators or
 # escape sequences to the output.
 # A cancelled check is not green either, so it is listed with the failed ones (bucket is gh's own word, not text).
-jq -r --arg r "$review" '.[] | select((.bucket == "fail" or .bucket == "cancel") and .name != $r)
+jq -r "$review_def"'.[] | select((.bucket == "fail" or .bucket == "cancel") and (is_review | not))
 	| [.workflow, .name, .link, .bucket] | map((. // "") | gsub("[[:cntrl:]]"; " ")) | join("\u001f")' "$tmp/checks" >"$tmp/failed"
 failed=0
 while IFS=$us read -r workflow name link bucket; do

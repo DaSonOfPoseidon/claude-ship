@@ -191,6 +191,30 @@ printf '[{"name":"codex-review-lint","state":"FAILURE","bucket":"fail","link":"h
 run 1 o/r
 want 'a check named like the review' 0 'codex-review-lint  https://ci.example.com/y'
 
+# The reusable workflow's job (named "<caller job> / codex-status" by gh) sets that status, so it is the review too:
+# a transient gh API error fails it with green CI, and that must not end the round before Codex is requested (#228).
+cs_fail='{"name":"codex-review / codex-status","state":"FAILURE","bucket":"fail","link":"https://github.com/o/r/actions/runs/100/job/200","workflow":"Codex review"}'
+cs_pend='{"name":"codex-review / codex-status","state":"PENDING","bucket":"pending","link":"https://github.com/o/r/actions/runs/100/job/200","workflow":"Codex review"}'
+printf '[%s,%s]\n' "$cs_fail" "$pass" >"$tmp/checks.json"
+run 1 o/r
+want 'codex-status job failed is not a CI failure' 0 'no failed checks'
+notcalled 'codex-status job failed' 'run view'
+printf '[%s,%s]\n' "$cs_pend" "$pass" >"$tmp/checks.json"
+run 1 o/r --wait
+want 'codex-status job pending is not pending CI' 0 'no failed checks'
+[ "$(grep -c 'pr checks' "$tmp/calls")" = 1 ] || { echo "FAIL: --wait polled for the codex-status job"; fail=1; }
+printf '[%s,%s]\n' "$cs_fail" "$failext" >"$tmp/checks.json"
+run 1 o/r
+want 'codex-status job failed beside a real failure' 0 'deploy/preview  https://ci.example.com/build/7'
+# A bare job name is the review too; a lookalike is a check.
+printf '[{"name":"codex-status","state":"FAILURE","bucket":"fail","link":"","workflow":""}]\n' >"$tmp/checks.json"
+run 1 o/r
+want 'a bare codex-status job' 0 'no failed checks'
+printf '[{"name":"codex-status-lint","state":"FAILURE","bucket":"fail","link":"https://ci.example.com/z","workflow":""},{"name":"lint / codex-status-lint","state":"FAILURE","bucket":"fail","link":"https://ci.example.com/w","workflow":""}]\n' >"$tmp/checks.json"
+run 1 o/r
+want 'checks named like the codex-status job' 0 'codex-status-lint  https://ci.example.com/z
+lint / codex-status-lint  https://ci.example.com/w'
+
 # A cancelled check is not green: it is listed (without a log fetch) so it never reads as "no failed checks".
 cancel='{"name":"unit","state":"CANCELLED","bucket":"cancel","link":"https://github.com/o/r/actions/runs/100/job/200","workflow":"CI"}'
 printf '[%s,%s]\n' "$cancel" "$pass" >"$tmp/checks.json"
