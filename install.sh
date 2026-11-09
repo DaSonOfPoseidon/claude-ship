@@ -1,7 +1,8 @@
 #!/bin/sh
 # Deploys claude-ship's origin/main into ~/.claude: the gate, its prompts and the orchestrate hint (hooks/), the
 # ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh for local DRY_RUN
-# checks), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh; a failure there makes the exit non-zero), and the git hook
+# checks), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh, run first: a gate without shfmt blocks every Bash call, so a
+# failure there stops the install before anything is changed, #189), and the git hook
 # stubs in git-hooks/, which it points git's global core.hooksPath at when that is unset (any other value makes the exit
 # non-zero; docs/gate.md › Pre-push check). Only main
 # is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
@@ -20,23 +21,28 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git -C "$repo" archive origin/main agents hooks skills scripts/codex-status.sh scripts/fetch-shfmt.sh | tar -x -C "$tmp"
-mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills"
+# shfmt first, into a temp file and run once, before anything installed is touched (#189): the gate blocks every Bash call
+# without a working shfmt, so a failed fetch must not leave a new gate next to a missing one. An installed shfmt is the
+# starting file, so the fetch script's "already current" check still saves the download.
+if [ -f "$dest/bin/shfmt" ]; then cp "$dest/bin/shfmt" "$tmp/shfmt" 2>/dev/null || :; fi
+if ! sh "$tmp/scripts/fetch-shfmt.sh" "$tmp/shfmt" || ! "$tmp/shfmt" --version >/dev/null 2>&1; then
+	echo "install: couldn't install shfmt (see above); the review gate needs it, so nothing was installed." >&2
+	exit 1
+fi
+mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills" "$dest/bin"
 # File by file: agents/ also holds the user's own agents.
 cp "$tmp"/agents/ship-*.md "$dest/agents/"
 cp "$tmp"/hooks/* "$dest/hooks/"
 rm -rf "$dest/skills/ship"
 cp -R "$tmp/skills/ship" "$dest/skills/ship"
 cp "$tmp/scripts/codex-status.sh" "$dest/skills/ship/codex-status.sh"
+# The gate reads every Bash command with shfmt (#135). Copied beside its place and moved in, so it is never half-written.
+cp "$tmp/shfmt" "$dest/bin/.shfmt.new"
+chmod 755 "$dest/bin/.shfmt.new"
+mv -f "$dest/bin/.shfmt.new" "$dest/bin/shfmt"
 echo "Deployed claude-ship $(git -C "$repo" rev-parse --short origin/main) to $dest."
 
-# The gate's Bash checks will parse commands with shfmt (#135). main's fetch script installs a pinned release, checked
-# against a pinned sha256 (docs/scripts.md). A failure doesn't stop the rest of the install; the exit status says it.
 rc=0
-mkdir -p "$dest/bin"
-if ! sh "$tmp/scripts/fetch-shfmt.sh" "$dest/bin/shfmt"; then
-	echo "install: couldn't install shfmt (see above); the review gate will need it." >&2
-	rc=1
-fi
 
 # The git hook stubs (docs/gate.md › Pre-push check): core.hooksPath points git at $dest/git-hooks, where each stub runs
 # hooks/git-hook.sh with its own name, so a pre-push check refuses Claude's unreviewed pushes and the repo's own hooks still

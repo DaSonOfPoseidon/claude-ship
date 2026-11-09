@@ -33,15 +33,20 @@ both=$(printf '%s\n%s\n' "$gate" "$hint" | jq -s '.[0] * .[1]')
 # main: this tree's installer, then a commit whose installer also deploys a marker file.
 cp -R "$root/agents" "$root/hooks" "$root/skills" "$root/install.sh" "$root/README.md" "$tmp/src/"
 cp "$root/scripts/codex-status.sh" "$tmp/src/scripts/"
-# A stand-in for scripts/fetch-shfmt.sh (which has its own test): writes its argument's own path into that file, or
-# fails when FETCH_FAIL is set, so the test sees where install.sh asked for shfmt.
+# A stand-in for scripts/fetch-shfmt.sh (which has its own test): writes a small shfmt at its argument's path (install.sh
+# must run what it fetched), fails when FETCH_FAIL is set, or leaves a file that can't run when FETCH_BROKEN is set.
 cat >"$tmp/src/scripts/fetch-shfmt.sh" <<'STUB'
 #!/bin/sh
 [ -z "${FETCH_FAIL:-}" ] || {
 	echo "stub: fetch failed" >&2
 	exit 1
 }
-printf '%s\n' "$1" >"$1"
+if [ -n "${FETCH_BROKEN:-}" ]; then
+	printf '#!/nonexistent/interpreter\n' >"$1"
+else
+	printf '#!/bin/sh\n[ "$1" = --version ] && echo stub-shfmt\n' >"$1"
+fi
+chmod 755 "$1"
 STUB
 git init -q "$tmp/src"
 git -C "$tmp/src" add -A
@@ -93,9 +98,9 @@ for f in "$tmp"/dest/hooks/*.sh "$tmp"/dest/skills/ship/*.sh; do
 		fail=1
 	}
 done
-# shfmt is fetched into $dest/bin/shfmt, by the fetch script from main's archive.
-[ "$(cat "$tmp/dest/bin/shfmt" 2>/dev/null)" = "$tmp/dest/bin/shfmt" ] || {
-	echo "FAIL: shfmt wasn't fetched into dest/bin/shfmt"
+# shfmt is fetched by the fetch script from main's archive and put at $dest/bin/shfmt.
+[ -x "$tmp/dest/bin/shfmt" ] && [ "$("$tmp/dest/bin/shfmt" --version 2>/dev/null)" = stub-shfmt ] || {
+	echo "FAIL: shfmt wasn't installed into dest/bin/shfmt"
 	fail=1
 }
 # A valid registration: nothing to warn about, and install.sh never touches the settings.
@@ -123,6 +128,8 @@ run_case() {
 	cdir="$tmp/case-$1"
 	rm -rf "$cdir"
 	mkdir -p "$cdir"
+	# $seed: a directory whose files are already installed there; $nodeploy: the install is expected to deploy nothing.
+	[ -z "${seed:-}" ] || cp -R "$seed/." "$cdir/"
 	[ -f "$start" ] && cp "$start" "$cdir/settings.json"
 	GIT_CONFIG_GLOBAL="$tmp/gitconfig-$1" CLAUDE_HOME=$cdir PATH=$case_path "$sh_bin" "${install_sh:-$tmp/checkout/install.sh}" >"$tmp/out" 2>&1
 	rc=$?
@@ -135,8 +142,16 @@ run_case() {
 		echo "FAIL: $1: install.sh created the settings file"
 		fail=1
 	fi
-	[ -x "$cdir/hooks/review-gate.sh" ] || {
+	[ -n "${nodeploy:-}" ] || [ -x "$cdir/hooks/review-gate.sh" ] || {
 		echo "FAIL: $1: the gate wasn't deployed"
+		fail=1
+	}
+}
+# lacks <name> <text>: the output doesn't have this text.
+lacks() {
+	grep -qF -- "$2" "$tmp/out" && {
+		echo "FAIL: $1: output has: $2"
+		sed 's/^/  /' "$tmp/out"
 		fail=1
 	}
 }
@@ -219,14 +234,6 @@ expect abs-command 0 0
 
 # Claude Code runs every registered gate hook, so each one is judged and a second registration is itself a warning
 # (claude-ship #153): the verdict can't depend on the order of the entries.
-# lacks <name> <text>: the output doesn't have this text.
-lacks() {
-	grep -qF -- "$2" "$tmp/out" && {
-		echo "FAIL: $1: output has: $2"
-		sed 's/^/  /' "$tmp/out"
-		fail=1
-	}
-}
 # A stale entry that misses all three checks (matcher, timeout, onFailure).
 stale=$(jq -n --arg c "$cmd" '{matcher: "Bash", hooks: [{type: "command", command: $c, timeout: 600}]}')
 # The README entry follows the stale one.
@@ -303,21 +310,37 @@ fork_case fork-null '.env = {"CLAUDE_CODE_FORK_SUBAGENT": null}'
 fork_case fork-env-string '.env = "oops"'
 fork_case fork-env-array '.env = []'
 
-# A failing shfmt fetch is reported and makes the exit non-zero, but everything else is still deployed (run_case
-# checks the gate and that the settings stay untouched), and a valid registration adds no warning of its own.
+# A failing shfmt fetch stops the install before anything is changed (claude-ship #189): a gate deployed without shfmt
+# blocks every Bash call. What was installed before stays as it was, shfmt and the gate included, and the settings stay
+# untouched (run_case checks that). FETCH_BROKEN is a fetch that "succeeds" with a file that can't run.
 gate_with '.'
-FETCH_FAIL=1
-export FETCH_FAIL
-run_case shfmt-fails
-unset FETCH_FAIL
-expect shfmt-fails 1 0
-has shfmt-fails "couldn't install shfmt"
-has shfmt-fails "the review gate will need it"
-has shfmt-fails "The gate is registered"
-[ -e "$tmp/case-shfmt-fails/skills/ship/SKILL.md" ] || {
-	echo "FAIL: shfmt-fails: the skill wasn't deployed"
-	fail=1
-}
+mkdir -p "$tmp/old-install/hooks" "$tmp/old-install/bin"
+printf 'old gate\n' >"$tmp/old-install/hooks/review-gate.sh"
+printf 'old shfmt\n' >"$tmp/old-install/bin/shfmt"
+chmod 755 "$tmp/old-install/hooks/review-gate.sh" "$tmp/old-install/bin/shfmt"
+seed=$tmp/old-install
+nodeploy=1
+for v in FETCH_FAIL FETCH_BROKEN; do
+	cn=shfmt-$v
+	export "$v=1"
+	run_case "$cn"
+	unset "$v"
+	expect "$cn" 1 0
+	has "$cn" "couldn't install shfmt"
+	has "$cn" "nothing was installed"
+	[ "$(cat "$tmp/case-$cn/hooks/review-gate.sh")" = "old gate" ] && [ "$(cat "$tmp/case-$cn/bin/shfmt")" = "old shfmt" ] || {
+		echo "FAIL: $cn: the installed gate or shfmt changed"
+		fail=1
+	}
+	for f in skills agents hooks/review-lib.sh git-hooks; do
+		[ ! -e "$tmp/case-$cn/$f" ] || {
+			echo "FAIL: $cn: $f was deployed"
+			fail=1
+		}
+	done
+	lacks "$cn" "Deployed claude-ship"
+done
+unset seed nodeploy
 # The same registration with a working fetch exits 0, with shfmt in place.
 run_case shfmt-works
 expect shfmt-works 0 0
@@ -486,7 +509,7 @@ rc=$?
 nojq="$tmp/nojq-bin"
 mkdir -p "$nojq"
 unset -f git
-for t in git tar mktemp mkdir cp rm cat dirname awk sed grep tr head cmp env sort sh cut chmod; do
+for t in git tar mktemp mkdir cp mv rm cat dirname awk sed grep tr head cmp env sort sh cut chmod; do
 	p=$(command -v "$t")
 	case $p in /*) ln -s "$p" "$nojq/$t" ;; esac
 done

@@ -180,7 +180,7 @@ report as its result (claude-ship #160). Other users of the gate don't need it.
 `./install.sh` also installs shfmt v3.14.1 into `~/.claude/bin`, checked against a sha256 pinned in the repo
 (`scripts/fetch-shfmt.sh`). The review gate reads every Bash command with it and blocks every Bash call, in every
 repo, when `~/.claude/bin/shfmt` is missing or can't parse the command (docs/gate.md › Tamper protection), so run
-`./install.sh` before relying on a gate that has this check. install.sh exits non-zero when the install fails. It needs `curl` and `sha256sum` (or `shasum`); only Linux x86_64 and aarch64 are supported for now.
+`./install.sh` before relying on a gate that has this check. install.sh fetches shfmt first and, when that fails, stops with exit 1 before it changes anything. It exits non-zero when any other part of the install fails. It needs `curl` and `sha256sum` (or `shasum`); only Linux x86_64 and aarch64 are supported for now.
 
 After a PR merges, run `./install.sh` again to deploy it. The installed files (the ship agents included), the gate's state in
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because

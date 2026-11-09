@@ -533,9 +533,11 @@ Any other value is printed and left alone, and the exit is 1. `$dest` must be an
 the gate compares the value with `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` as text. The tests give each install its own
 `GIT_CONFIG_GLOBAL`.
 
-After the files, it runs `scripts/fetch-shfmt.sh` from main's archive to put shfmt at `$dest/bin/shfmt` (#135). A
-failure prints `couldn't install shfmt` and makes the exit non-zero, but the rest of the install still runs, so the
-gate and the skill are deployed either way.
+Before it changes anything, it runs `scripts/fetch-shfmt.sh` from main's archive into a temp file (starting from the
+installed `$dest/bin/shfmt`, so a current one costs no download) and runs that file once with `--version` (#135). A
+fetch that fails, or a file that doesn't run, prints `couldn't install shfmt`, exits 1 and deploys nothing, so what
+was installed stays as it was: a new gate without shfmt would block every Bash call (#189). Otherwise the verified
+file is moved into `$dest/bin/shfmt` along with the rest.
 
 ## `scripts/fetch-shfmt.sh`
 
