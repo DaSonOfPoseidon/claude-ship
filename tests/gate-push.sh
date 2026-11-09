@@ -170,6 +170,8 @@ git init -q -b feat "$scan/husky"
 git -C "$scan/husky" remote add origin https://github.com/acme/other.git
 git -C "$scan/husky" config core.hooksPath .husky
 expect 2 "cd -P $scan/husky && git commit -m x && git push"
+# The round-3 P0 shape: a canonical push after `cd -P`, then more commands.
+expect 2 "cd -P $scan/husky && git push && git status"
 expect 2 'ls'
 expect 2 './scripts/release.sh'
 expect 2 "git -C $scan/husky status"
@@ -437,11 +439,12 @@ expect 2 'git push --mirror origin v1'
 expect 2 'git push --no-verify origin v1'
 expect 2 'git push origin "$t"'
 expect 2 'git push origin v*'
-expect 2 'git push origin v1; git push origin v1'
-expect 2 'git status && git push origin v1'
-expect 2 'git push origin v1 && git status'
 expect 2 'git -c push.followTags=false push origin v1'
 expect 2 'git push origin v1 >/tmp/out'
+# A tag push in a chain is no canonical push: the gate leaves it to the pre-push check, which judges the tag's commit.
+expect 0 'git push origin v1; git push origin v1'
+expect 0 'git status && git push origin v1'
+expect 0 'git push origin v1 && git status'
 # A bare name that is also a branch, or HEAD, isn't a tag (git calls the first ambiguous); the HEAD review applies.
 expect 2 'git push origin dev'
 git -C "$repo" tag HEAD
