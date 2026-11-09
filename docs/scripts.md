@@ -15,7 +15,7 @@ it; `HEAD_SHA` checks another commit, to test against past reviews.
 |---|---|
 | `success` | Codex completed a review of the head commit after it was pushed, and every Codex review thread is resolved |
 | `failure` | a Codex thread is unresolved, or Codex's review failed (on a fork PR, with a message that a retry won't help) |
-| `pending` | no completed review of the head yet, or the review stalled, was never acknowledged, or can't be tied to a request, or Codex's summary says it finished with findings and the review carrying them hasn't posted |
+| `pending` | no completed review of the head yet, or the review stalled, was never acknowledged, or can't be tied to a request, or Codex's summary says it finished with findings and the review carrying them hasn't posted (stalled if it never does) |
 
 On a fork PR the owner can also set `success` without a Codex review (below).
 
@@ -45,6 +45,9 @@ A review of another commit, or of the head from before the latest request (a re-
 `has_any_findings` that is false or null, a state that names another commit or none, and a state that isn't JSON
 change nothing. An unresolved Codex thread still fails first, an owner's fork approval still wins over the wait,
 and the reviews are read only in this case. `codex-wait.sh` keeps waiting on it, as on any plain `pending`.
+When the summary's last edit, the latest trusted request and the push are all `CODEX_STALL_SECS` old and the review
+still hasn't posted (#231), the status stays `pending` but says so ("... its review never posted (stalled, no update in N min);
+ask again with @codex review"), and `codex-wait.sh` exits 3 on it like on any stall.
 
 **Rows that name no commit.** A clean review's row can show `—` instead of a commit (#30). Nothing ties that
 completion to a request: neither the summary's edit history nor Codex's reactions say which request it answers.
