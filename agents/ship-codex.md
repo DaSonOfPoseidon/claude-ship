@@ -65,7 +65,7 @@ no request, so they don't wait for CI).
    b. `CI_WAIT_POLLS=10 ci-failures.sh <pr> <slug> --wait` (Bash `timeout: 600000`, no `run_in_background`),
       alone. It polls for up to 5 minutes until no check is pending, then prints the failed checks with their log
       tails (fetching those takes more time, outside the poll cap, and still fits the Bash timeout). It ignores the
-      `codex-review` status, which stays pending until Codex has reviewed, and Codex isn't requested until this
+      `codex-review` status and the `codex-status` job that sets it (neither is CI), which stay pending until Codex has reviewed, and Codex isn't requested until this
       step is over: waiting with `gh pr checks --watch` would wait for it forever. The same rule as step 4 holds:
       never end your turn or send report text before a call has returned. Read the exit code and the output:
 

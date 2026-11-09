@@ -118,6 +118,10 @@ if any check is pending, and `no failed checks` when none failed (also when the 
   Codex has reviewed and failed while a Codex thread is open. Codex is requested only after the CI read, so waiting
   on it would end every round as a timeout, and a round-2 head with open threads would read as a CI failure no code
   change fixes. It is ignored by exact name (a `codex-review-lint` check still counts), as failed and as pending.
+  So is the reusable workflow's job that sets it, which `gh` lists as `codex-review / codex-status` (the caller's job
+  id, then `/ codex-status`; a bare `codex-status` too): it can fail on a transient gh API error with CI green, and
+  that must not end the round before Codex is requested (#228). The match is on the job name, not the workflow name
+  (`Codex review` is set per repo), and a `codex-status-lint` check still counts.
 - **`--wait`** polls (`CI_WAIT_POLLS`, 18, every `CI_WAIT_INTERVAL` seconds, 30: 9 minutes plus the calls, under the
   agent's 10-minute Bash timeout) until nothing is pending, then prints as usual. `ship-codex` sets
   `CI_WAIT_POLLS=10` (5 minutes of polling), so the polls plus the failed-job log fetches, which run after the cap,
