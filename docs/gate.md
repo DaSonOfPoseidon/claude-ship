@@ -484,7 +484,10 @@ command is spelled:
   Code doesn't read the drop-in. The file is validated with `jq` (exactly one JSON value, the gate's `PreToolUse` hook with
   `timeout` and `onFailure: block`) before the installer changes anything, and moved into place from a temp file
   beside it, because a managed file that isn't valid JSON stops Claude Code from starting. Without write access to the
-  directory (not root), the install says the gate stays registered in user settings only and goes on.
+  directory (not root), the install says the gate stays registered in user settings only and goes on. The drop-in is
+  machine-wide while the handler it names is per user (`~/.claude/hooks/review-gate.sh`, as in the README's snippet), so
+  on a machine with other Claude Code users each of them needs the gate installed, or their tool calls block (the hook
+  fails closed); a single-user machine, which this is built for, is unaffected.
 - **The flag.** After deploying it runs `chattr +i` on each file in `hooks/`, `skills/ship` and `git-hooks`
   (recursively), `agents/ship-*.md`, `bin/shfmt`, the drop-in, `managed-settings.d` and the managed directory
   itself (so no other policy file can be added; the directory's other files are neither lifted nor flagged), then checks each with

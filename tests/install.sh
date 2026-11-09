@@ -64,7 +64,11 @@ done
 STUB
 real_id=$(command -v id)
 printf '#!/bin/sh\n[ "$1" = -u ] && [ -n "${FAKE_UID:-}" ] && { echo "$FAKE_UID"; exit 0; }\nexec %s "$@"\n' "$real_id" >"$tmp/stubbin/id"
-chmod +x "$tmp/stubbin/chattr" "$tmp/stubbin/lsattr" "$tmp/stubbin/id"
+cat >"$tmp/stubbin/chown" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >>"$STUB_STATE/chown.log"
+STUB
+chmod +x "$tmp/stubbin/chattr" "$tmp/stubbin/lsattr" "$tmp/stubbin/id" "$tmp/stubbin/chown"
 PATH=$tmp/stubbin:$PATH
 export PATH
 git() { command git -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@"; }
@@ -856,6 +860,65 @@ has sudo "running under sudo"
 has sudo "--preserve-env=HOME"
 flag_install nosudo "$fd6" "$tmp/flags-managed6"
 lacks nosudo "running under sudo"
+# As root under sudo, the directories the install creates for the user's own files (agents/, skills/ and a new ~/.claude) go
+# to the sudo user; the ones that are locked anyway stay root's. Not under sudo, or not root: no chown.
+fd7=$tmp/flags-chown-new
+: >"$STUB_STATE/chown.log"
+SUDO_USER=someone
+FAKE_UID=0
+export SUDO_USER FAKE_UID
+flag_install chown "$fd7" "$tmp/flags-managed7"
+unset SUDO_USER FAKE_UID
+expect chown 0 0
+for d in "$fd7" "$fd7/agents" "$fd7/skills"; do
+	grep -qxF -- "someone $d" "$STUB_STATE/chown.log" || {
+		echo "FAIL: chown: $d wasn't given to the sudo user"
+		fail=1
+	}
+done
+[ "$(wc -l <"$STUB_STATE/chown.log")" -eq 3 ] || {
+	echo "FAIL: chown: more than the three new directories were chowned"
+	sed 's/^/  /' "$STUB_STATE/chown.log"
+	fail=1
+}
+# Existing directories stay as they are (the second run creates nothing), and a plain run chowns nothing.
+: >"$STUB_STATE/chown.log"
+SUDO_USER=someone
+FAKE_UID=0
+export SUDO_USER FAKE_UID
+flag_install chown-again "$fd7" "$tmp/flags-managed7"
+unset SUDO_USER FAKE_UID
+[ ! -s "$STUB_STATE/chown.log" ] || {
+	echo "FAIL: chown-again: an existing directory was chowned"
+	fail=1
+}
+rm -rf "$fd7"
+flag_install chown-plain "$fd7" "$tmp/flags-managed7"
+[ ! -s "$STUB_STATE/chown.log" ] || {
+	echo "FAIL: chown-plain: chown ran without sudo"
+	fail=1
+}
+# A reinstall that fails after the flags were lifted puts back the flags that were there, the files it never got to included,
+# and none that weren't. Here bin/ is a file, so the directory can't be made (the deploy stops after the lift).
+fd8=$tmp/flags-failing
+fresh_dest "$fd8"
+flag_install failing-first "$fd8" "$tmp/flags-managed8"
+rm -rf "${fd8:?}/bin"
+: >"$fd8/bin"
+sort -u "$STUB_STATE/flagged" | grep -vF "$fd8/bin/" >"$tmp/flagged.before"
+: >"$STUB_STATE/log"
+flag_install failing "$fd8" "$tmp/flags-managed8"
+expect failing 1
+grep -qE '^(-R )?-i ' "$STUB_STATE/log" || {
+	echo "FAIL: failing: nothing was lifted, so the test proves nothing"
+	fail=1
+}
+sort -u "$STUB_STATE/flagged" | grep -vF "$fd8/bin/" >"$tmp/flagged.after"
+cmp -s "$tmp/flagged.before" "$tmp/flagged.after" || {
+	echo "FAIL: failing: the flags weren't put back after the failed install"
+	diff "$tmp/flagged.before" "$tmp/flagged.after" | sed 's/^/  /'
+	fail=1
+}
 # Without write access to the managed dir the user files are still flagged, and the managed paths are left out.
 fd4=$tmp/flags-nomanaged
 fresh_dest "$fd4"

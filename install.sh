@@ -25,7 +25,18 @@ if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 	CLAUDE_SHIP_REEXEC=1 CLAUDE_SHIP_REPO=$repo exec sh -c "$main" install.sh
 fi
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+have_chattr=
+# However the script ends, the flags it lifted go back (the ones recorded in $tmp/was-flagged, before the first lift): a
+# write that fails half way (a full disk) must not leave the gate's files unlocked, the ones it never got to included.
+cleanup() {
+	if [ -n "$have_chattr" ] && [ -f "$tmp/was-flagged" ]; then
+		while IFS= read -r f; do
+			if [ -e "$f" ]; then chattr +i "$f" 2>/dev/null || :; fi
+		done <"$tmp/was-flagged"
+	fi
+	rm -rf "$tmp"
+}
+trap cleanup EXIT
 # Under sudo $HOME may be root's, which would put the gate where the user's Claude Code doesn't look.
 if [ -n "${SUDO_USER:-}" ]; then
 	echo "install: note: running under sudo; installing into $dest. If that isn't the ~/.claude Claude Code runs from, run again with sudo --preserve-env=HOME or set CLAUDE_HOME."
@@ -87,9 +98,9 @@ if ! jq -es 'length == 1 and (.[0] | (.hooks | keys) == ["PreToolUse"] and (.hoo
 fi
 # Lift the flags on everything this script is about to write (also the rm -rf of skills/ship below), and check that it
 # worked: a flag that can't be lifted (not root) must stop the install before the first write, not half way through it.
-have_chattr=
 if command -v chattr >/dev/null 2>&1 && command -v lsattr >/dev/null 2>&1; then have_chattr=1; fi
 if [ -n "$have_chattr" ]; then
+	flag_report flagged 1 >"$tmp/was-flagged"
 	lock_list 1 | while read -r kind p; do
 		[ -e "$p" ] || continue
 		if [ "$kind" = r ]; then chattr -R -i "$p" 2>/dev/null || :; else chattr -i "$p" 2>/dev/null || :; fi
@@ -101,7 +112,16 @@ if [ -n "$have_chattr" ]; then
 		exit 1
 	fi
 fi
+# The directories this run creates for the user's own files (agents/ and skills/ hold their own agents and skills): as root
+# under sudo they would be root's, so they go to the sudo user. hooks/, bin/ and git-hooks/ are locked and stay root's.
+: >"$tmp/new-dirs"
+for d in "$dest" "$dest/agents" "$dest/skills"; do
+	if [ ! -d "$d" ]; then printf '%s\n' "$d" >>"$tmp/new-dirs"; fi
+done
 mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills" "$dest/bin"
+if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" = 0 ]; then
+	while IFS= read -r d; do chown "$SUDO_USER" "$d" || :; done <"$tmp/new-dirs"
+fi
 # File by file: agents/ also holds the user's own agents.
 cp "$tmp"/agents/ship-*.md "$dest/agents/"
 cp "$tmp"/hooks/* "$dest/hooks/"

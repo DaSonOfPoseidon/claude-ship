@@ -156,6 +156,11 @@ Claude; `lsattr <path>` shows the flag); the next `./install.sh` lifts and sets 
 is skipped, the flags can't be set (it warns), and the gate stays registered in user settings only, as below. A failed
 shfmt download stops the install before it changes anything.
 
+The drop-in applies to every Claude Code user of the machine, and its hook is `~/.claude/hooks/review-gate.sh` of whoever runs
+the session. On a machine with other Claude Code users, run `./install.sh` for each of them first (`CLAUDE_HOME=<their
+~/.claude>`), or drop the drop-in (`sudo chattr -i` it, and `/etc/claude-code`, then delete it) and keep the gate in user
+settings: a user without the gate installed gets every matching tool call blocked, since the hook is missing and fails closed.
+
 After installing, restart Claude Code and check that `/status` lists "Enterprise managed settings (drop-ins)". The
 drop-in has the same hook as the snippet below, so while you keep that snippet, Claude Code runs the gate once; once
 `/status` shows the drop-in, you can remove the entry from `~/.claude/settings.json`. Until you've seen it there, keep it:
