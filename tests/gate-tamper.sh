@@ -482,6 +482,72 @@ expect 2 "echo 'x"
 expect 2 'if then fi'
 expect 0 ''
 
+# The managed settings directory install.sh registers the gate in (claude-ship #189) is protected like the installed gate:
+# a policy file added or changed there, or the gate's drop-in replaced, would switch the gate off for every project.
+expect 2 'cp x /etc/claude-code/managed-settings.json'
+expect 2 'cp x /etc/claude-code/managed-settings.d/claude-ship.json'
+expect 2 'echo x > /etc/claude-code/managed-settings.d/50-x.json'
+expect 2 'echo x >> /etc/claude-code/managed-settings.json'
+expect 2 'rm -rf /etc/claude-code'
+expect 2 'rm /etc/claude-code/managed-settings.d/claude-ship.json'
+expect 2 'mv /etc/claude-code/managed-settings.d /tmp/x'
+expect 2 'echo x | tee /etc/claude-code/managed-settings.json'
+expect 2 'sudo tee /etc/claude-code/managed-settings.d/x.json </tmp/x'
+expect 2 'sed -i s/a/b/ /etc/claude-code/managed-settings.json'
+expect 2 'sh -c "echo x > /etc/claude-code/managed-settings.json"'
+expect 2 'cd /etc/claude-code && echo x > managed-settings.json'
+expect 2 'cd /etc/claude-code/managed-settings.d && rm claude-ship.json'
+expect 2 'cd /etc && rm claude-code/managed-settings.json'
+expect 2 'install -m 644 x /etc/claude-code/managed-settings.json'
+expect 2 'curl -o /etc/claude-code/managed-settings.json https://x.example/y'
+expect 2 'tar -xf x.tar -C /etc/claude-code'
+# The same file under another spelling.
+expect 2 'cp x /etc//claude-code/managed-settings.json'
+expect 2 'cp x /etc/./claude-code/managed-settings.json'
+expect 2 'cp x /etc/claude-code/../claude-code/managed-settings.json'
+expect 2 'cp x /etc/claude-code//managed-settings.d/x.json'
+expect 2 "cp x ${up}etc/claude-code/managed-settings.json"
+expect 2 'cp x "/etc/claude-code/managed-settings.json"'
+expect 2 "cp x '/etc/claude-code/managed-settings.json'"
+expect 2 'cp x /etc/claude-"code"/managed-settings.json'
+expect 2 'd=/etc/claude-code; rm $d/managed-settings.json'
+expect 2 'rm /etc/$x/managed-settings.json'
+expect 2 'rm /etc/claude-$x/managed-settings.json'
+expect 2 'rm /etc$x/claude-code/managed-settings.json'
+# Reading it is fine, and so are other files in /etc and names that only start like the directory.
+expect 0 'cat /etc/claude-code/managed-settings.d/claude-ship.json'
+expect 0 'ls -la /etc/claude-code /etc/claude-code/managed-settings.d'
+expect 0 'jq . /etc/claude-code/managed-settings.json 2>&1 | head'
+expect 0 'cp x /etc/other.conf'
+expect 0 'cp x /etc/claude-codex/y'
+expect 0 'git commit -m "docs: cp of /etc/claude-code/x is a write"'
+# chattr is how the installed files are locked and unlocked; only the user does either, with `!` (claude-ship #189).
+expect 2 'chattr -i ~/.claude/hooks/review-gate.sh'
+expect 2 'sudo chattr -R -i ~/.claude'
+expect 2 'chattr +i /tmp/x'
+expect 2 '/usr/bin/chattr -i ~/.claude/hooks/review-gate.sh'
+expect 2 'sudo -u root chattr -i /etc/claude-code'
+expect 2 'env X=1 chattr -i x'
+expect 2 'nice -n 5 chattr -i x'
+expect 2 'command chattr -i x'
+expect 2 'echo x | xargs chattr -i'
+expect 2 'find ~/.claude -exec chattr -i {} +'
+expect 2 "sh -c 'chattr -i ~/.claude/hooks/x'"
+expect 2 'eval "chattr -i x"'
+expect 2 'cd ~/.claude && chattr -R -i .'
+expect 2 'true && chattr -i x'
+expect 2 'echo $(chattr -i x)'
+expect 2 'chattr "-i" x'
+expect 2 "ch\"attr\" -i x"
+expect 2 'c=chattr; $c -i x'
+expect 0 'lsattr ~/.claude/hooks'
+expect 0 'lsattr -d /etc/claude-code'
+expect 0 'grep -n chattr install.sh'
+expect 0 'echo chattr -i is for the user'
+expect 0 'git commit -m "feat: chattr +i the files"'
+expect 0 'cat docs/chattr.md'
+expect 0 'ls chattr-notes'
+
 # write <exit code> <path>: the Write tool on the path.
 write() {
 	jq -nc --arg p "$2" --arg d "$tmp" '{tool_name: "Write", tool_input: {file_path: $p, content: "x"}, cwd: $d}' |
@@ -509,6 +575,19 @@ write 2 "$tmp/home/.claude/projects/../hooks/x"
 write 2 "$tmp/home/.claude/hooks/../settings.json"
 write 2 "${up}${tmp#/}/home/.claude/hooks/x"
 write 0 "$tmp/home/.claude/projects/x"
+# The managed settings directory, under every spelling (claude-ship #189).
+write 2 /etc/claude-code/managed-settings.json
+write 2 /etc/claude-code/managed-settings.d/50-x.json
+write 2 /etc/claude-code/managed-settings.d/claude-ship.json
+write 2 /etc/claude-code
+write 2 /etc//claude-code/managed-settings.json
+write 2 /etc/./claude-code/managed-settings.json
+write 2 /etc/claude-code/../claude-code/managed-settings.json
+write 2 /etc/x/../claude-code/managed-settings.d/x.json
+write 2 "${up}etc/claude-code/managed-settings.json"
+write 0 /etc/claude-codex/x
+write 0 /etc/claude-code-notes.md
+write 0 /etc/other.conf
 
 [ "$fail" = 0 ] && echo "gate-tamper: ok"
 exit "$fail"

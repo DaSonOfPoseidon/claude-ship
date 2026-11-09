@@ -118,14 +118,16 @@ Write | Edit | MultiEdit | NotebookEdit)
 	rpath=$(printf '%s' "$input" | jq -r --arg home "$hn" --arg user "$user" --arg cwd "$cwd" "$path_defs"'
 		(.tool_input.file_path // .tool_input.notebook_path // "") | if . == "" then "" else (tilde // .) | if startswith("/") then . else $cwd + "/" + . end | norm(false) end') || unreadable "file path"
 	# Protected: the installed gate, prompts, skill and ship agents, the gate's state, the settings that register it
-	# and shfmt (~/.claude/bin, which the gate reads every Bash command with: replacing it would blind the gate).
+	# (the managed settings directory, /etc/claude-code, included: the gate's drop-in is there, and so would be any policy
+	# file that overrides it) and shfmt (~/.claude/bin, which the gate reads every Bash command with: replacing it would
+	# blind the gate).
 	# A project's own settings may change, but not to turn hooks off. The new text is read on its own, since a
 	# pipeline's status is grep's, and a jq failure would read as "no disableAllHooks".
 	written=
 	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq '\.claude/settings'; then
 		written=$(printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")') || unreadable "text written"
 	fi
-	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|git-hooks/|settings|skills/ship/|agents/ship-|bin/)|\.git/review-gate(/|$)" ||
+	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|git-hooks/|settings|skills/ship/|agents/ship-|bin/)|\.git/review-gate(/|$)|^/etc/claude-code(/|$)" ||
 		printf '%s' "$written" | grep -q disableAllHooks; then
 		echo "Blocked: the review gate's script, prompts, settings and state are the user's to change." >&2
 		exit 2
@@ -201,11 +203,13 @@ if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|de
 fi
 # Tamper protection: a command that writes gate state, the installed gate or shfmt (docs/gate.md › Tamper protection).
 # prot_re is the protected paths as a regex for jq: ~ or the home directory, then the gate's files; `.git/review-gate`
-# is the gate's state in any repo.
+# is the gate's state in any repo; /etc/claude-code is the managed settings directory the gate is registered in (claude-ship
+# #189), spelled with any number of slashes (a path that goes through `..` or a relative one is resolved, and tested with
+# prot_res).
 home_re=$(printf '%s' "$HOME" | sed 's/[][\.*^$(){}?+|]/\\&/g')
-prot_re="(~|$home_re)/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
+prot_re="(~|$home_re)/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate|/etc/+claude-code(\$|[^\\w.-])"
 # The same for a path already resolved (an absolute, folded one): anchored at the home directory.
-prot_res="^$hn_re/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate"
+prot_res="^$hn_re/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate|^/etc/claude-code(/|\$)"
 # The jq definitions both tree programs share (tamper_jq, push_jq): the last part of a path, and the literal value of a
 # word (`wv`: null when it is not literal).
 tree_defs='
@@ -229,9 +233,9 @@ def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 #   {k: "wr", t}        a write redirect to the literal target t
 #   {k: "lw", t}        a literal word t that names a protected path
 #   {k: "gh"}          a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
-#   {k: "gitdeny", m}   a `push --no-verify` or a write of core.hooksPath (docs/gate.md › Pre-push check)
+#   {k: "deny", m}      a `push --no-verify`, a write of core.hooksPath (docs/gate.md › Pre-push check) or a `chattr`
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
-# kept as text); anything else is dynamic. The output, for the loop below: the verdict (gitdeny, block, dyn, pass, or bad
+# kept as text); anything else is dynamic. The output, for the loop below: the verdict (deny, block, dyn, pass, or bad
 # when the input is no tree) on the first line, then the message of a block; or `gh` (a gh event) or `nogh` (none), then
 # the strings to parse again, one JSON string per line.
 tamper_jq="$tree_defs$path_defs"'
@@ -266,7 +270,8 @@ def wacc: reduce (.Parts[]?) as $p ({s: "", full: true};
 def wl: wv // (wacc | if .full and ((.s | startswith("~") | not) or (.s | tilde) != null) then .s else null end);
 # Does a path that starts like this (a dynamic or glob part follows) reach a protected file?
 def reaches:
-	if test("\\.git/review-gate") then true
+	def etc: . == "/etc" or (startswith("/etc/") and (.[5:] as $m | ("claude-code" | startswith($m)) or ($m | startswith("claude-code"))));
+	if test("\\.git/review-gate") or etc then true
 	else ($home + "/.claude") as $r
 	| if . == $r then true
 	elif startswith($r + "/") then (.[($r | length) + 1:] as $m | any(["hooks", "git-hooks", "settings", "skills/ship/", "agents/ship-", "bin/"][]; . as $t | ($t | startswith($m)) or ($m | startswith($t))))
@@ -377,7 +382,7 @@ def gitargs($a):
 # What skips the pre-push check hooks/git-hook.sh makes of Claude pushes (docs/gate.md › Pre-push check), read from the words
 # after `git`: `push --no-verify`, and a write of core.hooksPath, which points git at that hook: `-c core.hooksPath=…`
 # (also `-ccore.hooksPath=…`), `--config-env=core.hooksPath=…`, and `git config` in any form that is not a read (a bare key,
-# `--get`, `--get-all`, `--get-regexp`, `--list`, `-l`). The key is matched in any case. {k: "gitdeny", m: the message}, or nothing.
+# `--get`, `--get-all`, `--get-regexp`, `--list`, `-l`). The key is matched in any case. {k: "deny", m: the message}, or nothing.
 def hookkey: test("^core\\.hookspath(=.*)?$"; "i");
 def gitdeny($a):
 	def pre($i; $o):
@@ -405,9 +410,9 @@ def gitdeny($a):
 			else true end);
 	pre(0; []) as $g
 	| if ($g.o | any(hookkey)) or ($g.sub == "config" and cfgwrite($g.rest)) then
-		{k: "gitdeny", m: "core.hooksPath runs the review gate\u0027s pre-push check, which refuses an unreviewed push; only the user changes it. Ask them to make the change with `!`."}
+		{k: "deny", m: "core.hooksPath runs the review gate\u0027s pre-push check, which refuses an unreviewed push; only the user changes it. Ask them to make the change with `!`."}
 	elif $g.sub == "push" and ($g.rest | any(. == "--no-verify")) then
-		{k: "gitdeny", m: "`git push --no-verify` would skip the review gate\u0027s pre-push check, which refuses an unreviewed push. Push without it; if a review is wrong, ask the user to waive it."}
+		{k: "deny", m: "`git push --no-verify` would skip the review gate\u0027s pre-push check, which refuses an unreviewed push. Push without it; if a review is wrong, ask the user to waive it."}
 	else empty end;
 # A write: block when any of $ps (the protected targets) is there.
 def wbl($ps; $why): if ($ps | length) > 0 then {k: "block", p: ($ps[0] | disp), w: $why} else empty end;
@@ -461,6 +466,8 @@ def wcheck($e; $all; $cs):
 	elif $c == "sponge" then
 		([$a[] | select(startswith("-") | not)] | last) as $l
 		| wbl(if $l != null and ($l | rprot($cs)) then [$l] else [] end; $c)
+	elif $c == "chattr" then
+		{k: "deny", m: "chattr sets and lifts the immutable flag that locks the installed review gate (hooks, skill, ship agents, shfmt, git hooks and the managed settings drop-in). Only the user changes it: ask them to run `! chattr -i <path>`."}
 	elif $c == "git" then
 		gitdeny($a),
 		(gitargs($a) as $g
@@ -573,8 +580,8 @@ else
 		elif $wp != null then {p: ($wp.t | disp), w: ($wp.op + ($wp.t | disp))}
 		elif $lw != null and $wo != null then {p: $lw.t, w: ($wo.op + ($wo.t | disp))}
 		else null end) as $blk
-	| ($ev | map(select(.k == "gitdeny")) | first) as $gd
-	| if $gd != null then "gitdeny", $gd.m
+	| ($ev | map(select(.k == "deny")) | first) as $gd
+	| if $gd != null then "deny", $gd.m
 		elif $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
 		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end),
 			(if any($ev[]; .k == "gh") then "gh" else "nogh" end),
@@ -585,8 +592,14 @@ end'
 # `sh -c "… > f"`. It reads the raw command and its words with their quoting removed, so it also catches what a
 # variable or substitution hides from the tree.
 text_tamper() {
+	# `chattr` as a word of a command the tree couldn't settle (`c=chattr; $c -i x`): it can't tell the command from an argument,
+	# so it blocks (docs/gate.md › Tamper protection).
+	if printf '%s' "$cmd_all" | grep -Eq '(^|[^[:alnum:]_.-])chattr([^[:alnum:]_.-]|$)'; then
+		echo "Blocked: chattr sets and lifts the immutable flag that locks the installed review gate. Only the user changes it: ask them to run \`! chattr -i <path>\`. (This command has parts the gate can't read, and names chattr.)" >&2
+		exit 2
+	fi
 	protected=$(printf '%s' "$cmd_all" |
-		grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|disableAllHooks" | head -1)
+		grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|/etc/+claude-code([^[:alnum:]_.-][^[:space:]]*|\$)|disableAllHooks" | head -1)
 	if [ -n "$protected" ]; then
 		write=$(printf '%s' "$cmd_all" |
 			sed -E 's/[0-9]*>&([0-9]+|-)['\''"]?([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)['\''"]?([[:space:];&|)]|$)#\3#g' |
@@ -636,7 +649,7 @@ while [ -n "$cur" ]; do
 		echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names $rest." >&2
 		exit 2
 		;;
-	gitdeny)
+	deny)
 		echo "Blocked: $rest" >&2
 		exit 2
 		;;
