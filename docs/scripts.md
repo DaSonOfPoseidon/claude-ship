@@ -540,7 +540,7 @@ without `jq` too), then every installed path that has the immutable flag is lift
 `skills/ship` and `git-hooks` (an `lsattr` check that a flag is still there stops the install with nothing changed), then the
 files are deployed, then the template is copied to `$CLAUDE_SHIP_MANAGED_DIR/managed-settings.d/claude-ship.json` (default
 `/etc/claude-code`; skipped with a note when that can't be written, i.e. not root) through a temp file and a `mv`, then the
-flags are set again and checked with `lsattr` (a warning naming the paths that lack one, and exit 1 as root;
+flags are set again and checked with `lsattr` (and if the script exits early after the lift, an EXIT trap puts back the flags it recorded before lifting; as root under `sudo` the `agents/` and `skills/` directories it creates go to `SUDO_USER`) (a warning naming the paths that lack one, and exit 1 as root;
 one warning without `chattr` or `lsattr`). The registration check accepts the drop-in alone, and when the gate is
 in `settings.json` too it says Claude Code runs a handler that appears in both once. Under `sudo` (`SUDO_USER` set) it notes the directory it installs into, since `$HOME` may be root's (`sudo --preserve-env=HOME`, or `CLAUDE_HOME`). The tests put stubs of `chattr`,
 `lsattr` and `id` first on `PATH` and point `CLAUDE_SHIP_MANAGED_DIR` into their temp directory; they never touch the real
