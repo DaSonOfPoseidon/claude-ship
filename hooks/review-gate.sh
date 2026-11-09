@@ -1,8 +1,9 @@
 #!/bin/sh
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
-# PreToolUse hook: blocks `git push` and `gh pr create` until an independent headless Claude session has
-# reviewed the branch diff against the repo's default branch. Design notes: docs/gate.md.
+# PreToolUse hook: blocks a canonical `git push` until an independent headless Claude session has reviewed the branch
+# diff against the repo's default branch; every other push is refused by the git pre-push hook (hooks/git-hook.sh).
+# Design notes: docs/gate.md.
 #
 # Opt-in per GitHub repo: it runs only where the repo variable CLAUDE_AUTONOMOUS is `true`
 #   gh variable set CLAUDE_AUTONOMOUS --body true -R <owner/repo>
@@ -227,12 +228,12 @@ def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
 #   {k: "wr", t}        a write redirect to the literal target t
 #   {k: "lw", t}        a literal word t that names a protected path
-#   {k: "ggdyn"}        a command that is not a plain read-only tool with literal words, or text that is run without being
-#                       a command (see runs_gitgh)
+#   {k: "gh"}          a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
+#   {k: "gitdeny", m}   a `push --no-verify` or a write of core.hooksPath (docs/gate.md › Pre-push check)
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
-# kept as text); anything else is dynamic. The output, for the loop below: the verdict (block, dyn, pass, or bad when the
-# input is no tree) on the first line, then the message of a block; or `run` (a ggdyn event) or `skip` (none),
-# then the strings to parse again, one JSON string per line.
+# kept as text); anything else is dynamic. The output, for the loop below: the verdict (gitdeny, block, dyn, pass, or bad
+# when the input is no tree) on the first line, then the message of a block; or `gh` (a gh event) or `nogh` (none), then
+# the strings to parse again, one JSON string per line.
 tamper_jq="$tree_defs$path_defs"'
 def isprot: test($prot);
 def pprot: test($protr);
@@ -508,59 +509,14 @@ def calls($cs0):
 			(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w; $cs)) end)
 		end)
 	end;
-# runs_gitgh (docs/gate.md › Command reading): does the command run git or gh? Only a command made wholly of plain
-# external read-only tools, each with literal arguments, skips the text checks that follow. Everything else is unknown
-# (git and gh, a wrapper, a shell, an interpreter, a builtin that assigns, runs code or replaces the shell, a tool that
-# changes files, a script, a word that is not literal), whether it runs git or not: the list of what is dangerous
-# never ended (claude-ship #191), so the list of what is trusted is short.
-# A tool that can write a file named by an argument or option (GNU or BSD form: sort -o, a second uniq operand, base64 -o,
-# tee) is not on it: the file can replace a program on PATH that a listed name then runs. rg (--pre, --hostname-bin
-# run programs) and xxd (-r in out) are not listed either.
-def ggsafe: test("^(cat|echo|grep|egrep|fgrep|wc|head|tail|cut|tr|ls|stat|diff|cmp|jq|pwd|true|false|basename|dirname|realpath|readlink|date|sleep|seq|which|nl|rev|tac|fold|column|paste|comm|md5sum|sha1sum|sha256sum|shasum|cksum|du|df|od|uname|whoami|id|hostname)$");
-# A redirect that writes a file: any of `>`, `>>`, `>|`, `<>`, `&>`, `&>>` (also behind a descriptor: `2>`) and `>&` to
-# anything but a descriptor. A literal /dev/null is the one target that is no write. Here-strings, heredocs and `<` only read.
-def ggwrite:
-	has("Op") and has("Word") and (.Op | type) == "string" and (.Op | test("^(>|>>|>\\||<>|&>|&>>|>&)$"))
-	and ((.Word | wv) as $t | if $t == null then true
-		elif $t == "/dev/null" then false
-		elif .Op == ">&" and ($t | test("^([0-9]+-?|-)$")) then false
-		else true end);
-# A variable that changes which program a listed name runs, or loads code into it or into the shell (`PATH=. cat`,
-# `PERL5OPT=-Mx shasum`, `IFS`, `BASH_ENV`, `PS4`, `GIT_*`, `NODE_OPTIONS`...). The list of those never ends, so it is
-# the other way round: only a variable known to be harmless is. That is a lower-case name (the environment variables
-# tools read are upper-case; the zsh ones that are tied to PATH and the like are left out) and the locale and terminal
-# ones. Any other name makes the command unknown.
-def ggnameok: test("^([a-z_][a-z0-9_]*|LC_[A-Z]+|LANG|LANGUAGE|TZ|TERM|COLUMNS|LINES|NO_COLOR|)$")
-	and (test("^(path|fpath|cdpath|manpath|mailpath|module_path|watch|psvar|histchars)$") | not);
-# The command word is the bare name of a listed tool (not a path: ./cat is a script), and every word is literal (a
-# dynamic one may be an option that runs a program), or the command is unknown. No wrapper is unwrapped: env, sudo,
-# xargs, find, sh -c and the like are not on the list.
-def ggcalls:
-	(.Args? // []) as $args | [$args[] | wv] as $w
-	| if ($w | length) == 0 then empty
-	elif any($w[]; . == null) then {k: "ggdyn"}
-	elif ($w[0] | ggsafe) then empty
-	else {k: "ggdyn"} end;
-# Nodes that run text without being a command, or change what a name runs: an indirect or prompt expansion (`${!x}`,
-# `${x@P}`), arithmetic, which evaluates the text of a variable (`$((x))`, `(( ))`, `let`, a C-style `for`, `${x:n}`,
-# `[[ a -eq b ]]`), any declaration (`declare`, `typeset`, `local`, `export`, `readonly`: a quoted array initializer
-# is parsed again, a nameref runs a subscript), an array subscript, and an assignment to a variable that is not known
-# to be harmless (`x=1`, `for`, `select`, `coproc`, `${x:=…}`, a `{name}` redirect). Plain numbers are fine.
-def ggnum: ([.. | objects | select(.Type == "Lit") | .Value] | all(test("^([0-9]+|0[xX][0-9a-fA-F]+)$")))
-	and (any(.. | objects; .Type == "ParamExp") | not);
-def ggnode:
-	if ggwrite then {k: "ggdyn"}
-	elif .Type == "ParamExp" and (.Excl == true or ((.Exp.Op? // "") == "@")) then {k: "ggdyn"}
-	elif .Type == "ParamExp" and .Slice != null then (.Slice | if ggnum then empty else {k: "ggdyn"} end)
-	elif (.Type == "ArithmExp" or .Type == "ArithmCmd" or .Type == "LetClause" or .Type == "CStyleLoop") then (if ggnum then empty else {k: "ggdyn"} end)
-	elif .Type == "BinaryTest" and ((.Op | tostring) | test("^-(eq|ne|lt|le|gt|ge)$")) then {k: "ggdyn"}
-	elif .Type == "UnaryTest" and .Op == "-v" then {k: "ggdyn"}
-	elif .Type == "DeclClause" then {k: "ggdyn"}
-	elif has("Index") and .Index != null then {k: "ggdyn"}
-	elif (.Name? | type) == "object" and ((.Name | if has("Value") then .Value else ([.Parts[]? | .Value? // "?"] | join("")) end) | ggnameok | not) then {k: "ggdyn"}
-	elif (.N? | type) == "object" and ((.N.Value? // "") | test("^\\{.*\\}$")) and (.N.Value[1:-1] | ggnameok | not) then {k: "ggdyn"}
-	elif .Type == "ParamExp" and ((.Exp.Op? // "") | test("^:?=$")) and (.Param.Value? // "" | ggnameok | not) then {k: "ggdyn"}
-	else empty end;
+# A literal word `gh` among the words of a command that may run it: the `gh` itself, behind a wrapper (`sudo gh api`, `xargs gh api`,
+# or one the gate does not unwrap: `flock l gh api`), or in a string it cannot unwrap. Words after `echo` or `printf`, and a `gh api`
+# in a heredoc body, are data, not a call (docs/gate.md › Command reading).
+def ghev:
+	([(.Args? // [])[] | wv // "\u0001"]) as $ws
+	| eff($ws; false) as $effs
+	| if $effs == null then {k: "gh"}
+	else ($effs[] | select(((.w[0] | bn) | test("^(echo|printf)$") | not) and (.w | any(bn == "gh"))) | {k: "gh"}) end;
 # The working directory, tracked lexically. $cs is the set of directories the next command may run in (null: unknown, after a
 # `cd` to something dynamic). cdev: the target of each effective `cd` or `pushd` in a simple command (null: unknown).
 def cdev($w): ($w | map(. // "\u0001")) as $ws | (eff($ws; false) // [])[]
@@ -585,7 +541,7 @@ def cdcalls($leaky):
 		elif type == "array" then (.[] | go)
 		else empty end;
 	go;
-def evs($cs): [.. | objects | if .Type == "CallExpr" then (calls($cs), ggcalls) else ggnode end, (if has("Redirs") then redirs($cs) else empty end)];
+def evs($cs): [.. | objects | (if .Type == "CallExpr" then (calls($cs), ghev) else empty end), (if has("Redirs") then redirs($cs) else empty end)];
 # A statement that is just `cd DIR`, `pushd DIR` (nothing else, no redirect): its directory is then certain for what follows.
 def plaincd: .Cmd.Type == "CallExpr" and ((.Redirs // []) | length) == 0 and .Negated != true and .Background != true
 	and ([cdev([(.Cmd.Args? // [])[] | wl])] | length) > 0;
@@ -621,7 +577,7 @@ else
 	| if $gd != null then "gitdeny", $gd.m
 		elif $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
 		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end),
-			(if any($ev[]; .k == "ggdyn") then "run" else "skip" end),
+			(if any($ev[]; .k == "gh") then "gh" else "nogh" end),
 			($ev[] | select(.k == "str") | {v: .v, c: .c} | tojson) end
 end'
 # What the tree can't settle falls back to the text check: a command that names gate state or the installed gate
@@ -645,10 +601,10 @@ text_tamper() {
 	fi
 }
 # Walks the tree, then the strings it runs as shell (`sh -c`, `eval`) to a depth of 3, each parsed again. A string
-# that doesn't parse, or sits deeper, is dynamic. The same walk settles runs_gitgh (docs/gate.md › Command reading):
-# gg_run stays 0 only while every command in every tree is a plain read-only tool with literal words.
+# that doesn't parse, or sits deeper, is dynamic. The same walk finds whether a `gh` is named anywhere (gh_seen, for the
+# `gh api` scan below: docs/gate.md › Command reading); a string it can't read counts as one.
 tamper_dyn=0
-gg_run=0
+gh_seen=0
 printf '%s' "$cmd_all" | grep -q disableAllHooks && tamper_dyn=1
 tamper_nl=$(printf '\n_')
 tamper_nl=${tamper_nl%_}
@@ -658,7 +614,7 @@ cur=$tree
 cur_c=null
 while [ -n "$cur" ]; do
 	# One jq run per tree: its first line is the verdict (block, dyn, pass, or bad for something that is no tree), and
-	# the rest the message of a block, or `run` or `skip` (runs_gitgh) and the strings the command runs as shell, one
+	# the rest the message of a block, or `gh` or `nogh` and the strings the command runs as shell, one
 	# JSON object per line ({v: the string, c: the directories it runs in}).
 	res=$(printf '%s' "$cur" | jq -r --arg prot "$prot_re" --arg protr "$prot_res" --arg home "$hn" --arg user "$user" \
 		--arg cwd "$cwd" --argjson cands "$cur_c" "$tamper_jq") || unreadable "command syntax tree"
@@ -672,7 +628,7 @@ while [ -n "$cur" ]; do
 		*"$tamper_nl"*) rest=${rest#*"$tamper_nl"} ;;
 		*) rest= ;;
 		esac
-		[ "$gg" = skip ] || gg_run=1
+		[ "$gg" != gh ] || gh_seen=1
 		;;
 	esac
 	case $verdict in
@@ -690,7 +646,7 @@ while [ -n "$cur" ]; do
 		# Only a string run as shell can fail to make a tree: the command's own parse was checked above.
 		[ "$depth" != 0 ] || unreadable "command syntax tree"
 		tamper_dyn=1
-		gg_run=1
+		gh_seen=1
 		;;
 	*) unreadable "command syntax tree" ;;
 	esac
@@ -713,39 +669,39 @@ while [ -n "$cur" ]; do
 		depth=${item%% *}
 		if [ "$depth" -gt 3 ]; then
 			tamper_dyn=1
-			gg_run=1
+			gh_seen=1
 			continue
 		fi
 		text=$(printf '%s' "${item#* }" | jq -r '.v') || unreadable "command syntax tree"
 		cur_c=$(printf '%s' "${item#* }" | jq -c '.c') || unreadable "command syntax tree"
 		if ! cur=$(printf '%s' "$text" | "$shfmt" -ln bash --to-json 2>/dev/null) || [ -z "$cur" ]; then
 			tamper_dyn=1
-			gg_run=1
+			gh_seen=1
 			cur=
 		fi
 	done
 done
 [ "$tamper_dyn" = 0 ] || text_tamper
-# runs_gitgh is no: no git or gh command anywhere in the tree, nothing in it that might run one, so what follows (the
-# quoting check, the `gh api` scan, the push and `gh pr create` checks) has nothing to judge, whatever the text says.
-# Only the tamper, waiver and opt-in checks above apply to such a command.
-[ "$gg_run" = 1 ] || exit 0
-# The push shape, read from the same tree (docs/gate.md › Push shape): a strict allowlist of what a pushing command may be,
-# so anything the allowlist doesn't describe blocks, with no list of what is dangerous. The whole command is one
-# statement, one of
+# The push shape, read from the same tree (docs/gate.md › Push shape). The gate starts a review for a canonical push only and
+# leaves every other command to the pre-push check (docs/gate.md › Command reading). A canonical push is one statement that is
+# `git push ARGS` (git or PATH/git, whatever global options come before `push`), either alone or after leading `cd ARGS &&`
+# commands, with the git command first in its pipeline. Of those, the push shape is a strict allowlist, so anything it doesn't
+# describe blocks, with no list of what is dangerous:
 #   git push ARGS                       (git or PATH/git; the only global option is one `-C DIR`)
 #   cd DIR && git push ARGS
 #   either of those piped into tail, head, cat or grep
 # and every word in it is literal. Redirects are only to a literal /dev/null, /dev/stdout or /dev/stderr and between
 # descriptors (`2>&1`, `>&2`, `>&-`). An assignment, a negation, a background `&`, a subshell, a block, a second statement,
 # any other operator, a comment and any key of the tree the program doesn't know (okkeys) fail the shape, so a newer shfmt
-# that adds a field fails closed. The output is lines for the shell, a word with a newline in it is no line, so it fails the shape too:
-#   cds N         how many `cd` commands the tree has anywhere (the `where` logic needs the count even without a push)
+# that adds a field fails closed. The output is lines for the shell, a word with a newline in it is no line, so it fails the shape too;
+# none at all unless the command is a canonical push:
+#   cand          the command is a canonical push
+#   cdn N         how many `cd` commands lead it (`cd a && cd b && git push` has two)
 #   cdt DIR       the one literal argument of the one `cd`, when it has exactly one
-#   cdl           the one `cd` is the command that runs first (`cd DIR && ...`, `cd DIR; ...`); without it, the `cd` may not
-#                 run (after `||`, in an `if` or a block), so the gate does not follow it
-#   shape ok      the command is one of the shapes above; then `C DIR` (the `-C` directory, if any) and `a WORD` (each word
-#                 after `push`, in order). Else `shape bad` and the sentence the gate blocks with.
+#   Cn N          how many `-C` options the git command has
+#   C DIR         the one literal `-C` directory, when it has exactly one
+#   shape ok      the command is the push shape; then `a WORD` (each word after `push`, in order). Else `shape bad` and the
+#                 sentence the gate blocks with.
 push_jq="$tree_defs"'
 def fail($m): error($m);
 def also($m): fail("it also runs more than the push (" + $m + "), which may change what the push sends after the gate checked it; run that in its own command first");
@@ -772,9 +728,6 @@ def pipeline:
 	if .Cmd.Type == "BinaryCmd" then
 		binary | if .Cmd.Op == "|" then ((.Cmd.X | pipeline) + (.Cmd.Y | pipeline)) else also("an operator other than a pipe: `;`, `&&`, `||`, `|&`, `&`") end
 	else [leaf] end;
-# The first command of the statement, going into the left side of `&&`: the one `cd` that runs before the rest, whatever
-# else follows. A `cd` anywhere else (after `||`, in an `if`, a block or a subshell) may not run, so it is not followed.
-def leftmost: if .Cmd.Type == "BinaryCmd" and .Cmd.Op == "&&" then (.Cmd.X | leftmost) else . end;
 def clean($what): if (. == "") then also("an empty " + $what) elif contains("\n") then also("a " + $what + " with a newline in it") else . end;
 def shape:
 	if (okkeys(["Type", "Stmts", "Pos", "End"]) | not) then also("a comment")
@@ -795,23 +748,221 @@ def shape:
 		else fail("it passes git global options (`" + ($r[:($r | index("push"))] | join(" ")) + "`); only `-C <dir>` is allowed") end) as $gp
 	| {dir: ($p.dir | if . == null then null else clean("directory") end), c: $gp.c, a: ($gp.a | map(clean("argument")))}
 	end;
-if .Type != "File" then "shape bad it is no syntax tree"
+# The words of a simple command (null for one that is not literal).
+def words: [(.Args // [])[] | wv];
+# A git command by its words: the `-C` values (null when not literal) before the subcommand, and the subcommand, skipping
+# the global options and the values of those that take one (null when a word is not literal).
+def gitopts($w):
+	def go($i; $c):
+		if $i >= ($w | length) then {sub: null, cs: $c}
+		else $w[$i] as $x
+		| if $x == null then {sub: null, cs: $c}
+		elif $x == "-C" then go($i + 2; $c + [$w[$i + 1]])
+		elif ($x | test("^(-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source)$")) then go($i + 2; $c)
+		elif ($x | startswith("-")) then go($i + 1; $c)
+		else {sub: $x, cs: $c} end end;
+	go(1; []);
+# The first command of a statement that is a pipeline, and the commands of `a && b && c` in order.
+def pipefirst: if .Cmd.Type == "BinaryCmd" and (.Cmd.Op == "|" or .Cmd.Op == "|&") then (.Cmd.X | pipefirst) else . end;
+def andchain: if .Cmd.Type == "BinaryCmd" and .Cmd.Op == "&&" then (.Cmd.X | andchain) + [.Cmd.Y] else [.] end;
+def gitinfo:
+	if .Cmd.Type != "CallExpr" then null
+	else (.Cmd | words) as $w
+	| if ($w | length) > 0 and $w[0] != null and ($w[0] | bn) == "git" then gitopts($w) else null end end;
+def iscd: .Cmd.Type == "CallExpr" and ((.Cmd | words)[0] == "cd");
+if .Type != "File" then "cand", "shape bad it is no syntax tree"
 else
 	([.. | objects | select(.Type == "CallExpr" and ((.Args // [])[0] | if . == null then null else wv end) == "cd")]) as $cds
-	| (first(.Stmts[0]? | leftmost | select(okkeys(["Cmd", "End", "Pos", "Position", "Redirs", "Semicolon"])) | .Cmd) // null) as $lead
-	| "cds \($cds | length)",
-	(if ($cds | length) == 1 then ($cds[0].Args[1:] | map(wv)) as $cw
-		| (if ($cw | length) == 1 and $cw[0] != null and ($cw[0] | contains("\n") | not) then "cdt \($cw[0])" else empty end),
-		(if $cds[0] == $lead then "cdl" else empty end)
-		else empty end),
-	(try (shape | "shape ok", (if .c != null then "C \(.c)" else empty end), (.a[] | "a \(.)")) catch "shape bad \(.)")
+	| ($cds[] | (.Args[1:] | map(wv)) as $cw
+		| if ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cda \($cw[0])" else "cdabad" end),
+	((if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
+	| ($ch[:-1]) as $init
+	| (if ($ch | length) > 0 then ($ch[-1] | pipefirst | gitinfo) else null end) as $g
+	| if $g == null or $g.sub != "push" or (($init | all(iscd)) | not) then empty
+	else "cand",
+		"cdn \($init | length)",
+		(if ($init | length) == 1 then (($init[0].Cmd | words)[1:]) as $cw
+			| (if ($cw | length) == 1 and $cw[0] != null and ($cw[0] | contains("\n") | not) then "cdt \($cw[0])" else empty end)
+			else empty end),
+		"Cn \($g.cs | length)",
+		(if ($g.cs | length) == 1 and $g.cs[0] != null and $g.cs[0] != "" and ($g.cs[0] | contains("\n") | not) then "C \($g.cs[0])" else empty end),
+		(try (shape | "shape ok", (.a[] | "a \(.)")) catch "shape bad \(.)")
+	end)
 end'
 ptree=$(printf '%s' "$tree" | jq -r "$push_jq") || unreadable "command syntax tree"
-tree_cds=$(printf '%s\n' "$ptree" | sed -n 's/^cds //p')
-case $tree_cds in '' | *[!0-9]*) unreadable "command syntax tree" ;; esac
-push_cmd=$cmd
-if printf '%s' "$words" | grep -Eq "$git_push"; then
-	push_cmd=$words
+cand=
+printf '%s\n' "$ptree" | grep -qx cand && cand=1
+push_shape=$(printf '%s\n' "$ptree" | sed -n 's/^shape //p')
+# Fails, naming the URL, when a list from github_slugs holds one it couldn't read.
+readable_slugs() {
+	if bad=$(printf '%s\n' "$1" | grep -m1 '^?'); then
+		echo "Blocked: the review gate can't read the GitHub repo in the remote URL ${bad#?}. Use https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git." >&2
+		exit 2
+	fi
+}
+# Where `git push origin` writes: origin's push URLs (insteadOf and pushInsteadOf applied), as GitHub repos.
+push_slugs() {
+	git remote get-url --push --all origin 2>/dev/null | github_slugs
+}
+# Every GitHub repo any remote here fetches from or pushes to.
+remote_slugs() {
+	for r in $(git remote); do
+		git remote get-url --all "$r"
+		git remote get-url --push --all "$r"
+	done 2>/dev/null | github_slugs
+}
+
+# The pre-push check (hooks/git-hook.sh) is what refuses a push the gate did not start a review for, so it has to be on wherever
+# Claude runs a command in an opted-in repo: core.hooksPath at the deployed git-hooks (install.sh sets it) and an executable
+# pre-push in it. A repo's own core.hooksPath (husky, say) replaces it for every push, whatever the command says. The gate does not
+# try to tell which repo a command works in (a `cd`, `git -C`, a script: the spellings never ended). It asks, with no reading of
+# the command, of every Bash command (docs/gate.md › Pre-push check › The gate keeps it on):
+#   - the checkouts under $scan_root (/srv/CodeServer): does their local config (.git/config, config.worktree) override it?
+#   - the session's own repo: the same, and is the hook on there at all (hooks_ok: the value git would use)?
+# Plain file reads first; git and gh only run for a checkout that looks off.
+want_hooks=${CLAUDE_HOME:-$HOME/.claude}/git-hooks
+scan_root=${REVIEW_GATE_SCAN_ROOT:-/srv/CodeServer}
+hooks_ok() {
+	[ "$(git config --get core.hooksPath)" = "$want_hooks" ] && [ -f "$want_hooks/pre-push" ] && [ -x "$want_hooks/pre-push" ]
+}
+# no_hooks <dir> <what git would use there>
+no_hooks() {
+	echo "Blocked: the review gate's pre-push check isn't active in $1 (core.hooksPath is '$2'), so a push that isn't a plain \`git push\` would skip the review there. Ask the user to fix it: run claude-ship's ./install.sh, and \`git config --local --unset core.hooksPath\` in $1 if the repo sets its own." >&2
+	exit 2
+}
+# `~` and `~/…` are the home directory; the tree reads `~name` as not literal.
+expand_dir() {
+	case $1 in
+	'~') printf '%s' "$hn" ;;
+	\~/*) printf '%s%s' "$hn" "${1#\~}" ;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+# The directories the tree's literal `cd` targets (lines `cda`) may name, one per line, `~` expanded: an absolute one as it is; a
+# relative one from the session's directory and from the directory of the target before it (`cd a && cd b`), the two ways a chain
+# can read it. Every occurrence counts (`cd .. && cd ..` climbs twice), and the resulting directories are deduplicated, not the
+# words. Only the `gh api` placeholder lookup below uses it.
+tree_dirs() {
+	printf '%s\n' "$ptree" | sed -n "s/^$1 //p" | awk -v cwd="$cwd" -v hn="$hn" '
+		function emit(p) { if (!(p in out)) { out[p] = 1; print p } }
+		{
+			d = $0
+			if (d == "~") d = hn
+			else if (substr(d, 1, 2) == "~/") d = hn substr(d, 2)
+			if (substr(d, 1, 1) == "/") { emit(d); chain = d }
+			else {
+				emit(cwd "/" d)
+				if (chain != "") emit(chain "/" d)
+				chain = (chain == "" ? cwd : chain) "/" d
+			}
+		}'
+}
+# hooks_overrides <config file>...: "<file><TAB><value>" for every core.hooksPath in them that is not the deployed directory (a
+# `~/` start is the home directory). The key counts in [core] only, in any case.
+hooks_overrides() {
+	awk -v want="$want_hooks" -v hn="$hn" '
+		FNR == 1 { core = 0 }
+		/^[ \t]*\[/ { core = (tolower($0) ~ /^[ \t]*\[[ \t]*core[ \t]*\]/); next }
+		core && tolower($0) ~ /^[ \t]*hookspath[ \t]*=/ {
+			v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v)
+			if (v == "~") v = hn; else if (substr(v, 1, 2) == "~/") v = hn substr(v, 2)
+			if (v != want) print FILENAME "\t" v
+		}' "$@"
+}
+# The git directory that holds a checkout's config, from a directory inside it: .git is a directory, or a file `gitdir: X` of a
+# linked worktree (then the shared config is in X/commondir). Prints the config files that exist, nothing outside a repo.
+repo_configs() {
+	rc_d=$1
+	while :; do
+		if [ -d "$rc_d/.git" ]; then
+			rc_g=$rc_d/.git
+			break
+		elif [ -f "$rc_d/.git" ]; then
+			rc_g=$(sed -n 's/^gitdir:[ ]*//p' "$rc_d/.git" | head -1)
+			case $rc_g in /*) ;; *) rc_g=$rc_d/$rc_g ;; esac
+			break
+		fi
+		[ "$rc_d" != / ] && [ -n "$rc_d" ] || return 0
+		rc_d=${rc_d%/*}
+		[ -n "$rc_d" ] || rc_d=/
+	done
+	rc_c=$rc_g
+	[ ! -f "$rc_g/commondir" ] || {
+		rc_c=$(head -1 "$rc_g/commondir")
+		case $rc_c in /*) ;; *) rc_c=$rc_g/$rc_c ;; esac
+	}
+	for rc_f in "$rc_c/config" "$rc_g/config.worktree" "$rc_c/config.worktree"; do
+		[ -f "$rc_f" ] && printf '%s\n' "$rc_f"
+	done
+}
+# Is the repo around <dir> opted in? Fails closed (blocks) when GitHub can't say.
+hooks_optin() {
+	hk_slugs=$(cd "$1" 2>/dev/null && remote_slugs)
+	readable_slugs "$hk_slugs"
+	for hk_slug in $hk_slugs; do
+		if ! hk_flag=$(autonomous "$hk_slug"); then
+			echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $hk_slug from GitHub, and the pre-push check is overridden in $1. Check \`gh auth status\` and retry." >&2
+			exit 2
+		fi
+		[ -z "$hk_flag" ] || return 0
+	done
+	return 1
+}
+# Plain file reads: the checkouts under the scan root, and the session's own repo.
+set --
+for hk_f in "$scan_root"/*/.git/config "$scan_root"/*/.git/config.worktree "$scan_root"/*/.git/worktrees/*/config.worktree; do
+	[ -f "$hk_f" ] && set -- "$@" "$hk_f"
+done
+hk_found=
+if [ $# -gt 0 ]; then
+	hk_found=$(hooks_overrides "$@")
+fi
+hk_own=$(repo_configs "$cwd")
+hk_own_found=
+if [ -n "$hk_own" ]; then
+	hk_old=$IFS
+	IFS=$tamper_nl
+	set -f
+	set -- $hk_own
+	set +f
+	IFS=$hk_old
+	hk_own_found=$(hooks_overrides "$@")
+fi
+hk_tab=$(printf '	')
+# hooks_block <lines of "file<TAB>value"> [dir]: blocks when the repo of a file (or <dir>) is opted in.
+hooks_block() {
+	case $1 in *[![:space:]]*) ;; *) return 0 ;; esac
+	hb_ifs=$IFS
+	IFS=$tamper_nl
+	set -f
+	for hb_line in $1; do
+		IFS=$hb_ifs
+		hb_val=${hb_line#*"$hk_tab"}
+		hb_dir=${2:-${hb_line%%"$hk_tab"*}}
+		[ -n "${2:-}" ] || hb_dir=${hb_dir%%/.git/*}
+		if hooks_optin "$hb_dir"; then
+			no_hooks "$hb_dir" "$hb_val"
+		fi
+		IFS=$tamper_nl
+	done
+	set +f
+	IFS=$hb_ifs
+}
+hooks_block "$hk_found"
+hooks_block "$hk_own_found" "$cwd"
+# The session's repo with no override of its own can still be off: the global setting missing or pointing elsewhere (install.sh
+# not run), or the hook gone. The common case is read from the global config without running git.
+if [ -n "$hk_own" ] && { [ ! -x "$want_hooks/pre-push" ] || ! grep -Fqs "$want_hooks" "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; }; then
+	if hooks_optin "$cwd" && ! (cd "$cwd" && hooks_ok); then
+		no_hooks "$cwd" "$(cd "$cwd" && git config --get core.hooksPath)"
+	fi
+fi
+gh_api='(^|[^[:alnum:]_.-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
+# Nothing else is the gate's to read: a command that is neither a canonical push nor a `gh api` call passes, whatever its text
+# says, since the pre-push check refuses an unreviewed push however it started (docs/gate.md › Command reading). A `gh api`
+# call is one with a `gh` in the tree (gh_seen), so a heredoc body or an `echo` that mentions it is data.
+if [ -z "$cand" ] && { [ "$gh_seen" = 0 ] || ! printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; }; then
+	exit 0
 fi
 # Markers in the command, quoting the scanner can't read, or a push with literal separators, quotes, `$` or
 # newlines can't be checked word by word, so it blocks.
@@ -821,7 +972,6 @@ if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_.-])(g
 	echo "Blocked: the review gate can't read this command's quoting. Write git and gh commands with plain quotes, without \`\$'...'\` or quoted \`;&|()\$\`." >&2
 	exit 2
 fi
-pr_create='(^|[^[:alnum:]_.-])gh[[:space:]]+pr[[:space:]]+create([^[:alnum:]_-]|$)'
 # `gh api` writes in an opted-in repo pass only if the ship skill makes them (docs/gate.md › REST allowlist).
 # Each call is read word by word from $words; it writes when its method isn't GET, gh's default once it has
 # fields or an --input.
@@ -990,9 +1140,8 @@ api_scan() (
 	fi
 	echo "repo $slug"
 )
-gh_api='(^|[^[:alnum:]_.-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
 api_found=
-if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
+if [ "$gh_seen" = 1 ] && printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 	# One line per simple command, each `gh api` call scanned on its own. A segment ending in `$` was cut by an
 	# unquoted `$(`, which hides the rest of its words, like a backtick.
 	api_found=$(printf '%s\n' "$words" | sed -E 's/([<>])&/\1@RD@/g; s/&>/@RD@>/g' | tr ';&|()' '\n\n\n\n\n' |
@@ -1019,184 +1168,73 @@ if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 	fi
 fi
 api_write=$api_found
-if [ -z "$api_write" ] && ! printf '%s' "$push_cmd" | grep -Eq "$git_push|$pr_create"; then
-	exit 0
-fi
+[ -n "$api_write" ] || [ -n "$cand" ] || exit 0
 
-# A push shown only by the raw command is usually quoted text, but `sh -c` and `eval` run it, so it is judged too.
-# The exception is the ship skill's own `gh pr/issue create/edit/comment/close`, whose quoted words are data: it must
-# be that single command, with no unquoted separator, redirect or command substitution. Nothing in it runs a push,
-# so push_scope judges none of it.
-data_only=
-if printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+(pr|issue)[[:space:]]+(create|edit|comment|close)[[:space:]]' &&
-	! printf '%s' "$words" | grep -Eq '[;&|<>()`]|\$(\(|@LP@|\[)' && [ "$(printf '%s' "$words" | wc -l)" -eq 0 ]; then
-	data_only=1
-fi
-
-push_shape=$(printf '%s\n' "$ptree" | sed -n 's/^shape //p')
-# A command that shows a push but isn't the push shape (push_jq) will be blocked, if the repo it pushes from has opted in
-# (below). Which repo that is can't always be told (the `cd` of `if false; then cd /tmp; fi; git push` may not run), so for
-# such a command ($soft) a `cd` that may not run is not followed, and every directory the push could come from is asked
-# for its opt-in instead. A directory that is not literal, or can't be entered, blocks as for any command.
-soft=
-alt_dir=
-if [ "$push_shape" != ok ] && [ -z "$data_only" ] &&
-	{ printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; }; then
-	soft=1
-fi
-
-# Where the command runs: the session's directory, then a `cd <dir>`, then `git -C <dir>`. More than one `cd`,
-# or one this can't follow, blocks rather than guessing which branch is pushed.
-where=$(printf '%s' "$input" | jq -r '.cwd // ""') || unreadable "working directory"
-[ -n "$where" ] || where=$PWD
-start=$where
-# `cd`s are counted in the tree and, as text, in the raw command and its words (`c''d`, a `cd` inside `sh -c`); the target
-# is the tree's: the one literal argument of the one `cd`, quotes and spaces resolved (`cd "a b"`). A `cd` the tree doesn't
-# show, or one without exactly one literal argument, can't be followed and blocks.
-cds_of() {
-	printf '%s' "$1" | grep -Eo '(^|[;&|(])[[:space:]]*cd([[:space:]]|$)' | wc -l
-}
-cds=$(cds_of "$cmd")
-[ "$(cds_of "$words")" -le "$cds" ] || cds=$(cds_of "$words")
-[ "$tree_cds" -le "$cds" ] || cds=$tree_cds
-if [ "$cds" -gt 1 ]; then
-	echo "Blocked: the review gate can't tell which directory pushes after several \`cd\`s. Push from the worktree with a single \`cd <dir> &&\`, or with \`git -C <dir> push\`." >&2
+# Where a canonical push runs: the session's directory, then the `cd DIR` before it, then `git -C DIR`. Each DIR is one literal
+# path (`~` is the home directory, a relative one is taken from the session's directory), else the gate can't tell which repo
+# the push is for and blocks, in any repo. A second `cd` or `-C`, a `cd -` and a dynamic path are all that.
+start=$cwd
+cd_dir=$cwd
+where=$cwd
+cant_tell() {
+	echo "Blocked: the review gate can't tell which repo this pushes: $1. Push from the worktree itself, or use \`cd <dir> &&\` or \`git -C <dir> push\` with one literal path (\`~\` is fine; not \`-\`, a variable or a second \`cd\`)." >&2
 	exit 2
-fi
-if [ "$cds" -eq 1 ]; then
-	to=
-	cd_lead=
-	if [ "$tree_cds" = 1 ]; then
+}
+if [ -n "$cand" ]; then
+	cdn=$(printf '%s\n' "$ptree" | sed -n 's/^cdn //p')
+	cn=$(printf '%s\n' "$ptree" | sed -n 's/^Cn //p')
+	case $cdn:$cn in *[!0-9:]* | :* | *:) unreadable "command syntax tree" ;; esac
+	[ "$cdn" -le 1 ] || cant_tell "it has $cdn \`cd\` commands"
+	[ "$cn" -le 1 ] || cant_tell "it passes $cn \`-C\` options"
+	if [ "$cdn" -eq 1 ]; then
 		to=$(printf '%s\n' "$ptree" | sed -n 's/^cdt //p')
-		printf '%s\n' "$ptree" | grep -qx cdl && cd_lead=1
+		[ -n "$to" ] || cant_tell "its \`cd\` needs exactly one literal directory"
+		to=$(expand_dir "$to")
+		case $to in -*) cant_tell "\`cd $to\` is not a path" ;; esac
+		case $to in
+		/*) where=$to ;;
+		*) where=$cwd/$to ;;
+		esac
+		cd_dir=$where
 	fi
-	case $to in
-	'' | '~'* | '-'* | *'$'* | *'`'*)
-		echo "Blocked: the review gate can't follow this \`cd\` (it needs one literal directory, not starting with \`~\` or \`-\`, without \`\$\` or a backtick). Use an absolute path, or push from the worktree." >&2
-		exit 2
-		;;
-	esac
-	case $to in
-	/*) cd_to=$to ;;
-	*) cd_to=$where/$to ;;
-	esac
-	# Only a `cd` that runs first is followed. One that may not run is an extra directory the push could come from, which
-	# a command that is not the push shape has asked for its opt-in (below); for any other command it blocks.
-	if [ -n "$cd_lead" ]; then
-		where=$cd_to
-	elif [ -n "$soft" ]; then
-		alt_dir=$cd_to
-	else
-		echo "Blocked: the review gate can't follow this \`cd\`, which may not run (after \`||\`, in an \`if\` or a block). Put \`cd <dir> &&\` first, or push from the worktree." >&2
-		exit 2
+	if [ "$cn" -eq 1 ]; then
+		c_dir=$(printf '%s\n' "$ptree" | sed -n 's/^C //p')
+		[ -n "$c_dir" ] || cant_tell "its \`git -C\` needs one literal directory"
+		c_dir=$(expand_dir "$c_dir")
+		case $c_dir in
+		/*) where=$c_dir ;;
+		*) where=$where/$c_dir ;;
+		esac
 	fi
-fi
-# A later `git -C` replaces $where, but other calls in the command still run in the `cd` target.
-cd_dir=$where
-# The `-C` directory of a form of the command: the whole word after `-C`, so `-C "/a)b"` can't read as `/a`.
-c_dir_of() {
-	printf '%s' "$1" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+([^[:space:]]+).*/\1/p' | tr -d "\"'" |
-		sed 's/@SP@/ /g'
-}
-# The push shape (push_jq) names the `-C` directory as a word, quotes and spaces resolved. A command that is not that
-# shape was blocked above if it pushes, and otherwise is read as text, as before.
-if [ "$push_shape" = ok ]; then
-	c_dir=$(printf '%s\n' "$ptree" | sed -n 's/^C //p')
-else
-	c_dir=$(c_dir_of "$push_cmd")
-	case $c_dir in
-	*[\;\&\|\)]*)
-		echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use a directory without \`;&|)\`." >&2
+	cd "$where" 2>/dev/null || {
+		echo "Blocked: the review gate can't enter $where, where the push runs." >&2
 		exit 2
-		;;
-	esac
-	if [ "$push_cmd" != "$cmd" ] && printf '%s' "$cmd" | grep -Eq "$git_push" && [ "$(c_dir_of "$cmd")" != "$c_dir" ]; then
-		echo "Blocked: the review gate reads two different \`git -C\` directories in this command. Quote it plainly." >&2
-		exit 2
-	fi
-fi
-case $c_dir in
-'') ;;
-'~'* | *'$'* | *'`'*)
-	echo "Blocked: the review gate can't follow \`git -C $c_dir\`. Use an absolute path." >&2
-	exit 2
-	;;
-/*) where=$c_dir ;;
-*) where=$where/$c_dir ;;
-esac
-cd "$where" 2>/dev/null || {
-	echo "Blocked: the review gate can't enter $where, where the push runs." >&2
-	exit 2
-}
-
-# Fails, naming the URL, when a list from github_slugs holds one it couldn't read.
-readable_slugs() {
-	if bad=$(printf '%s\n' "$1" | grep -m1 '^?'); then
-		echo "Blocked: the review gate can't read the GitHub repo in the remote URL ${bad#?}. Use https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git." >&2
-		exit 2
-	fi
-}
-# Where `git push origin` writes: origin's push URLs (insteadOf and pushInsteadOf applied), as GitHub repos.
-push_slugs() {
-	git remote get-url --push --all origin 2>/dev/null | github_slugs
-}
-# Every GitHub repo any remote here fetches from or pushes to.
-remote_slugs() {
-	for r in $(git remote); do
-		git remote get-url --all "$r"
-		git remote get-url --push --all "$r"
-	done 2>/dev/null | github_slugs
-}
-
-# Prints `true` if the repo in directory $1 opted in, nothing if it didn't or there is none; fails when it can't tell.
-guarded() (
-	cd "$1" 2>/dev/null || exit 0
-	git rev-parse --git-dir >/dev/null 2>&1 || exit 0
-	g_slugs=$(push_slugs)
-	readable_slugs "$g_slugs"
-	for g_slug in $g_slugs; do
-		if ! g_flag=$(autonomous "$g_slug"); then
-			echo "Blocked: couldn't read the CLAUDE_AUTONOMOUS variable of $g_slug from GitHub. Check \`gh auth status\` and retry." >&2
-			exit 2
-		fi
-		[ -z "$g_flag" ] || {
-			echo true
-			exit 0
-		}
-	done
-)
-# A command that shows a push but isn't the push shape (push_jq) blocks when it could push from an opted-in repo, before
-# the directory logic below can end the gate early: the `cd` or `-C` of `if false; then cd /tmp; fi; git push` never
-# runs, and a directory that isn't a repo would exit 0 with the push unchecked (Codex round 1). Every directory it could
-# push from is asked: the session's, the `cd` target and the `-C` one. A repo that isn't opted in is none of the gate's
-# business, as everywhere else (Codex round 2).
-if [ -n "$soft" ]; then
-	# A relative `-C` is also taken from the `cd` that may not have run.
-	alt_c=
-	case $c_dir in
-	'' | /*) ;;
-	*) [ -z "$alt_dir" ] || alt_c=$alt_dir/$c_dir ;;
-	esac
-	for push_dir in "$start" "$cd_dir" "$where" "${alt_dir:-$start}" "${alt_c:-$start}"; do
-		push_guarded=$(guarded "$push_dir") || exit 2
-		if [ -n "$push_guarded" ]; then
-			echo "Blocked: the review gate reviews HEAD, but ${push_shape#bad }. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
-			exit 2
-		fi
-	done
+	}
 fi
 
 # The repos a `gh api` write names, each checked for opt-in. `{owner}/{repo}` and `here` are whichever repo gh picks
 # from the remotes where it runs, so every GitHub remote counts, in the session's directory, the `cd` target and
-# the `git -C` one.
+# the `git -C` one of a push, and every `cd` the tree shows.
 if [ -n "$api_write" ]; then
 	api_slugs=$(printf '%s\n' "$api_write" | sed -n 's/^repo //p' | sort -u)
 	placeholder=
 	printf '%s\n' "$api_slugs" | grep -Fqx '{owner}/{repo}' && placeholder=1
 	if [ -n "$placeholder" ] || printf '%s\n' "$api_write" | grep -qx here; then
+		# Every `cd` the tree shows counts, whether or not it runs first or the command is a push: gh picks the repo from
+		# wherever it runs. One that is not a single literal path (or is `cd -`) leaves the repo unknown, so it blocks.
+		# A `cd` inside a string run by `sh -c` or `eval` is not in this tree, but it can only precede the `gh` there through a
+		# separator, quoted in the string, which the quoting check above already blocks (tests/gate-push.sh, `gh_here`).
+		cd_all=$(printf '%s\n' "$ptree" | sed -n 's/^cda //p')
+		if printf '%s\n' "$ptree" | grep -qx cdabad || printf '%s\n' "$cd_all" | grep -q '^-'; then
+			echo "Blocked: this \`gh api\` call writes with \`{owner}/{repo}\` (or no repo), and the review gate can't tell which repo gh picks after a \`cd\` it can't follow. Use one literal \`cd <dir> &&\`, or name the repo." >&2
+			exit 2
+		fi
 		here=$(
 			remote_slugs
 			for d in "$start" "$cd_dir"; do
+				(cd "$d" 2>/dev/null && remote_slugs)
+			done
+			tree_dirs cda | while IFS= read -r d; do
 				(cd "$d" 2>/dev/null && remote_slugs)
 			done
 		)
@@ -1217,8 +1255,10 @@ if [ -n "$api_write" ]; then
 			exit 2
 		fi
 	done
-	printf '%s' "$push_cmd" | grep -Eq "$git_push|$pr_create" || exit 0
+	[ -n "$cand" ] || exit 0
 fi
+
+# From here on the command is a canonical push.
 
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
@@ -1312,7 +1352,6 @@ EOF
 # shape push_jq reads from the tree (docs/gate.md › Push shape), and options outside the list block (--all, --mirror, --tags
 # and --delete send other refs).
 push_scope() (
-	[ -z "$data_only" ] || return 0
 	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ] ||
 		[ "$(printf '%s' "$words" | grep -Eo "$git_push" | wc -l)" -gt 1 ]; then
 		echo "it runs more than one \`git push\`"
@@ -1425,27 +1464,14 @@ EOF
 # A push in an opted-in repo needs the pre-push check active where it runs: core.hooksPath at the deployed git-hooks (install.sh
 # sets it) and an executable pre-push in it, else the push would skip the check that refuses an unreviewed one
 # (docs/gate.md › Pre-push check). The value git would use counts, including a repo's own.
-if [ -z "$data_only" ] && { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; }; then
-	want_hooks=${CLAUDE_HOME:-$HOME/.claude}/git-hooks
-	have_hooks=$(git config --get core.hooksPath) || have_hooks=
-	if [ "$have_hooks" != "$want_hooks" ] || [ ! -f "$want_hooks/pre-push" ] || [ ! -x "$want_hooks/pre-push" ]; then
-		echo "Blocked: the review gate's pre-push check isn't active here (core.hooksPath is '$have_hooks'); run claude-ship's ./install.sh." >&2
-		exit 2
-	fi
-fi
-if { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; } && ! why=$(push_scope); then
+hooks_ok || no_hooks
+if ! why=$(push_scope); then
 	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
 	exit 2
 fi
 # A tag push (tag_push, which push_scope accepted above) sends no HEAD, so there is nothing to review: the pre-push check
 # decides on the tag's commit, whatever HEAD is.
-if [ -z "$data_only" ] && { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; } && tag_push; then
-	exit 0
-fi
-
-# A data-only command pushes nothing (its quoted words are data), so there is nothing to review or to block on (#91).
-# `gh pr create` is the exception: it is gated like a push, since the PR would cover an unreviewed HEAD.
-if [ -n "$data_only" ] && ! printf '%s' "$words" | grep -Eq '^[[:space:]]*gh[[:space:]]+pr[[:space:]]+create[[:space:]]'; then
+if tag_push; then
 	exit 0
 fi
 

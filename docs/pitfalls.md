@@ -14,21 +14,21 @@ review finds a new class.
   can be named, too. The tamper check now reads a syntax tree (shfmt) instead of text, so file names, quoted
   strings and heredoc bodies stop counting (claude-ship #135, #40): add a new Bash check there, as an event
   from the tree, rather than as another regex, and let anything the tree can't settle fall back to the stricter
-  old check (docs/gate.md › Tamper protection). The push, PR and `gh api` checks sit behind the same tree: a command
-  that runs no git or gh skips them (docs/gate.md › Command reading), and "runs no git" means every command in the
-  tree is on a list of tools known not to run their arguments, not that the tree names no git. The push shape reads the
-  tree too (`push_jq`, claude-ship #135): an allowlist of tree shapes, with every word literal, so a quoted directory with
-  spaces and a backslash-newline are the same command as the plain one, and a text split at `;&|()` no longer decides.
+  old check (docs/gate.md › Tamper protection). The push check reads the tree too (`push_jq`, claude-ship #135): an
+  allowlist of tree shapes, with every word literal, so a quoted directory with spaces and a backslash-newline are the same
+  command as the plain one, and a text split at `;&|()` no longer decides. The gate starts a review for a canonical push
+  only, and a command that is none passes to the pre-push check (docs/gate.md › Command reading), so a push hidden in a
+  heredoc, a wrapper or a script is no longer something the text has to find.
   For the gate, a form outside AGENTS.md › Gate scope isn't a reason to extend a list or add a check; a check
   that must hold for every spelling belongs in a layer that doesn't read text.
-- **A command's name is not the program it runs, and a list of what is dangerous never ends.** The runs-git filter
+- **A command's name is not the program it runs, and a list of what is dangerous never ends.** The gate's runs-git filter
   first trusted a long list of names and then patched each bypass: `./cat` and `/tmp/ls` (a path is a script), `PATH=. cat`,
   then `PERL5OPT=… shasum`, `xargs find`, `printf '%n'`, `{PATH}>f`, `declare -a a='($(…))'`, `exec -l bash` (claude-ship
-  #135, #191), one codex round each. What is left is a short list: the bare name of a plain external read-only tool, every
-  word literal, no listed tool that can write a file or run a program from an argument or option (`sort`, `uniq`, `base64` are out); a wrapper, a shell, a builtin
-  that assigns, runs code or replaces the shell, a file-changing tool, a dynamic word, a write (any redirect to a file) and any variable assignment outside
-  a short allowlist are unknown (docs/gate.md › Command reading). When a trusted tool turns out to run something, remove
-  it from the list rather than adding a check for that one form.
+  #135, #191), one codex round each, and its upper-case-word test blocked `git commit -m "Closes=1 note"` (#192). Even the
+  short list that was left blocked a heredoc written to a file (#193). The filter is gone: the gate reads a canonical push
+  and a `gh api` call, and every other command is the pre-push check's (docs/gate.md › Command reading). Do not put a list
+  of "commands that are safe to skip" back in front of the checks; where a check must hold whatever started the push, it
+  belongs in a layer that does not read the command.
   The same holds for any new bypass of the gate: a form outside AGENTS.md › Gate scope isn't a reason to extend
   a list, and a check that must hold for every spelling belongs in a layer that doesn't read text.
 - **A terminator written as a negation accepts characters you didn't think of.** The push-shape strip took
@@ -102,15 +102,13 @@ review finds a new class.
   refs, remotes) is stale once an earlier step writes it, and blocking the known writes can't keep up:
   `git config push.followTags true && git push` (claude-ship #14), then `git show --output=.git/refs/heads/x` and a
   write to any file an `include.path` pulls into the config (claude-ship #25) each passed the previous list. The
-  class is "anything that runs before the push in the same command", so a pushing command may contain only the
+  class is "anything that runs before the push in the same command", so a push the gate reviews may contain only the
   push: a leading `cd <dir> &&`, harmless redirects (`2>&1`, `/dev/null`) and trailing pipes into read-only
-  filters (`tail`, `head`, `cat`, `grep`). Run everything else in its own command first. A push that only the raw command shows
-  (`sh -c "…; git push"`, `eval`) is quoted text to a word scanner but still runs, so it gets the same check;
-  only the ship skill's own `gh pr/issue create/edit/comment/close` is exempt. A `cd` or `git -C` that the tree shows
-  may still not run (`true || cd /tmp; git push`, `if false; then cd /tmp; fi`), and a directory that isn't a repo
-  ends the gate with exit 0, so follow a directory only when it surely runs first, and for a command that is not the push shape ask every
-  directory it could push from for its opt-in instead of blocking early, which would also block repos that never opted in
-  (claude-ship #135, Codex rounds 1 and 2).
+  filters (`tail`, `head`, `cat`, `grep`). A longer chain (`git commit && git push`, a push behind `sh -c`, `eval` or a
+  script) is not something the gate reads: it is not a canonical push, so the pre-push check judges the commit that
+  really gets pushed. Run the commit in its own command first anyway; a chain is only refused later. A `cd` or `git -C`
+  that may not run (`true || cd /tmp; git push`) is such a chain, so the gate follows a directory only for a canonical
+  push, where the `cd` surely runs first (claude-ship #135).
 - **A path is compared as text before it is resolved.** The tamper check matched `~/.claude/hooks` as a word, so
   `~/.claude/./hooks/x`, `~/.claude//hooks/x`, `${HOME}/…`, `~user/…`, `cd ~/.claude && rm hooks/x`, `true || cd
   ~/.claude; rm hooks/x`, `~/.claude/$x/…` and `curl -o` into the same directory all passed (claude-ship #187). The
@@ -264,3 +262,11 @@ review finds a new class.
   push through. Check that the tool exists before reading its output (the shell's own messages are not the tool's), and test
   the error text with the tool missing. Git hooks add a second case: setting `core.hooksPath` makes git stop running the
   repo's own `.git/hooks`, so whatever replaces them must chain to the repo's hook of the same name.
+- **A repo-local setting can silently turn a global layer off.** The pre-push check is installed through the global
+  `core.hooksPath`, and a repo's own `core.hooksPath` (husky, set by an install script rather than by a command the gate
+  reads) replaces it: every push then skips the check, whatever started it. The gate checked the setting only before a
+  canonical push, so a chained or wrapped push in such a repo went through unreviewed. Checking it for the repos a command
+  names (`cd`, `git -C`, wrappers, relative chains, `cd -P`) never ended: each spelling was the next finding (claude-ship #222).
+  When a protection is a global layer, check its state where it lives (the config of every checkout, and the session's), for
+  every command, instead of working out which repo a command means; a lookup that costs a network call goes behind the cheap
+  local check (docs/gate.md › Pre-push check).

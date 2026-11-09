@@ -2,10 +2,10 @@
 
 The review → push → Codex process Claude Code follows in every opted-in repo:
 
-- `hooks/review-gate.sh`: a PreToolUse hook that blocks `git push` and `gh pr create` until a headless
-  review passes. A Sonnet finder reports P0–P3 findings and a Haiku verifier checks them; confirmed P0–P2
-  block, and confirmed P3s are filed as issues. Docs-only changes get a Haiku claims check. Prompts are the
-  `hooks/review-*.md` files, built by `hooks/review-lib.sh`. A change to a prompt, model or flag comes with a
+- `hooks/review-gate.sh`: a PreToolUse hook that blocks a canonical `git push` until a headless
+  review passes (any other push is refused by the pre-push check in `hooks/git-hook.sh`). A Sonnet finder
+  reports P0–P3 findings and a Haiku verifier checks them; confirmed P0–P2 block, and confirmed P3s are filed as
+  issues. Docs-only changes get a Haiku claims check. Prompts are the `hooks/review-*.md` files, built by `hooks/review-lib.sh`. A change to a prompt, model or flag comes with a
   before/after `tests/evals/run.sh` result (seeded-bug cases; it costs tokens, so it runs by hand, not in CI;
   [`docs/gate.md`](docs/gate.md#changing-prompts-or-models)).
 - `skills/ship/`: the `ship` skill (bootstrap a repo, request Codex reviews, triage by the outcome table,
@@ -192,10 +192,11 @@ The matcher sends the MCP tools that write files, branches or PRs (`push_files`,
 opted-in repos.
 
 The gate reviews HEAD, so it lets a push send only HEAD's branch (or one tag of a commit already on the default branch), to origin, and only when every origin URL is
-the same GitHub repo, fetch and push. It reads git config and refs before the command runs, so a pushing
-command may run only the push, an optional leading `cd <dir> &&`, harmless redirects (`2>&1`, `> /dev/null`) and
-trailing read-only filters (`tail`, `head`, `cat`, `grep`); nothing else runs next to it. The push may pass no git
-global option except `-C <dir>`. In opted-in repos, `gh api` may make only the writes the ship skill uses
+the same GitHub repo, fetch and push. It reads git config and refs before the command runs, so the push it
+reviews may run only the push, an optional leading `cd <dir> &&`, harmless redirects (`2>&1`, `> /dev/null`) and
+trailing read-only filters (`tail`, `head`, `cat`, `grep`); a push in any other command (`git commit && git push`, a
+script, `bash -c`) is left to the pre-push check, which refuses it unless HEAD's commit passed review.
+The push may pass no git global option except `-C <dir>`. In opted-in repos, `gh api` may make only the writes the ship skill uses
 (comments, replies, reviews, reactions, issues, labels, workflow runs and its own GraphQL mutations), plus
 issue dependency links ("blocked by"), which are issue metadata like labels; any other
 write, such as commits, refs, PRs, statuses, checks or settings, blocks. It catches Claude's own slips but isn't a security boundary: it matches command text,
