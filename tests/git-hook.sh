@@ -168,10 +168,28 @@ commit second
 git -C "$repo" tag -a -m t v-good
 gpush "$repo" origin refs/tags/v-good
 want_push "an annotated tag on an unreviewed commit" no
+# A tag is a release: its commit has to be on the remote's default branch, a local review or waiver doesn't count for it
+# (a reviewed feature commit would otherwise be released before it is merged, Codex round 1).
 mkrepo
 git -C "$repo" tag -a -m t v-good
 gpush "$repo" origin refs/tags/v-good
-want_push "an annotated tag on a reviewed commit" yes
+want_push "an annotated tag on a reviewed commit that isn't on the remote" no
+on_remote refs/tags/v-good && {
+	echo "FAIL: the tag of an unmerged reviewed commit reached the remote"
+	fail=1
+}
+mkrepo
+commit second
+waive
+git -C "$repo" tag v-waived
+gpush "$repo" origin v-waived
+want_push "a tag on a waived commit that isn't on the remote" no
+mkrepo
+git -C "$repo" tag -a -m t v-good
+gpush "$repo" origin main
+want_push "the reviewed commit's branch" yes
+gpush "$repo" origin refs/tags/v-good
+want_push "an annotated tag on a reviewed commit that is on the remote's main" yes
 on_remote refs/tags/v-good || {
 	echo "FAIL: the tag didn't reach the remote"
 	fail=1

@@ -270,12 +270,14 @@ on its own, by the commit it pushes and not by HEAD:
 |---|---|
 | local sha is all zeros (a delete) | allowed |
 | the sha isn't a full object name, or isn't a commit (a tag is peeled to its commit) | refused |
-| `<common dir>/review-gate/<commit>.pass` or `.waived` exists | allowed |
 | the remote ref is under `refs/tags/` and the commit is on the remote's default branch | allowed |
+| the remote ref is under `refs/tags/` and it isn't (a local `.pass` or `.waived` doesn't count) | refused |
+| `<common dir>/review-gate/<commit>.pass` or `.waived` exists (any other ref) | allowed |
 | anything else, including a malformed line | refused |
 
 **Tags of merged commits.** A squash-merge commit never has a local `.pass` (it was made on GitHub), but it went through a PR
-with the gate, CI and Codex, so a tag of it sends nothing unreviewed. A tag line with no `.pass` or `.waived` is allowed
+with the gate, CI and Codex, so a tag of it sends nothing unreviewed. A tag is a release, so it is judged by this rule alone,
+before the review state is read: a reviewed feature commit can't be released before it is merged. A tag line is allowed
 when its commit is an ancestor of the default branch's tip **as the remote reports it now**: `git ls-remote --symref <url> HEAD`
 against the URL the push goes to (`$2`), exactly one `HEAD` line with a full object name, the tip fetched from that URL if
 the clone lacks it, then `git merge-base --is-ancestor`. Local refs are not evidence (`refs/remotes/origin/main` is

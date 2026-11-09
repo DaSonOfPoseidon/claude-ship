@@ -5,7 +5,8 @@
 # core.hooksPath to that directory, which stops git from running a repo's own .git/hooks, so every hook here first chains
 # to the repo's own hook of that name (same arguments, same stdin), and pre-push also checks Claude's pushes: a commit
 # with no `.pass` or `.waived` in the review state is refused, whatever started the push (a plain push, a script,
-# `gh pr create`, a compound command). The user's own pushes are untouched. Design notes: docs/gate.md › Pre-push check.
+# `gh pr create`, a compound command); a tag is refused unless its commit is on the remote's default branch. The user's own
+# pushes are untouched. Design notes: docs/gate.md › Pre-push check.
 set -u
 
 name=${1:-}
@@ -167,20 +168,21 @@ while IFS=' ' read -r lref lsha rref rsha extra || [ -n "$lref$lsha$rref$rsha" ]
 	# A delete sends no commit.
 	[ -n "$(printf '%s' "$lsha" | tr -d 0)" ] || continue
 	commit=$(git rev-parse --verify --quiet "$lsha^{commit}") || refuse "$(printf '%.8s' "$lsha") ($rref) is not a commit this repository has, so it has no review."
-	if [ -e "$state/$commit.pass" ] || [ -e "$state/$commit.waived" ]; then
-		continue
-	fi
 	short=$(git rev-parse --short "$commit" 2>/dev/null) || short=$(printf '%.8s' "$commit")
-	# A tag of a commit the remote already has on its default branch (a squash merge never gets a local `.pass`, but it went
-	# through a PR with this gate, CI and Codex) sends nothing new: it is accepted, on what the remote says now.
+	# A tag is a release: it is pushed only when its commit is already on the remote's default branch, as the remote says now
+	# (a squash merge never gets a local `.pass`, but it went through a PR with this gate, CI and Codex). A local `.pass` or
+	# `.waived` doesn't count for it, or a reviewed feature commit could be released before it is merged.
 	case $rref in
 	refs/tags/*)
 		if on_default_branch "${2:-}" "$commit"; then
 			continue
 		fi
-		refuse "$short ($rref) has no passing review, and $tag_why. A tag is pushed without a review only when its commit is already on the remote's default branch. Merge it through a PR first; don't skip this check (\`--no-verify\`, \`core.hooksPath\`); if a review is wrong, ask the user to waive it."
+		refuse "$short ($rref) can't be tagged yet: $tag_why. A tag is pushed only when its commit is already on the remote's default branch (merged through a PR), whatever its local review. Don't skip this check (\`--no-verify\`, \`core.hooksPath\`); if it is wrong, ask the user to push the tag."
 		;;
 	esac
+	if [ -e "$state/$commit.pass" ] || [ -e "$state/$commit.waived" ]; then
+		continue
+	fi
 	refuse "$short ($rref) has no passing review. Run a plain \`git push\` (or \`cd <dir> && git push\`) on its own so the review gate reviews HEAD first. Don't skip this check (\`--no-verify\`, \`core.hooksPath\`); if a review is wrong, ask the user to waive it."
 done <"$saved"
 
