@@ -73,6 +73,10 @@ latest_eyes=${latest_rest##* }
 since=$(printf '%s\n%s\n%s\n' "$summary_at" "$latest_request" "$pushed_at" | grep . | cut -c1-19 | sort | tail -1)
 review_state=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v1 \(.*\) -->$/\1/p' | tail -1 |
 	jq -r --arg h "$head" '.code_review | select(.commit_sha == null or .commit_sha == $h) | .status // empty' 2>/dev/null || true)
+# Findings reported (#229): the state says the head's review completed with findings (has_any_findings, true only
+# when the JSON names the head), though the review that carries them may not have posted yet.
+review_any=$(printf '%s\n' "$summaries" | sed -n 's/^<!-- codex-review-state:v1 \(.*\) -->$/\1/p' | tail -1 |
+	jq -r --arg h "$head" '.code_review | select(.commit_sha == $h) | .has_any_findings // empty' 2>/dev/null || true)
 stall_secs=${CODEX_STALL_SECS:-900}
 stalled=
 if [ "$review_state" = running ] && [ -n "$summary_at" ]; then
@@ -207,12 +211,33 @@ if echo "$row" | grep -qiE 'Failed|Error'; then
 	fi
 fi
 
+# Posting (#229): Codex can mark its summary completed with findings before the review that carries them is
+# posted, and a success then would read "no findings" with the threads still to come. Only when the success
+# branch below would fire: it needs a Codex review of the head, submitted at or after the later of the latest
+# trusted request and the push (to the second, as text), so a re-review of the same head waits for its own.
+# The reviews are read only in that case.
+posting=
+if [ "$review_state" = completed ] && [ "$review_any" = true ] && echo "$row" | grep -q 'Completed' && after_push; then
+	posting=1
+	floor=$(printf '%s\n%s\n' "$latest_request" "$pushed_at" | grep . | cut -c1-19 | sort | tail -1)
+	# An unsubmitted review has no submitted_at, and "null" would sort after every date.
+	posted_reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+		--jq ".[] | select(.user.login == \"$bot\") | select(.commit_id == \"$head\") | select(.submitted_at != null) | .submitted_at")
+	posted=$(printf '%s\n' "$posted_reviews" | grep . | cut -c1-19 | awk -v f="$floor" '$0 >= f' | grep -c . || true)
+	if [ "$posted" -gt 0 ]; then
+		posting=
+	fi
+fi
+
 if [ "$findings" -gt 0 ]; then
 	state=failure
 	description="$findings unresolved Codex thread(s); fix or answer each, then resolve it"
 elif [ -n "$approved" ]; then
 	state=success
 	description="Owner approved $short for merge (fork PR)"
+elif [ -n "$posting" ]; then
+	state=pending
+	description="Codex finished $short with findings; waiting for its review to post"
 elif echo "$row" | grep -q 'Completed' && after_push; then
 	state=success
 	description="Codex reviewed $short with no findings"

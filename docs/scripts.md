@@ -15,7 +15,7 @@ it; `HEAD_SHA` checks another commit, to test against past reviews.
 |---|---|
 | `success` | Codex completed a review of the head commit after it was pushed, and every Codex review thread is resolved |
 | `failure` | a Codex thread is unresolved, or Codex's review failed (on a fork PR, with a message that a retry won't help) |
-| `pending` | no completed review of the head yet, or the review stalled, was never acknowledged, or can't be tied to a request |
+| `pending` | no completed review of the head yet, or the review stalled, was never acknowledged, or can't be tied to a request, or Codex's summary says it finished with findings and the review carrying them hasn't posted |
 
 On a fork PR the owner can also set `success` without a Codex review (below).
 
@@ -32,7 +32,19 @@ activity records for the branch (`push`, `force_push`, and `branch_creation` for
 
 **The summary.** Codex keeps one summary comment per PR and edits it as reviews run. Its Code Review row names
 the commit it reviewed and the status. A hidden `codex-review-state:v1` JSON marker in it says whether a review
-is running.
+is running (`status`: `running` or `completed`) and whether it found anything (`has_any_findings`).
+
+**Findings still posting (#229).** Codex can mark the summary completed before it posts the review whose threads
+carry the findings (seen on OBDCracker #289). A completed row alone would then read "no findings" with the threads
+still to come, and the loop could merge before they land. So when the state JSON names the head, says `completed`
+and has `has_any_findings: true`, the status stays `pending` ("Codex finished <sha> with findings; waiting for its
+review to post") until a Codex review of the head has been submitted at or after the later of the latest trusted
+request and the head's push (times to the second, as text; an unsubmitted review has no time and doesn't count).
+The review event re-runs the status, which then fails on its open threads, or succeeds if they are all resolved.
+A review of another commit, or of the head from before the latest request (a re-review), doesn't end the wait. A
+`has_any_findings` that is false or null, a state that names another commit or none, and a state that isn't JSON
+change nothing. An unresolved Codex thread still fails first, an owner's fork approval still wins over the wait,
+and the reviews are read only in this case. `codex-wait.sh` keeps waiting on it, as on any plain `pending`.
 
 **Rows that name no commit.** A clean review's row can show `—` instead of a commit (#30). Nothing ties that
 completion to a request: neither the summary's edit history nor Codex's reactions say which request it answers.

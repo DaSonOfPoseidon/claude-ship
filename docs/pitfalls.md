@@ -137,6 +137,11 @@ review finds a new class.
   More than one marker after the request means one nobody asked for (an automatic review, claude-ship #49):
   fail closed. Compare timestamps as text, never with GNU-only `date -d`. Don't widen the markers to every
   Codex comment, or an unrelated comment would count as a completion.
+- **A completion marker can arrive before the content it announces.** Codex marks its summary completed with
+  `has_any_findings: true` before the review and threads post, so `codex-status.sh` read "no findings" and set
+  success (claude-ship #229). When a summary says findings exist, stay `pending` until a review of the head,
+  submitted after the latest request and the push, is there; leave out reviews of other commits and unsubmitted
+  ones (no `submitted_at`, which sorts after every date as `null`). Test the missing, false and null cases too.
 - **Local refs are state the agent controls.** The gate diffed against a hardcoded `origin/main`, which
   repos whose default is `master` don't have (claude-ship #51). Reading `origin/HEAD` instead would let
   `git remote set-head` point the base at the branch itself and leave nothing to review. Ask GitHub for

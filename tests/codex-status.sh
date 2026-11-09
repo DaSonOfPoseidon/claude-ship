@@ -70,8 +70,11 @@ expect() {
 	jq -n --arg s "$sha" --arg h "$HEAD_REPO" '{head:{sha:$s,ref:"b",repo:(if $h == "null" then null else {full_name:$h} end)}}' >"$tmp/pr.json"
 	jq -n --arg t "$4" --arg s "$sha" \
 		'[{activity_type:"push",after:$s,timestamp:$t}]' >"$tmp/activity.json"
-	printf '%s\n' "$7" | jq -Rn '[inputs | split(" ") | select(.[0] == "review")
-		| {user:{login:"chatgpt-codex-connector[bot]"},submitted_at:.[1]}]' >"$tmp/reviews.json"
+	# A review line is "review <time> [head|other]": the commit it reviewed (none by default); a time of "null"
+	# is a review nobody has submitted yet.
+	printf '%s\n' "$7" | jq -Rn --arg s "$sha" '[inputs | split(" ") | select(.[0] == "review")
+		| {user:{login:"chatgpt-codex-connector[bot]"},submitted_at:(if .[1] == "null" then null else .[1] end),
+		commit_id:(if .[2] == "head" then $s elif .[2] == "other" then "0b996f7000000000000000000000000000000000" else null end)}]' >"$tmp/reviews.json"
 	row=$(printf '| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="%s">x</relative-time> | %s | Manual request |' "$5" "$3")
 	# ROW replaces the row, for a review still running.
 	row=${ROW:-$row}
@@ -85,11 +88,12 @@ expect() {
 		printf '%s\n' "$APPROVALS" | jq -Rn '[inputs | split("|") | select(length == 4)
 			| {id:888,user:{login:"u",type:.[2]},author_association:.[1],created_at:.[0],body:.[3],reactions:{eyes:0}}]'
 		# STATE is the summary's Code Review state (none by default), STATE_SHA the commit it names (null by
-		# default), AGE how many seconds ago it was edited and SUMMARY_AT the exact edit time (overrides AGE).
-		jq -n --arg r "$row" --arg st "$STATE" --arg ss "${STATE_SHA:-}" --argjson age "$AGE" --arg at "${SUMMARY_AT:-}" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
+		# default), STATE_ANY its has_any_findings (true, false or null; left out by default), AGE how many seconds ago
+			# it was edited and SUMMARY_AT the exact edit time (overrides AGE).
+		jq -n --arg r "$row" --arg st "$STATE" --arg ss "${STATE_SHA:-}" --arg any "${STATE_ANY:-}" --argjson age "$AGE" --arg at "${SUMMARY_AT:-}" '[{user:{login:"chatgpt-codex-connector[bot]",type:"Bot"},
 			author_association:"NONE",created_at:"2026-10-21T14:00:00Z",updated_at:(if $at != "" then $at else (now - $age | todate) end),
 			body:("<!-- codex-pull-request-review-summary -->\n"
-				+ (if $st == "" then "" else "<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":" + (if $ss == "" then "null" else "\"" + $ss + "\"" end) + ",\"status\":\"" + $st + "\"}} -->\n" end)
+				+ (if $st == "" then "" else "<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":" + (if $ss == "" then "null" else "\"" + $ss + "\"" end) + ",\"status\":\"" + $st + "\"" + (if $any == "" then "" else ",\"has_any_findings\":" + $any end) + "}} -->\n" end)
 				+ $r)}]'
 	} | jq -s 'add' >"$tmp/comments.json"
 	check "$1" "$2"
@@ -98,6 +102,7 @@ expect() {
 # with_msg <text> expect …: also requires <text> in the output (a prefix assignment may persist in some shells).
 WANT_MSG=
 STATE=
+STATE_ANY=
 AGE=0
 with_msg() {
 	WANT_MSG=$1
@@ -272,6 +277,72 @@ AGE=7200
 expect success 'finished beats unacknowledged' '`7ca1cc3`' "$pushed" "$(ago 100)" "$(ago 360) OWNER" ''
 AGE=0
 
+# Shared by the sections below: an owner approval's time after the push and one before it, and the response of one
+# unresolved Codex thread.
+after='2026-10-21T15:30:00Z'
+before='2026-10-21T15:20:00Z'
+unresolved='{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"chatgpt-codex-connector"}}]}}]}}}}}'
+
+# claude-ship #229: Codex can mark its summary completed (with has_any_findings: true in the state JSON) before the
+# review with the findings posts, so a completed row alone isn't a success yet. The head p is pushed at 15:25:00, the
+# trusted request r1 is at 15:26:03 and the row says completed at 15:41:21.
+# summary <state> <commit it names> <has_any_findings> expect …: sets the summary's state JSON for one case.
+summary() {
+	STATE=$1
+	STATE_SHA=$2
+	STATE_ANY=$3
+	shift 3
+	"$@"
+	STATE=
+	STATE_SHA=
+	STATE_ANY=
+}
+posting='waiting for its review to post'
+h='`7ca1cc3`'
+# 1. Findings reported, no review posted yet: pending, with a message of its own.
+with_msg "Codex finished 7ca1cc3 with findings; $posting" summary completed "$sha" true expect pending 'findings, no review yet' "$h" $p $c "$r1" ''
+# ...a receipt isn't a review...
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, only a receipt' "$h" $p $c "$r1" "$m"
+# ...and a name-less row waits the same way.
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, blank row, no review' '—' $p $c "$r1" "$m"
+# 2. The review for the head, after the request, ends the wait: success while its threads are resolved...
+summary completed "$sha" true expect success 'findings, review posted' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
+summary completed "$sha" true expect success 'findings, blank row, review posted' '—' $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
+# ...and failure while a thread is open (an open thread always outranks it).
+echo "$unresolved" >"$tmp/threads.json"
+with_msg 'unresolved Codex thread' summary completed "$sha" true expect failure 'findings, review posted, thread open' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
+with_msg 'unresolved Codex thread' summary completed "$sha" true expect failure 'findings, no review, thread open' "$h" $p $c "$r1" ''
+rm -f "$tmp/threads.json"
+# 3. A review of the head from before the latest request (a re-review of the same head) doesn't answer it...
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, review before the request' "$h" $p $c "$r1
+2026-10-21T15:35:00Z OWNER" 'review 2026-10-21T15:30:00Z head'
+# ...nor does one from before the push...
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, review before the push' "$h" $p $c '' 'review 2026-10-21T15:20:00Z head'
+# ...but one in the second of the request or the push does (at or after, to the second)...
+summary completed "$sha" true expect success 'findings, review in the request second' "$h" $p $c "$r1" 'review 2026-10-21T15:26:03Z head'
+summary completed "$sha" true expect success 'findings, review in the push second, no request' "$h" $p $c '' 'review 2026-10-21T15:25:00Z head'
+# ...and with no request at all (an automatic review) the push is the line.
+summary completed "$sha" true expect success 'findings, automatic review after the push' "$h" $p $c '' 'review 2026-10-21T15:41:10Z head'
+# 4. A review of another commit doesn't count, and neither does one nobody has submitted yet.
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, review of another commit' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z other'
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, review with no commit' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z'
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, unsubmitted review' "$h" $p $c "$r1" 'review null head'
+# One review on the head after the request is enough, whatever else is there.
+summary completed "$sha" true expect success 'findings, old and new reviews' "$h" $p $c "$r1" 'review 2026-10-21T15:00:00Z head
+review 2026-10-21T15:41:10Z head'
+# 5. No findings reported, or no way to tie the state to the head: nothing changes.
+summary completed "$sha" false expect success 'no findings reported' "$h" $p $c "$r1" ''
+summary completed "$sha" null expect success 'findings null' "$h" $p $c "$r1" ''
+summary completed "$sha" '' expect success 'findings key missing' "$h" $p $c "$r1" ''
+summary completed 0b996f7000000000000000000000000000000000 true expect success 'state of another commit' "$h" $p $c "$r1" ''
+summary completed '' true expect success 'state names no commit' "$h" $p $c "$r1" ''
+summary 'x"}' '' true expect success 'unreadable state' "$h" $p $c "$r1" ''
+# A state that isn't completed adds nothing here (a running state of the head is a stall, above).
+summary running "$sha" true expect success 'running state, completed row' "$h" $p $c "$r1" ''
+# (An approved fork PR goes through the owner-approval branch first: see the fork cases below.)
+# A row that isn't completed after the push is never a success, with or without the state.
+with_msg 'Waiting for Codex' summary completed "$sha" true expect pending 'findings, other commit named' '`0b996f7`' $p $c "$r1" ''
+
 # claude-ship #126: fork PRs. Codex can't review them (openai/codex#47577), so a failed review says a retry won't
 # help, and the repo owner can approve the head by commenting a set phrase after its push.
 # fork <head repo> <approval lines> expect …: runs one case against that head repository and those comments.
@@ -284,9 +355,6 @@ fork() {
 	APPROVALS=
 }
 failed='| 📝 **Code Review** | ❌ **Failed** <relative-time datetime="2026-10-21T15:41:21Z">x</relative-time> | `7ca1cc3` | Manual request |'
-after='2026-10-21T15:30:00Z'
-before='2026-10-21T15:20:00Z'
-unresolved='{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"chatgpt-codex-connector"}}]}}]}}}}}'
 ROW=$failed
 # 1. A fork PR whose review failed and with no approval: a retry won't help, and the owner is told how to approve.
 with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'fork, failed review' '`7ca1cc3`' $p $c '' ''
@@ -334,6 +402,10 @@ ROW=$failed
 with_msg "Codex can't review fork PRs" fork null '' expect failure 'null head repo' '`7ca1cc3`' $p $c '' ''
 with_msg "Codex can't review fork PRs" fork null "$after|OWNER|User|Okay to merge" expect failure 'null head repo, approval' '`7ca1cc3`' $p $c '' ''
 ROW=
+# 11. #229: an owner's approval outranks a completed review whose findings haven't posted.
+with_msg 'Owner approved 7ca1cc3 for merge (fork PR)' summary completed "$sha" true fork f/r "$after|OWNER|User|Okay to merge" expect success 'fork, approved, findings, no review' '`7ca1cc3`' $p $c '' ''
+# ...and without an approval a fork PR waits for the review like any other.
+with_msg 'waiting for its review to post' summary completed "$sha" true fork f/r '' expect pending 'fork, findings, no review' '`7ca1cc3`' $p $c '' ''
 
 # claude-ship #184: a trusted request after a failed review means a retry is running, so the failure no longer
 # stands. The failure's time is the summary's last edit (SUMMARY_AT).
