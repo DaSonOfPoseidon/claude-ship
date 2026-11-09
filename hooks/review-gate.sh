@@ -1270,9 +1270,47 @@ use_state
 # shellcheck source=review-lib.sh
 . "$dir/review-lib.sh"
 
-# A push may send only HEAD, to origin; prints why not and fails otherwise. The command must have the shape push_jq reads
-# from the tree (docs/gate.md › Push shape), and options outside the list block (--all, --mirror, --tags and --delete
-# send other refs).
+# A tag push: succeeds when the command is exactly `git push [-f|--force] origin <tag>` or `... origin refs/tags/<tag>`
+# (push_jq's shape, literal words), <tag> being an existing local tag. No other option, refspec, remote or second ref. Such
+# a push doesn't send HEAD: its commit is judged by the pre-push check, which accepts it only if the remote already has it
+# on its default branch (hooks/git-hook.sh, docs/gate.md › Pre-push check), so the gate has no HEAD to review. A bare name
+# that is also a branch, or is HEAD, is not a tag here (git would call it ambiguous, or push HEAD).
+tag_push() {
+	[ "$push_shape" = ok ] || return 1
+	tp_pos=0
+	tp_name=
+	while IFS= read -r tp_a; do
+		case $tp_a in
+		'') continue ;;
+		-f | --force) ;;
+		-*) return 1 ;;
+		*)
+			tp_pos=$((tp_pos + 1))
+			case $tp_pos in
+			1) [ "$tp_a" = origin ] || return 1 ;;
+			2) tp_name=$tp_a ;;
+			*) return 1 ;;
+			esac
+			;;
+		esac
+	done <<EOF
+$(printf '%s\n' "$ptree" | sed -n 's/^a //p')
+EOF
+	[ "$tp_pos" = 2 ] || return 1
+	case $tp_name in
+	refs/tags/*) tp_ref=$tp_name ;;
+	HEAD) return 1 ;;
+	*)
+		tp_ref=refs/tags/$tp_name
+		git show-ref --verify -q "refs/heads/$tp_name" && return 1
+		;;
+	esac
+	git check-ref-format "$tp_ref" && git show-ref --verify -q "$tp_ref"
+}
+
+# A push may send only HEAD, to origin (or one tag, tag_push); prints why not and fails otherwise. The command must have the
+# shape push_jq reads from the tree (docs/gate.md › Push shape), and options outside the list block (--all, --mirror, --tags
+# and --delete send other refs).
 push_scope() (
 	[ -z "$data_only" ] || return 0
 	if [ "$(printf '%s' "$cmd" | grep -Eo "$git_push" | wc -l)" -gt 1 ] ||
@@ -1306,6 +1344,10 @@ push_scope() (
 				continue
 			fi
 			refspecs=1
+			# One tag, judged as a whole (every other word of the command too): see tag_push.
+			if tag_push; then
+				continue
+			fi
 			src=${a#+}
 			src=${src%%:*}
 			case $src in
@@ -1394,6 +1436,11 @@ fi
 if { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; } && ! why=$(push_scope); then
 	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
 	exit 2
+fi
+# A tag push (tag_push, which push_scope accepted above) sends no HEAD, so there is nothing to review: the pre-push check
+# decides on the tag's commit, whatever HEAD is.
+if [ -z "$data_only" ] && { printf '%s' "$cmd" | grep -Eq "$git_push" || printf '%s' "$words" | grep -Eq "$git_push"; } && tag_push; then
+	exit 0
 fi
 
 # A data-only command pushes nothing (its quoted words are data), so there is nothing to review or to block on (#91).
