@@ -40,5 +40,23 @@ if ! printf '%s' "$snippet" | jq -e --argjson b "$budget" "$hook.timeout > \$b" 
 	fail=1
 fi
 
+# The managed-settings drop-in install.sh deploys (settings/claude-ship.json) registers the same hook as the README, so Claude
+# Code runs the gate once while the README's copy stays in user settings: the entry must be identical, and fail closed itself.
+dropin="$root/settings/claude-ship.json"
+if ! jq -e . "$dropin" >/dev/null 2>&1; then
+	echo "FAIL: settings/claude-ship.json is missing or not valid JSON (Claude Code won't start with an invalid managed file)"
+	exit 1
+fi
+want=$(printf '%s' "$snippet" | jq -cS '.hooks.PreToolUse')
+got=$(jq -cS '.hooks.PreToolUse' "$dropin")
+if [ "$want" != "$got" ]; then
+	echo "FAIL: settings/claude-ship.json registers a different hook than the README's snippet"
+	fail=1
+fi
+if [ "$(jq -c 'keys' "$dropin")" != '["hooks"]' ] || [ "$(jq -c '.hooks | keys' "$dropin")" != '["PreToolUse"]' ]; then
+	echo "FAIL: settings/claude-ship.json holds more than the gate's PreToolUse hook"
+	fail=1
+fi
+
 [ "$fail" = 0 ] && echo "gate-readme: ok"
 exit "$fail"

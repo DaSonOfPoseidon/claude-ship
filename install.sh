@@ -1,42 +1,142 @@
 #!/bin/sh
 # Deploys claude-ship's origin/main into ~/.claude: the gate, its prompts and the orchestrate hint (hooks/), the
 # ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh for local DRY_RUN
-# checks), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh; a failure there makes the exit non-zero), and the git hook
+# checks), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh, run first: a gate without shfmt blocks every Bash call, so a
+# failure there stops the install before anything is changed, #189), and the git hook
 # stubs in git-hooks/, which it points git's global core.hooksPath at when that is unset (any other value makes the exit
 # non-zero; docs/gate.md › Pre-push check). Only main
 # is deployed, so a branch's changes never go live; after fetching, this script runs main's copy of itself
-# (docs/scripts.md). The gate's hook entry lives in ~/.claude/settings.json (see README.md): after deploying, this
-# script reads that file (never writes it) and warns about a missing or outdated entry, and says when the PR
-# loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
+# (docs/scripts.md). It also registers the gate in a managed-settings drop-in (settings/claude-ship.json, copied to
+# ${CLAUDE_SHIP_MANAGED_DIR:-/etc/claude-code}/managed-settings.d/ when that is writable, i.e. as root), which user and
+# project settings can't turn off, and sets the immutable flag (chattr +i) on everything it deploys, lifting it first on a
+# reinstall; only the user lifts it otherwise. The gate's hook entry may also live in ~/.claude/settings.json (see README.md): after
+# deploying, this script reads that file (never writes it) and warns about a missing or outdated entry (the drop-in
+# counts as a registration), and says when the PR loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
 # frontmatter was not deployed or is not executable (#122).
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
+managed=${CLAUDE_SHIP_MANAGED_DIR:-/etc/claude-code}
+managed_dropin=$managed/managed-settings.d/claude-ship.json
+managed_ok=
 if [ -z "${CLAUDE_SHIP_REEXEC:-}" ]; then
 	git -C "$repo" fetch -q origin main
 	main=$(git -C "$repo" show origin/main:install.sh)
 	CLAUDE_SHIP_REEXEC=1 CLAUDE_SHIP_REPO=$repo exec sh -c "$main" install.sh
 fi
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-git -C "$repo" archive origin/main agents hooks skills scripts/codex-status.sh scripts/fetch-shfmt.sh | tar -x -C "$tmp"
-mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills"
+have_chattr=
+# However the script ends, the flags it lifted go back (the ones recorded in $tmp/was-flagged, before the first lift): a
+# write that fails half way (a full disk) must not leave the gate's files unlocked, the ones it never got to included.
+cleanup() {
+	if [ -n "$have_chattr" ] && [ -f "$tmp/was-flagged" ]; then
+		while IFS= read -r f; do
+			if [ -e "$f" ]; then chattr +i "$f" 2>/dev/null || :; fi
+		done <"$tmp/was-flagged"
+	fi
+	rm -rf "$tmp"
+}
+trap cleanup EXIT
+# A shell killed by a signal doesn't run its EXIT trap: these go through exit, so the flags go back after a Ctrl-C or a kill too.
+trap 'exit 1' HUP INT TERM
+# Under sudo $HOME may be root's, which would put the gate where the user's Claude Code doesn't look.
+if [ -n "${SUDO_USER:-}" ]; then
+	echo "install: note: running under sudo; installing into $dest. If that isn't the ~/.claude Claude Code runs from, run again with sudo --preserve-env=HOME or set CLAUDE_HOME."
+fi
+
+# The immutable flag (docs/gate.md › Tamper protection): once installed, the gate's files are flagged with chattr +i, so no
+# command Claude runs can change them, whatever it's spelled like; only the user lifts the flag (`! sudo chattr -i PATH`), and
+# so does this script, before it writes and again after. chattr and lsattr are Linux's (e2fsprogs) and the only tools here
+# that aren't POSIX; without them, or without root or a filesystem that has the flag, the install still works and says
+# what isn't locked. lock_list prints what is locked, one path per line after its kind: "r" is a tree (locked recursively),
+# "1" just that path (the managed dir holds other policy files, which are not ours to lock or unlock). Paths with a
+# newline in them are not supported.
+lock_list() {
+	for f in "$tmp"/hooks/*; do printf '1 %s\n' "$dest/hooks/${f##*/}"; done
+	printf 'r %s\n' "$dest/skills/ship"
+	for f in "$tmp"/agents/ship-*.md; do printf '1 %s\n' "$dest/agents/${f##*/}"; done
+	printf '1 %s\n' "$dest/bin/shfmt"
+	printf 'r %s\n' "$dest/git-hooks"
+	# $1 set: the managed paths too (they are lifted whether or not this run writes them, locked only when it did).
+	if [ -n "$1" ]; then printf '1 %s\n' "$managed_dropin" "$managed/managed-settings.d" "$managed"; fi
+}
+# Whether lsattr shows the immutable flag on $1.
+is_flagged() {
+	attrs=$(lsattr -d "$1" 2>/dev/null) || return 1
+	case ${attrs%% *} in *i*) return 0 ;; *) return 1 ;; esac
+}
+# The paths of lock_list (trees walked) that have the immutable flag ($1 = flagged) or lack it ($1 = loose), one per line; $2 as
+# for lock_list.
+flag_report() {
+	lock_list "$2" | while read -r kind p; do
+		[ -e "$p" ] || continue
+		if [ "$kind" = r ]; then find "$p"; else printf '%s\n' "$p"; fi
+	done | while IFS= read -r f; do
+		if is_flagged "$f"; then state=flagged; else state=loose; fi
+		if [ "$state" = "$1" ]; then printf '%s\n' "$f"; fi
+	done
+}
+git -C "$repo" archive origin/main agents hooks skills settings/claude-ship.json scripts/codex-status.sh scripts/fetch-shfmt.sh | tar -x -C "$tmp"
+# shfmt first, into a temp file and run once, before anything installed is touched (#189): the gate blocks every Bash call
+# without a working shfmt, so a failed fetch must not leave a new gate next to a missing one. An installed shfmt is the
+# starting file, so the fetch script's "already current" check still saves the download.
+if [ -f "$dest/bin/shfmt" ]; then cp "$dest/bin/shfmt" "$tmp/shfmt" 2>/dev/null || :; fi
+if ! sh "$tmp/scripts/fetch-shfmt.sh" "$tmp/shfmt" || ! "$tmp/shfmt" --version >/dev/null 2>&1; then
+	echo "install: couldn't install shfmt (see above); the review gate needs it, so nothing was installed." >&2
+	exit 1
+fi
+# The managed-settings drop-in (settings/claude-ship.json), validated before anything is changed or written: Claude Code
+# doesn't start with a managed file that isn't valid JSON, so only a file that passed this is ever copied into the managed dir.
+if ! command -v jq >/dev/null 2>&1; then
+	echo "install: jq not found (the gate needs it, and it validates settings/claude-ship.json); nothing was installed." >&2
+	exit 1
+fi
+# -s: exactly one JSON value (an empty file makes jq run nothing and still succeed).
+if ! jq -es 'length == 1 and (.[0] | (.hooks | keys) == ["PreToolUse"] and (.hooks.PreToolUse | type == "array" and length > 0) and all(.hooks.PreToolUse[];
+	(.matcher | type == "string") and (.hooks | type == "array" and length > 0) and all(.hooks[]; .type == "command" and (.command | type == "string")
+		and (.timeout | type == "number") and .onFailure == "block")))' "$tmp/settings/claude-ship.json" >/dev/null 2>&1; then
+	echo "install: settings/claude-ship.json on origin/main isn't a valid managed-settings drop-in (a bug there); nothing was installed." >&2
+	exit 1
+fi
+# Lift the flags on everything this script is about to write (also the rm -rf of skills/ship below), and check that it
+# worked: a flag that can't be lifted (not root) must stop the install before the first write, not half way through it.
+if command -v chattr >/dev/null 2>&1 && command -v lsattr >/dev/null 2>&1; then have_chattr=1; fi
+if [ -n "$have_chattr" ]; then
+	flag_report flagged 1 >"$tmp/was-flagged"
+	lock_list 1 | while read -r kind p; do
+		[ -e "$p" ] || continue
+		if [ "$kind" = r ]; then chattr -R -i "$p" 2>/dev/null || :; else chattr -i "$p" 2>/dev/null || :; fi
+	done
+	stuck=$(flag_report flagged 1)
+	if [ -n "$stuck" ]; then
+		echo "install: still immutable, and chattr -i couldn't lift it (it needs root; run install.sh as root, or lift it yourself with \`! sudo chattr -i <path>\`): $(printf '%s\n' "$stuck" | head -n 3 | tr '\n' ' ')" >&2
+		echo "install: nothing was installed." >&2
+		exit 1
+	fi
+fi
+# The directories this run creates for the user's own files (agents/ and skills/ hold their own agents and skills): as root
+# under sudo they would be root's, so they go to the sudo user. hooks/, bin/ and git-hooks/ are locked and stay root's.
+: >"$tmp/new-dirs"
+for d in "$dest" "$dest/agents" "$dest/skills"; do
+	if [ ! -d "$d" ]; then printf '%s\n' "$d" >>"$tmp/new-dirs"; fi
+done
+mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills" "$dest/bin"
+if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" = 0 ]; then
+	while IFS= read -r d; do chown "$SUDO_USER" "$d" || :; done <"$tmp/new-dirs"
+fi
 # File by file: agents/ also holds the user's own agents.
 cp "$tmp"/agents/ship-*.md "$dest/agents/"
 cp "$tmp"/hooks/* "$dest/hooks/"
 rm -rf "$dest/skills/ship"
 cp -R "$tmp/skills/ship" "$dest/skills/ship"
 cp "$tmp/scripts/codex-status.sh" "$dest/skills/ship/codex-status.sh"
+# The gate reads every Bash command with shfmt (#135). Copied beside its place and moved in, so it is never half-written.
+cp "$tmp/shfmt" "$dest/bin/.shfmt.new"
+chmod 755 "$dest/bin/.shfmt.new"
+mv -f "$dest/bin/.shfmt.new" "$dest/bin/shfmt"
 echo "Deployed claude-ship $(git -C "$repo" rev-parse --short origin/main) to $dest."
 
-# The gate's Bash checks will parse commands with shfmt (#135). main's fetch script installs a pinned release, checked
-# against a pinned sha256 (docs/scripts.md). A failure doesn't stop the rest of the install; the exit status says it.
 rc=0
-mkdir -p "$dest/bin"
-if ! sh "$tmp/scripts/fetch-shfmt.sh" "$dest/bin/shfmt"; then
-	echo "install: couldn't install shfmt (see above); the review gate will need it." >&2
-	rc=1
-fi
 
 # The git hook stubs (docs/gate.md › Pre-push check): core.hooksPath points git at $dest/git-hooks, where each stub runs
 # hooks/git-hook.sh with its own name, so a pre-push check refuses Claude's unreviewed pushes and the repo's own hooks still
@@ -76,6 +176,21 @@ case $dest in
 	fi
 	;;
 esac
+
+# The gate's registration in managed settings (docs/gate.md › Tamper protection): Claude Code reads every
+# managed-settings.d/*.json in the managed directory, and user and project settings can't override or disable what it sets.
+# Copied beside its place and moved in, so Claude Code never reads half a file. Without write access (not root) the gate
+# stays registered in user settings only (README.md › Install).
+if mkdir -p "$managed/managed-settings.d" 2>/dev/null &&
+	cp "$tmp/settings/claude-ship.json" "$managed/managed-settings.d/.claude-ship.json.new" 2>/dev/null &&
+	chmod 644 "$managed/managed-settings.d/.claude-ship.json.new" &&
+	mv -f "$managed/managed-settings.d/.claude-ship.json.new" "$managed_dropin"; then
+	managed_ok=1
+	echo "Registered the gate in the managed settings drop-in $managed_dropin."
+else
+	rm -f "$managed/managed-settings.d/.claude-ship.json.new" 2>/dev/null || :
+	echo "install: couldn't write $managed (run install.sh as root for that), so the gate stays registered in user settings only (README.md › Install)."
+fi
 
 # Each deployed ship agent's frontmatter hooks (ship-explorer's explorer-bash.sh, ship-codex's codex-bash.sh) are what
 # keep its Bash in bounds. A hook that is missing or not executable fails with a non-blocking error, so the agent's
@@ -124,10 +239,28 @@ check_settings() {
 	fi
 	# shellcheck disable=SC2088 # the literal text README.md registers
 	jqs() { jq --arg a '~/.claude/hooks/review-gate.sh' --arg b "$dest/hooks/review-gate.sh" "$@"; }
+	# Info lines about the rest of the settings (optional pieces: they never change the exit status).
+	extra_info() {
+		if ! jqs -e 'any(.hooks.UserPromptSubmit[]?.hooks[]?; type == "object" and (.command | tostring | test("orchestrate-hint[.]sh$")))' "$settings" >/dev/null 2>&1; then
+			echo "install: info: orchestrated mode's hint hook isn't registered (optional). To use it, add:"
+			printf '%s\n' "$hint"
+		fi
+		# Under Claude Code's fork mode a subagent's Agent call returns at once, so the PR loop's implementer never
+		# gets ship-codex's report (claude-ship #160). Only the string "0" counts as set.
+		if ! jqs -e '.env | type == "object" and .CLAUDE_CODE_FORK_SUBAGENT == "0"' "$settings" >/dev/null 2>&1; then
+			echo "install: info: the PR loop needs \"env\": {\"CLAUDE_CODE_FORK_SUBAGENT\": \"0\"} in $settings (claude-ship #160); without it, nested agents run in the background."
+		fi
+	}
 	# Every hook that runs the gate, with its entry's matcher: Claude Code runs all of them, so each is judged (#153).
 	gates=$(jqs -c '[.hooks.PreToolUse[]? | select(type == "object") | . as $e | $e.hooks[]? | select(type == "object" and (.command == $a or .command == $b)) | {matcher: $e.matcher, timeout, onFailure}]' "$settings" 2>/dev/null) || gates=
 	count=$(printf '%s' "$gates" | jq -r 'length' 2>/dev/null) || count=0
 	count=${count:-0}
+	if [ "$count" = 0 ] && [ -n "$managed_ok" ]; then
+		echo "The gate is registered in the managed settings drop-in $managed_dropin (not in $settings)."
+		echo "install: info: restart Claude Code, then check that /status lists \"Enterprise managed settings (drop-ins)\"; if it doesn't, add the README's entry to $settings."
+		extra_info
+		return 0
+	fi
 	if [ "$count" = 0 ]; then
 		echo "install: the gate isn't registered in $settings (missing, not valid JSON, or no PreToolUse hook running ~/.claude/hooks/review-gate.sh), so it reviews nothing. Add this:" >&2
 		printf '%s\n' "$snippet" >&2
@@ -171,15 +304,31 @@ VERDICTS
 	else
 		echo "The gate is registered in $settings."
 	fi
-	if ! jqs -e 'any(.hooks.UserPromptSubmit[]?.hooks[]?; type == "object" and (.command | tostring | test("orchestrate-hint[.]sh$")))' "$settings" >/dev/null 2>&1; then
-		echo "install: info: orchestrated mode's hint hook isn't registered (optional). To use it, add:"
-		printf '%s\n' "$hint"
+	if [ -n "$managed_ok" ]; then
+		echo "install: info: the gate is also registered in the managed drop-in $managed_dropin; Claude Code runs a handler that appears in both once. Once /status lists \"Enterprise managed settings (drop-ins)\", you can remove the gate's entry from $settings."
 	fi
-	# Under Claude Code's fork mode a subagent's Agent call returns at once, so the PR loop's implementer never
-	# gets ship-codex's report (claude-ship #160). Only the string "0" counts as set.
-	if ! jqs -e '.env | type == "object" and .CLAUDE_CODE_FORK_SUBAGENT == "0"' "$settings" >/dev/null 2>&1; then
-		echo "install: info: the PR loop needs \"env\": {\"CLAUDE_CODE_FORK_SUBAGENT\": \"0\"} in $settings (claude-ship #160); without it, nested agents run in the background."
-	fi
+	extra_info
 }
+# Everything written, flag it, then check with lsattr. The managed paths are flagged when the drop-in was written (or was
+# there already, so that a flag lifted above is never left off).
+lock_managed=$managed_ok
+if [ -z "$lock_managed" ] && [ -f "$managed_dropin" ]; then lock_managed=1; fi
+if [ -z "$have_chattr" ]; then
+	echo "install: warning: chattr or lsattr not found (they are Linux's), so the installed gate isn't locked against edits." >&2
+else
+	lock_list "$lock_managed" | while read -r kind p; do
+		[ -e "$p" ] || continue
+		if [ "$kind" = r ]; then chattr -R +i "$p" 2>/dev/null || :; else chattr +i "$p" 2>/dev/null || :; fi
+	done
+	loose=$(flag_report loose "$lock_managed" | head -n 20 | tr '\n' ' ')
+	if [ -z "$loose" ]; then
+		echo "Set the immutable flag on the installed gate; to change a file by hand, lift it first: ! sudo chattr -i <path>."
+	else
+		echo "install: warning: not immutable, so a command Claude runs could still change it (chattr +i needs root and a filesystem that supports it): $loose" >&2
+		# As root there is no excuse: that is a gate that isn't locked.
+		if [ "$(id -u)" = 0 ]; then rc=1; fi
+	fi
+fi
+
 check_settings || rc=1
 [ "$rc" = 0 ] || exit "$rc"

@@ -32,6 +32,11 @@ Codex's PR review and the pre-push review gate both follow this section. Rate ev
   Branch protection doesn't read command text: a way past it that a plausible command takes is in scope.
   `docs/gate.md` › Threat model has the examples.
 
+  The install is immutable: `install.sh` registers the gate in managed settings and sets `chattr +i` on what it
+  deploys, so a command that gets past the text checks still can't rewrite the installed gate. The flag is lifted only
+  by the user (`! sudo chattr -i`), and root can always lift it: a finding needs a plausible command that unlocks or
+  bypasses it without root and without the `chattr` the gate denies.
+
 How each finding is handled depends on its priority and on which review found it: the outcome table in
 `skills/ship/SKILL.md` › Triage.
 
@@ -50,7 +55,9 @@ or anything CI already checks (shellcheck, actionlint).
 - The branch can't steer its reviewer: `--safe-mode` keeps its CLAUDE.md, hooks and skills from loading and
   `--restricted` ignores the user and project settings files (`--bare` would need an API key; we run on a Pro
   plan). Managed settings and policy hooks still apply under both. They're the machine owner's, not the
-  branch's, so they're outside this guarantee.
+  branch's, so they're outside this guarantee. The gate is now a managed hook (`install.sh` registers it in
+  `managed-settings.d`), but it doesn't fire in a reviewer session: Read, Grep and Glob aren't in its matcher, and
+  `REVIEW_GATE_INNER` makes it exit first.
 - What's reviewed is what's pushed: a push may send only HEAD, to origin, or one tag whose commit is on origin's
   default branch (the pre-push check asks the remote; no `--all`, `--tags`, other branches, other tags or other
   destinations), and GitHub MCP writes of code or PRs are blocked. `gh api` may make
@@ -61,13 +68,15 @@ or anything CI already checks (shellcheck, actionlint).
   text, and its state is writable by any shell. Branch protection requiring `codex-review` is the server-side
   backstop for merges. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch
   skips it.
-- Only the user changes the opt-in variables, waives a review, or edits the installed gate, its state or
-  the settings that register it. `install.sh` deploys only `origin/main`.
+- Only the user changes the opt-in variables, waives a review, lifts the immutable flag on the installed files
+  (`! sudo chattr -i <path>`), or edits the installed gate, its state or the settings that register it. `install.sh`
+  deploys only `origin/main`; it lifts the flag itself while it reinstalls and sets it again.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,
   `cut`, `tr`, `head`, `tail`, `cp`, `printf`, …), plus `git`, `gh`, `jq`, and the widely supported extras already
   in use: `grep -o`, `grep -m`, `grep -A` (tests), `sed -E`, `head -N` and `tail -N` (POSIX is `-n N`), `mktemp`,
   `timeout`, `date -u +FORMAT` and `date +%s`, and awk writing to `/dev/stderr`. No GNU-only flags (`sed -i`, `date -d`,
-  `grep -P`, `readlink -f`, `stat -c`).
+  `grep -P`, `readlink -f`, `stat -c`). `chattr` and `lsattr` (Linux's e2fsprogs) are allowed in `install.sh` only,
+  which skips them with a warning when they are missing.
 - Every reviewer run logs its cost. Keep usage low: Sonnet finds, Haiku verifies and checks docs, and no
   reviewer uses Opus. In orchestrated mode, only the user's own main session runs on Opus; the agents run on
   Sonnet or Haiku.

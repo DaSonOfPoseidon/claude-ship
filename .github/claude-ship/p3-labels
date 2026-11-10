@@ -27,6 +27,7 @@ tests/orchestrate-hint.sh area:gate
 .github/workflows/*      area:action
 .github/claude-ship/*    area:gate
 install.sh               area:install
+settings/*               area:install
 tests/install.sh         area:install
 scripts/fetch-shfmt.sh   area:install
 tests/fetch-shfmt.sh     area:install

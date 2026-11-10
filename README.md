@@ -134,7 +134,7 @@ same section.
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, and fetches shfmt into ~/.claude/bin
+./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, fetches shfmt into ~/.claude/bin, registers the gate in /etc/claude-code/managed-settings.d, and sets the immutable flag (chattr +i) on all of it
 ```
 
 `./install.sh` also sets git's global `core.hooksPath` to `~/.claude/git-hooks` when it is unset (any other value is left
@@ -144,7 +144,28 @@ Git stops running a repo's own `.git/hooks` once `core.hooksPath` is set, so eac
 name. Your own pushes are untouched, but a command you run with `!` inside Claude Code counts as Claude's: `! git push
 --no-verify` skips the check.
 
-Register the hook once in `~/.claude/settings.json`:
+Run `./install.sh` as root, for your own `~/.claude`: if you are root that is just `./install.sh`; otherwise use
+`sudo --preserve-env=HOME ./install.sh` (a plain `sudo` may make `$HOME` root's, and the gate would be installed into
+root's `~/.claude` while Claude Code runs the one in yours; `CLAUDE_HOME=<dir>` sets the target directly). It registers the
+gate in a managed-settings drop-in, `/etc/claude-code/managed-settings.d/claude-ship.json` (a copy of
+`settings/claude-ship.json`), which user and project settings can't turn off, and it sets the immutable flag
+(`chattr +i`) on everything it installs, the drop-in and `/etc/claude-code` included, so no command Claude runs can change
+the installed gate; Claude's own `chattr` calls are blocked. Setting and lifting the flag needs root. To edit an installed
+file by hand, lift it first with `! sudo chattr -i <path>` (without `sudo` if you are root; the `!` runs it as you, not as
+Claude; `lsattr <path>` shows the flag); the next `./install.sh` lifts and sets the flags itself. Not root: the drop-in
+is skipped, the flags can't be set (it warns), and the gate stays registered in user settings only, as below. A failed
+shfmt download stops the install before it changes anything.
+
+The drop-in applies to every Claude Code user of the machine, and its hook is `~/.claude/hooks/review-gate.sh` of whoever runs
+the session. On a machine with other Claude Code users, run `./install.sh` for each of them first (`CLAUDE_HOME=<their
+~/.claude>`), or remove the drop-in (`sudo chattr -i /etc/claude-code /etc/claude-code/managed-settings.d /etc/claude-code/managed-settings.d/claude-ship.json`, then delete the file) and keep the gate in user
+settings: a user without the gate installed gets every matching tool call blocked, since the hook is missing and fails closed.
+
+After installing, restart Claude Code and check that `/status` lists "Enterprise managed settings (drop-ins)". The
+drop-in has the same hook as the snippet below, so while you keep that snippet, Claude Code runs the gate once; once
+`/status` shows the drop-in, you can remove the entry from `~/.claude/settings.json`. Until you've seen it there, keep it:
+it is the gate if Claude Code doesn't read the drop-in. As root or not, you can always register the hook
+in `~/.claude/settings.json`:
 
 ```json
 {"hooks": {"PreToolUse": [{
@@ -159,7 +180,8 @@ must stay above the gate's reviewer budget (2200 s by default, `REVIEW_GATE_BUDG
 and blocks every call without it.
 
 `./install.sh` checks this entry after deploying and prints what to change (the entry above, plus a warning for each
-value that differs); it never edits `settings.json`.
+value that differs); it never edits `settings.json`. A gate registered in the drop-in counts: without the entry above it
+reports the drop-in instead of failing.
 
 For orchestrated mode, also register the hint hook:
 
@@ -180,7 +202,7 @@ report as its result (claude-ship #160). Other users of the gate don't need it.
 `./install.sh` also installs shfmt v3.14.1 into `~/.claude/bin`, checked against a sha256 pinned in the repo
 (`scripts/fetch-shfmt.sh`). The review gate reads every Bash command with it and blocks every Bash call, in every
 repo, when `~/.claude/bin/shfmt` is missing or can't parse the command (docs/gate.md › Tamper protection), so run
-`./install.sh` before relying on a gate that has this check. install.sh exits non-zero when the install fails. It needs `curl` and `sha256sum` (or `shasum`); only Linux x86_64 and aarch64 are supported for now.
+`./install.sh` before relying on a gate that has this check. install.sh fetches shfmt first and, when that fails, stops with exit 1 before it changes anything. It exits non-zero when any other part of the install fails. It needs `curl` and `sha256sum` (or `shasum`); only Linux x86_64 and aarch64 are supported for now.
 
 After a PR merges, run `./install.sh` again to deploy it. The installed files (the ship agents included), the gate's state in
 `.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because
