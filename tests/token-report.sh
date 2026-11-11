@@ -246,6 +246,31 @@ mix claude-haiku-5-5 1 50000 0 30000 20000 $0.01
 total 3 250001 0 30000 20000 $0.07
 peak main context: 0 tokens'
 
+# --- the older models are priced too (#247), from the claude-api skill's shared/models.md: each request is 1M in,
+# 1M out, 1M cache read, 1M 5m write and 1M 1h write. Opus 4.x is $5 / $25 (read $0.50, writes $6.25 / $10) =
+# $46.75, Sonnet 4.6 $3 / $15 (read $0.30, writes $3.75 / $6) = $28.05, Haiku 4.5 $1 / $5 (read $0.10, writes
+# $1.25 / $2) = $9.35, at any prompt length. None of them warns about a missing price.
+fresh
+pr 35 'old models' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+n=0
+for m in claude-opus-4-8 claude-opus-4-7 claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5; do
+	n=$((n + 1))
+	A=$D/s/subagents/agent-old$n.jsonl
+	line "$A" old$n 2026-10-01T10:10:00.000Z "$m" 1000000 1000000 1000000 2000000 1000000 1000000
+	meta "$A" "{\"agentType\":\"old$n\"}"
+done
+run 35
+check 'older models' 0 'PR #35 old models (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+old1 claude-opus-4-8 1 1000000 1000000 1000000 2000000 $46.75
+old2 claude-opus-4-7 1 1000000 1000000 1000000 2000000 $46.75
+old3 claude-opus-4-6 1 1000000 1000000 1000000 2000000 $46.75
+old4 claude-sonnet-4-6 1 1000000 1000000 1000000 2000000 $28.05
+old5 claude-haiku-4-5 1 1000000 1000000 1000000 2000000 $9.35
+total 5 5000000 5000000 5000000 10000000 $177.65
+peak main context: 0 tokens'
+[ ! -s "$tmp/err" ] || { echo 'FAIL: the older models must not warn about a missing price'; cat "$tmp/err"; fail=1; }
+
 # --- unknown model, open PR (the window runs to now), a PR with no usage.
 fresh
 pr 40 'open one' 2026-10-01T10:00:00Z ''
