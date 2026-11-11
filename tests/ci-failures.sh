@@ -173,8 +173,8 @@ run 1
 want 'default repo' 0 'no failed checks'
 called 'default repo' 'repo view --json nameWithOwner --jq .nameWithOwner'
 
-# The codex-review status is the review, not CI: it is pending until Codex has reviewed (which waits for the CI
-# read) and failed while a Codex thread is open, so it never counts as a failed or pending check.
+# The codex-review status is the review, not CI: it is pending until Codex has reviewed and failed while a Codex
+# thread is open, so it never counts as a failed or pending check.
 cr_fail='{"name":"codex-review","state":"FAILURE","bucket":"fail","link":"","workflow":""}'
 cr_pend='{"name":"codex-review","state":"PENDING","bucket":"pending","link":"","workflow":""}'
 printf '[%s,%s]\n' "$cr_fail" "$pass" >"$tmp/checks.json"

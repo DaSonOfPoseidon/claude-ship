@@ -144,7 +144,7 @@ set -- $cmd
 [ $# -ge 2 ] || deny "too short"
 
 # The only environment: the wait's own cap, and only before the wait; or the CI poll count, and only before the
-# CI read.
+# CI read (ship-codex's step 5, after the review wait).
 # shellcheck disable=SC2088 # the literal ~ is what the agent writes; the shell expands it
 ship='~/.claude/skills/ship'
 # shellcheck disable=SC2088 # as above

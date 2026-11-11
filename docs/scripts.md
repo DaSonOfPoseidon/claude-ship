@@ -118,17 +118,17 @@ numbers) is its name and link only, and its link is never passed to `gh`. Then `
 if any check is pending, and `no failed checks` when none failed (also when the PR has no checks at all).
 
 - **The `codex-review` status is not CI.** `gh pr checks` lists it with the other checks, but it is pending until
-  Codex has reviewed and failed while a Codex thread is open. Codex is requested only after the CI read, so waiting
-  on it would end every round as a timeout, and a round-2 head with open threads would read as a CI failure no code
-  change fixes. It is ignored by exact name (a `codex-review-lint` check still counts), as failed and as pending.
+  Codex has reviewed and failed while a Codex thread is open. Waiting on it would never settle while Codex is still
+  reviewing, and a round-2 head with open threads would read as a CI failure no code change fixes. It is ignored by exact name (a `codex-review-lint` check still counts), as failed and as pending.
   So is the reusable workflow's job that sets it, which `gh` lists as `codex-review / codex-status` (the caller's job
   id, then `/ codex-status`; a bare `codex-status` too): it can fail on a transient gh API error with CI green, and
-  that must not end the round before Codex is requested (#228). The match is on the job name, not the workflow name
+  that must not end the round as a CI failure (#228). The match is on the job name, not the workflow name
   (`Codex review` is set per repo), and a `codex-status-lint` check still counts.
 - **`--wait`** polls (`CI_WAIT_POLLS`, 18, every `CI_WAIT_INTERVAL` seconds, 30: 9 minutes plus the calls, under the
-  agent's 10-minute Bash timeout) until nothing is pending, then prints as usual. `ship-codex` sets
-  `CI_WAIT_POLLS=10` (5 minutes of polling), so the polls plus the failed-job log fetches, which run after the cap,
-  fit well inside the Bash timeout, and calls it up to 4 times. At the cap it prints the same
+  agent's 10-minute Bash timeout) until nothing is pending, then prints as usual. `ship-codex` runs it after the
+  review (step 5, once the review wait has a result), with `CI_WAIT_POLLS=10` (5 minutes of polling), so the polls
+  plus the failed-job log fetches, which run after the cap, fit well inside the Bash timeout, and calls it up to 4
+  times. At the cap it prints the same
   result and exits 3, so the caller tells "still running" from "settled". `gh pr checks --watch` isn't used because
   it can't exclude a check. `CI_WAIT_INTERVAL` is for the tests only; the hook allows `CI_WAIT_POLLS` (1 to 10) for this script and no other variable.
 
@@ -140,11 +140,12 @@ if any check is pending, and `no failed checks` when none failed (also when the 
   control characters first, so none can add a line or an escape sequence. The fields are joined with the unit
   separator, not a tab: `read` drops a leading tab, so an external status's empty workflow would shift the name
   into its place.
-- **Who calls it.** `ship-codex` runs it with `--wait` before requesting Codex (once `gh pr view` shows the pushed
-  head: the API lags a push, and the CI read would be the old head's), and without it after the review to fill `ci:`.
-  Failed checks in the first call end the round as `outcome: ci-fail`, with the output as a `ci-failures:` block
-  for the implementer (`agents/ship-codex.md`); the implementer also runs it itself when a review is clean but CI is
-  red. The orchestrator runs it only in the fallback flow. `hooks/codex-bash.sh` allows it with a PR number, an
+- **Who calls it.** `ship-codex` requests the review first (once `gh pr view` shows the pushed head), so CI runs
+  alongside it (#255), and runs this with `--wait` after the review, if `gh pr view` still shows the pushed head
+  (a newer push means one read without the wait, since the checks are the new head's). Failed checks go in the
+  report's `ci-failures:` block with whichever outcome the findings give, so the implementer fixes them together with
+  the findings in one push (`agents/ship-codex.md`). In its resolve-only and triage-only modes it reads without the
+  wait. The orchestrator runs it only in the fallback flow. `hooks/codex-bash.sh` allows it with a PR number, an
   optional `owner/repo`, and `--wait` after it.
 
 ## `skills/ship/unit-state.sh`
