@@ -111,6 +111,10 @@ run() {
 	tr -s ' ' <"$tmp/raw" >"$tmp/out"
 }
 
+# nomainless: stderr without the warning for a PR that has no main row (#248); fixtures with only subagent or
+# gate rows trigger it, and the tests that look at the rest of stderr don't care.
+nomainless() { grep -v 'no main-session row' "$tmp/err"; }
+
 # check <label> <want rc> <want stdout>: stdout is compared whole, with runs of spaces squeezed.
 check() {
 	if [ "$rc" != "$2" ]; then
@@ -269,7 +273,7 @@ old4 claude-sonnet-4-6 1 1000000 1000000 1000000 2000000 $28.05
 old5 claude-haiku-4-5 1 1000000 1000000 1000000 2000000 $9.35
 total 5 5000000 5000000 5000000 10000000 $177.65
 peak main context: 0 tokens'
-[ ! -s "$tmp/err" ] || { echo 'FAIL: the older models must not warn about a missing price'; cat "$tmp/err"; fail=1; }
+[ -z "$(nomainless)" ] || { echo 'FAIL: the older models must not warn about a missing price'; cat "$tmp/err"; fail=1; }
 
 # --- unknown model, open PR (the window runs to now), a PR with no usage.
 fresh
@@ -682,7 +686,7 @@ role model requests input output cache read cache write cost
 gate finder sonnet 1 - - - - \$0.30
 gate verifier haiku 1 - - - - \$0.02
 total 2 0 0 0 0 \$0.32"
-[ "$(wc -l <"$tmp/err")" = 1 ] && grep -q '^token-report.sh: skipped 2 unreadable line(s) in .*costs.jsonl' "$tmp/err" ||
+[ "$(nomainless | wc -l)" = 1 ] && grep -q '^token-report.sh: skipped 2 unreadable line(s) in .*costs.jsonl' "$tmp/err" ||
 	{ echo 'FAIL: want one warning counting the 2 unreadable log lines'; cat "$tmp/err"; fail=1; }
 # A PR's rows are the same asked alone.
 run 90
@@ -701,7 +705,7 @@ role model requests input output cache read cache write cost
 gate finder sonnet 2 - - - - ?
 gate verifier haiku 1 - - - - $0.01
 total 3 0 0 0 0 ?'
-[ ! -s "$tmp/err" ] || { echo 'FAIL: unexpected stderr (clean log)'; cat "$tmp/err"; fail=1; }
+[ -z "$(nomainless)" ] || { echo 'FAIL: unexpected stderr (clean log)'; cat "$tmp/err"; fail=1; }
 
 # A log with nothing for the PR, or an empty one, reads like no log at all.
 : >"$tmp/costs.jsonl"
@@ -713,6 +717,47 @@ no usage found'
 run 93
 check 'empty log' 0 'PR #93 n (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
 no usage found'
+
+# --- sessions started in a worktree log under that directory's slug (#248): the repo's worktrees and the removed
+# `.claude/worktrees` ones are read too, and a look-alike repo's dir (`${slug}-other`) is not.
+fresh
+pr 300 'wt' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+wtslug=$(cd "$tmp/wt" && pwd -P | sed 's/[^A-Za-z0-9]/-/g')
+line "$D/s.jsonl" w1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$P/$wtslug/s.jsonl" w2 2026-10-01T10:30:00.000Z claude-opus-5-5 250000 0 0 0
+A=$P/$wtslug/s/subagents/agent-w.jsonl
+line "$A" w3 2026-10-01T11:00:00.000Z claude-sonnet-5-5 1000000 0 0 0
+meta "$A" '{"agentType":"ship-implementer"}'
+line "$P/$slug--claude-worktrees-agent-1/s.jsonl" w4 2026-10-01T10:40:00.000Z claude-opus-5-5 250000 0 0 0
+line "$P/$slug-other/s.jsonl" w5 2026-10-01T10:45:00.000Z claude-opus-5-5 9000000 0 0 0
+line "$P/$slug-claude-worktrees-x/s.jsonl" w6 2026-10-01T10:46:00.000Z claude-opus-5-5 9000000 0 0 0
+run 300
+check 'sessions in worktrees' 0 'PR #300 wt (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 3 750000 0 0 0 $3.00
+ship-implementer claude-sonnet-5-5 1 1000000 0 0 0 $2.00
+total 4 1750000 0 0 0 $5.00
+peak main context: 250000 tokens'
+[ ! -s "$tmp/err" ] || { echo 'FAIL: unexpected stderr (sessions in worktrees)'; cat "$tmp/err"; fail=1; }
+cp "$tmp/out" "$tmp/out.wt"
+run -C "$tmp/wt" 300
+check 'sessions in worktrees, run from a worktree' 0 "$(cat "$tmp/out.wt")"
+
+# A printed PR with subagent rows but no main row (its main session may have run in a worktree that is gone)
+# warns on stderr; the table is unchanged.
+fresh
+pr 301 'nomain' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+A=$D/s/subagents/agent-n.jsonl
+line "$A" n1 2026-10-01T10:10:00.000Z claude-sonnet-5-5 1000000 0 0 0
+meta "$A" '{"agentType":"ship-implementer"}'
+run 301
+check 'subagent rows without a main row' 0 'PR #301 nomain (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+ship-implementer claude-sonnet-5-5 1 1000000 0 0 0 $2.00
+total 1 1000000 0 0 0 $2.00
+peak main context: 0 tokens'
+grep -q '^token-report.sh: PR #301 has subagent or gate rows but no main-session row' "$tmp/err" ||
+	{ echo 'FAIL: no warning for a PR without a main row'; cat "$tmp/err"; fail=1; }
 
 # --- both new scripts are committed executable (a hook or the skill runs them as commands).
 for f in skills/ship/token-report.sh tests/token-report.sh; do
