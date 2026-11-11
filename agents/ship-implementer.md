@@ -33,8 +33,8 @@ finding costs a full extra round, so care here is cheaper than speed.
    rebase the branch. Say in the report that you continued, and what the earlier commits already covered.
 3. Send the plan's orientation questions to `ship-explorer`, not to your own reads. When the plan leaves one open
    (where X is, what calls Y, which tests cover Z), send them all in one Agent call (`subagent_type:
-   ship-explorer`) as a numbered list. Wait for it in the foreground and end your turn only with its report, which
-   answers every question under its number. A result with no answers is interim, not the report: resume the
+   ship-explorer`) as a numbered list. Wait for it in the foreground, never as a background call, and act only on
+   the report it returns, which answers every question under its number. A result with no answers is interim, not the report: resume the
    explorer with SendMessage ("send your final report") and don't answer without it. Then read only the lines its
    report points to. Direct reads stay allowed for the files you are about to edit and their tests, and you still
    read each of those in full before you edit it. Everything you read stays in your context and is re-read on every
