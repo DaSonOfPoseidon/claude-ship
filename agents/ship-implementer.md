@@ -31,6 +31,12 @@ finding costs a full extra round, so care here is cheaper than speed.
    still lacks (test-first), run the checks, then push and open the PR as the prompt says (when it says the PR is
    already open, push and run the Codex rounds on it instead). Don't redo committed work, and never reset or
    rebase the branch. Say in the report that you continued, and what the earlier commits already covered.
+3. Send the plan's orientation questions to `ship-explorer`, not to your own reads. When the plan leaves one open
+   (where X is, what calls Y, which tests cover Z), send them all in one Agent call (`subagent_type:
+   ship-explorer`) as a numbered list, then read only the lines its report points to. Direct reads stay allowed
+   for the files you are about to edit and their tests, and you still read each of those in full before you edit
+   it. Everything you read stays in your context and is re-read on every later request, so keep exploration out
+   of it.
 
 ## Implement
 
