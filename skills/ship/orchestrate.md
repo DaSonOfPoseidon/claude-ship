@@ -189,6 +189,11 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      2. From your own checkout, run `gh pr merge <pr> --squash --delete-branch`. Always name the PR: without a
         number, gh merges the PR of the branch you're on, not the unit's.
      3. Move the issues it unblocked to the ready label, delete its plan file, and pull the default branch.
+     4. Once `ListAgents` shows no live implementer (a lock says nothing about that, see **Resuming** step 1), run
+        `~/.claude/skills/ship/worktree-sweep.sh`: it removes the worktrees and local branches of merged PRs
+        that hold nothing more (earlier units' too, e.g. after a lost agent id), and prints a `kept:` line for
+        each other worktree. Pass those lines to the user in step 7's one-line report. Exit 1 (git or gh
+        failed): tell the user what it printed, and go on.
    - With `merge: no`: tell the user it's ready, then go on to the next unit only if it doesn't depend on
      this one.
 7. **Tell the user in one line** what merged or is waiting, then go to 1. Don't suggest `/clear`: the harness
@@ -237,7 +242,10 @@ Otherwise, keep going without asking.
 
 ## Resuming ("continue the PR loop")
 
-1. Read `loop.md`, if there is one, and list the in-flight PRs.
+1. Read `loop.md`, if there is one, and list the in-flight PRs. Once `ListAgents` shows no live implementer, run
+   `~/.claude/skills/ship/worktree-sweep.sh` to clear the worktrees of merged PRs (merge sub-step 4 above). A
+   finished agent's worktree stays locked with its parent session's pid, which is still alive, so a lock says
+   nothing about whether the agent runs: only `ListAgents` does.
 2. Finish in-flight PRs first, picking each up at its state. A planned unit whose plan file exists but has no open
    PR may still hold commits from an implementer that ended: run `unit-state.sh` on it and act as **A unit with
    no report** says (`state: none` means it hasn't started, so it is the queue's). Before starting any `ship-codex` or implementer

@@ -23,6 +23,7 @@ tests/codex-triage.sh    area:skill
 tests/codex-wait.sh      area:skill
 tests/token-report.sh    area:skill
 tests/unit-state.sh      area:skill
+tests/worktree-sweep.sh  area:skill
 tests/orchestrate-hint.sh area:gate
 .github/workflows/*      area:action
 .github/claude-ship/*    area:gate
