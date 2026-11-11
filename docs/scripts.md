@@ -176,6 +176,28 @@ as for a registered worktree whose directory is gone) means it holds modified or
   A bad name or repo is exit 2. A PR number is printed only when it is all digits.
 - **It never changes the repo**: no switch, reset, delete or push. The fetch updates remote-tracking refs only.
 
+## `skills/ship/worktree-sweep.sh`
+
+Clears the worktrees that finished units leave behind (#244): every implementer's worktree and branch outlived its
+merged PR, because only the unit being merged was cleaned up. `worktree-sweep.sh [owner/repo]` runs `unit-state.sh`
+on the branch of each linked worktree (it skips the main checkout, the checkout it runs in, and any worktree with
+no branch, and lists them as `kept:`) and removes a worktree only when all of these hold: `state: merged`, and no
+`unpushed:`, `dirty:` or `diverged: yes` line. Everything else prints `kept: <path> <branch> <reason>`; a removal
+prints `removed: <path> <branch>`.
+
+- **It reuses `unit-state.sh`'s facts and adds none.** `unpushed:` for a merged PR counts local commits missing from
+  `refs/pull/<n>/head`, so it is right after a squash merge with `--delete-branch`, when origin's copy of the branch is
+  gone. `dirty: unknown` (a registered worktree whose directory is missing) keeps the worktree too.
+- **A lock does not mean a live agent.** A finished agent's worktree stays locked with the pid of the parent Claude
+  session, which is still running. So the sweep ignores the lock when deciding, and unlocks it when it removes (the
+  porcelain output's `locked` line; `unit-state.sh` doesn't read it). `orchestrate.md` has the caller check `ListAgents`
+  for a live implementer before it sweeps. If the remove fails, the lock goes back with its reason.
+- **The removal order is unlock, `git worktree remove`, `git branch -D`.** No `--force`: git refuses a worktree with
+  modified or untracked files, as a second guard after the `dirty:` check. `-D` is needed because a squash merge leaves
+  the branch unmerged by SHA, and it runs only after the remove succeeded. It ends with `git worktree prune`.
+- **Fail closed.** A `unit-state.sh`, `gh` or `git` failure is exit 1 and stops the sweep at once: nothing further
+  is removed, and no prune. Exit 0 means it ran to the end, whether or not it removed anything; exit 2 is usage.
+
 ## `skills/ship/codex-round.sh`
 
 Counts the `@codex review` comments a PR has used, the way `codex-status.sh` counts requests: not from a bot, from
