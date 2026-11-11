@@ -8,12 +8,18 @@
 # Usage: token-report.sh <pr> [<pr>...]
 set -eu
 
-# USD per MTok (the claude-api skill's shared/models.md, cached 2026-10-06). w5 and w1 are the 5-minute and
-# 1-hour cache writes; `big` replaces `std` when a request's prompt (input + cache read + cache write) is over
-# 100k tokens. Issue #70 says Sonnet cache reads cost $0.10; the skill docs say $0.20.
+# USD per MTok (the claude-api skill's shared/models.md and model-migration.md, cached 2026-11-11). w5 and w1 are
+# the 5-minute and 1-hour cache writes (1.25x and 2x the input rate); `big` replaces `std` when a request's prompt
+# (input + cache read + cache write) is over 100k tokens. Issue #70 says Sonnet cache reads cost $0.10; the skill
+# docs say $0.20. The older models (#247) have one rate at any prompt length, and a cache read is 0.1x input.
 prices='{
 	"claude-opus-5-5":   {"std": {"i": 4.00, "o": 20.00, "cr": 0.20, "w5": 5.00,  "w1": 8.00}},
+	"claude-opus-4-8":   {"std": {"i": 5.00, "o": 25.00, "cr": 0.50, "w5": 6.25,  "w1": 10.00}},
+	"claude-opus-4-7":   {"std": {"i": 5.00, "o": 25.00, "cr": 0.50, "w5": 6.25,  "w1": 10.00}},
+	"claude-opus-4-6":   {"std": {"i": 5.00, "o": 25.00, "cr": 0.50, "w5": 6.25,  "w1": 10.00}},
 	"claude-sonnet-5-5": {"std": {"i": 2.00, "o": 10.00, "cr": 0.20, "w5": 2.50,  "w1": 4.00}},
+	"claude-sonnet-4-6": {"std": {"i": 3.00, "o": 15.00, "cr": 0.30, "w5": 3.75,  "w1": 6.00}},
+	"claude-haiku-4-5":  {"std": {"i": 1.00, "o": 5.00,  "cr": 0.10, "w5": 1.25,  "w1": 2.00}},
 	"claude-haiku-5-5":  {"std": {"i": 0.10, "o": 0.50,  "cr": 0.01, "w5": 0.125, "w1": 0.20},
 	                      "big": {"i": 0.50, "o": 2.50,  "cr": 0.05, "w5": 0.625, "w1": 1.00}}
 }'

@@ -345,9 +345,13 @@ window. A missing log means no gate rows. A line that isn't JSON or lacks `repo`
 skipped with one stderr warning giving the count, so a corrupt log isn't read as cheap; a log that exists but can't
 be read is an error.
 
-**Prices.** USD per MTok, from the claude-api skill's `shared/models.md` (cached 2026-10-06). `w5` and `w1` are
-the 5-minute and 1-hour cache writes; `big` replaces `std` when a request's prompt (input + cache read + cache
-write) is over 100k tokens. Issue #70 says Sonnet cache reads cost $0.10; the skill docs say $0.20.
+**Prices.** USD per MTok, from the claude-api skill's `shared/models.md` and `shared/model-migration.md` (cached
+2026-11-11). `w5` and `w1` are the 5-minute and 1-hour cache writes; `big` replaces `std` when a request's prompt
+(input + cache read + cache write) is over 100k tokens. Issue #70 says Sonnet cache reads cost $0.10; the skill
+docs say $0.20. Priced models: Opus 5.5, 4.8, 4.7 and 4.6; Sonnet 5.5 and 4.6; Haiku 5.5 and 4.5 (#247). The
+older ones have one rate at any prompt length: Opus 4.x $5 / $25, Sonnet 4.6 $3 / $15, Haiku 4.5 $1 / $5, with a
+cache read at 0.1x input and writes at 1.25x (5m) and 2x (1h). A model with no price prints `?` and warns on
+stderr, naming it.
 
 **Records.** A request spans several transcript lines, so the one with the most output is kept. Cache writes use
 the 5m/1h split, with any remainder of the total priced as 5m. Costs are integer nano-dollars (tokens x $/MTok x
