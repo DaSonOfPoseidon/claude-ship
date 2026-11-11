@@ -332,7 +332,8 @@ printed. A session started in a worktree logs under that directory's own slug (#
 checkout's transcript dir the script reads the dir of each worktree `git worktree list` shows, and every existing
 `<slug>--claude-worktrees-*` dir (a removed worktree under `.claude/worktrees`: `/.claude/` in the path is
 `--claude-` in the slug). Only that prefix, never `<slug>-*`, which would take in other repos (`app-foo`). Their
-main and subagent transcripts go through the same window rules. A removed worktree outside `.claude/worktrees` is
+main and subagent transcripts go through the same window rules; the script exits 2 only when none of these dirs
+exists. A removed worktree outside `.claude/worktrees` is
 still missed, so a printed PR with subagent or gate rows but no `main` row prints a warning on stderr.
 
 **Gate runs** (#110). The gate's reviewers leave no transcript, but `hooks/review-gate.sh` appends one row per run

@@ -759,6 +759,19 @@ peak main context: 0 tokens'
 grep -q '^token-report.sh: PR #301 has subagent or gate rows but no main-session row' "$tmp/err" ||
 	{ echo 'FAIL: no warning for a PR without a main row'; cat "$tmp/err"; fail=1; }
 
+# A repo whose sessions all ran in worktrees has no dir for the main checkout: that is no reason to exit 2.
+fresh
+rmdir "$D"
+pr 302 'wtonly' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+line "$P/$wtslug/s.jsonl" o1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+run 302
+check 'transcripts only in a worktree dir' 0 'PR #302 wtonly (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+[ ! -s "$tmp/err" ] || { echo 'FAIL: unexpected stderr (transcripts only in a worktree dir)'; cat "$tmp/err"; fail=1; }
+
 # --- both new scripts are committed executable (a hook or the skill runs them as commands).
 for f in skills/ship/token-report.sh tests/token-report.sh; do
 	case $(git -C "$root" ls-files -s "$f") in

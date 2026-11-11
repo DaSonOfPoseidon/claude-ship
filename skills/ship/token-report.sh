@@ -57,7 +57,30 @@ common=$(git rev-parse --path-format=absolute --git-common-dir) || {
 top=${common%/.git}
 slug=$(printf %s "$top" | tr -c 'A-Za-z0-9' '-')
 dir=${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}/$slug
-if [ ! -d "$dir" ]; then
+# A session started in a worktree logs under that directory's own slug (#248), so besides the main checkout's dir
+# the report reads the dirs of the repo's worktrees and of every removed `.claude/worktrees` one (a `/.claude/` in
+# the path is `--claude-` in the slug). Only that prefix: `${slug}-*` would take in other repos (`app-foo`).
+# A removed worktree outside `.claude/worktrees` is missed. `dirs` is one candidate per line.
+projects=${dir%/*}
+wts=$(git worktree list --porcelain) || exit 1
+dirs=$({
+	printf '%s\n' "$dir"
+	printf '%s\n' "$wts" | sed -n 's/^worktree //p' | while IFS= read -r wt; do
+		printf '%s/%s\n' "$projects" "$(printf %s "$wt" | tr -c 'A-Za-z0-9' '-')"
+	done
+	for d in "$projects/$slug"--claude-worktrees-*; do
+		printf '%s\n' "$d"
+	done
+} | awk '!seen[$0]++')
+# No transcript dir at all (the main checkout's or a worktree's) is exit 2; a repo whose sessions all ran in
+# worktrees has none at $dir.
+found=
+while IFS= read -r d; do
+	[ -d "$d" ] && found=1
+done <<EOF
+$dirs
+EOF
+if [ -z "$found" ]; then
 	echo "token-report.sh: no transcripts at $dir" >&2
 	exit 2
 fi
@@ -204,21 +227,7 @@ extract() {
 			cr: ($u.cache_read_input_tokens // 0), w5: ($w5 + ([$cc - $w5 - $w1, 0] | max)), w1: $w1}' "$1" >>"$tmp/records"
 }
 : >"$tmp/records"
-# A session started in a worktree logs under that directory's own slug (#248), so besides the main checkout's dir
-# the report reads the dirs of the repo's worktrees and of every removed `.claude/worktrees` one (a `/.claude/` in
-# the path is `--claude-` in the slug). Only that prefix: `${slug}-*` would take in other repos (`app-foo`).
-# A removed worktree outside `.claude/worktrees` is missed.
-projects=${dir%/*}
-wts=$(git worktree list --porcelain) || exit 1
-{
-	printf '%s\n' "$dir"
-	printf '%s\n' "$wts" | sed -n 's/^worktree //p' | while IFS= read -r wt; do
-		printf '%s/%s\n' "$projects" "$(printf %s "$wt" | tr -c 'A-Za-z0-9' '-')"
-	done
-	for d in "$projects/$slug"--claude-worktrees-*; do
-		printf '%s\n' "$d"
-	done
-} | awk '!seen[$0]++' >"$tmp/dirs"
+# Every transcript dir that exists (`dirs`, above): the main checkout's and the worktrees'.
 while IFS= read -r d; do
 	[ -d "$d" ] || continue
 	for f in "$d"/*.jsonl; do
@@ -233,7 +242,9 @@ while IFS= read -r d; do
 		fi
 		extract "$f" sub "${role:-subagent}"
 	done
-done <"$tmp/dirs"
+done <<EOF
+$dirs
+EOF
 
 # Report lines, tab separated: H header, N no usage, R row, T total, P peak, W model without a price.
 # Costs are integer nano-dollars (tokens x $/MTok x 1000), so rounding to the cent is exact.
