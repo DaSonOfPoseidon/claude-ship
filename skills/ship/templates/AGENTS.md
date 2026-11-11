@@ -42,6 +42,7 @@ the gate shows them to its reviewers. Add an entry when a finding is answered "n
 - skip labels: `<labels for work that needs hardware, research or a decision>`
 - priority labels: `<highest first, comma-separated>`
 - merge: no
+- handoff context: 120000
 
      For a workspace without git or GitHub, add the line `- mode: local` to this section instead of the settings
      above but checks: the loop then plans and implements one unit at a time with no PRs (orchestrate.md > Local mode).

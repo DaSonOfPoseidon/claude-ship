@@ -14,6 +14,7 @@ agents/*                 area:skill
 action.yml               area:action
 scripts/*                area:action
 tests/codex-status.sh    area:action
+tests/agent-context.sh   area:skill
 tests/ci-failures.sh     area:skill
 tests/codex-findings.sh  area:skill
 tests/codex-round.sh     area:skill

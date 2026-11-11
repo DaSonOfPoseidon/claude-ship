@@ -101,3 +101,4 @@ action and the workflow: [`docs/scripts.md`](docs/scripts.md).
 - skip labels: `status:needs-decision`
 - priority labels: `priority:high`, `priority:medium`, `priority:low`
 - merge: yes
+- handoff context: 120000
