@@ -284,6 +284,22 @@ argument. A status that only a new request clears (stalled, not
 acknowledged, or finished more than once) ends the wait with exit 3, so it isn't read as "not done yet" until the cap. Any failure
 of the status script ends the wait with its error.
 
+## `skills/ship/agent-context.sh`
+
+`agent-context.sh <marker>` prints how large a running subagent's context is, so the `ship-implementer` can hand a
+long fix round to a fresh one (#246; `agents/ship-implementer.md` › Handoff check, `orchestrate.md` step 4). A
+subagent doesn't know its own transcript, so it first writes a marker (`implementer-` and twelve hex digits) into a
+Bash command, which Claude Code keeps in `<projects>/<project>/<session>/subagents/agent-<id>.jsonl`
+(`$CLAUDE_PROJECTS_DIR` or `~/.claude/projects`). The script finds the one subagent transcript that holds the marker,
+under every project (main-session transcripts and `.meta.json` files are not searched), and prints the prompt size of
+the last assistant request: input + cache read + cache write, with the write the larger of the total and the 5m + 1h
+split, as `token-report.sh` takes a request's size. Records are read in file order; lines that aren't JSON, records
+that aren't assistant ones with a `usage` object and `<synthetic>` ones are skipped, and a missing usage field is 0.
+Exit 1, with a message, when no transcript or more than one holds the marker, when none has assistant usage, or when
+`jq` fails. Exit 2 on misuse; the marker is 8 to 64 of `A-Za-z0-9_-`, not starting with `-`, so it is text for
+`grep -F` and never an option. The caller treats every failure as "unknown" and carries on: a missed handoff only
+costs money, and must not stop a round. Tests: `tests/agent-context.sh`.
+
 ## `skills/ship/token-report.sh`
 
 Reads only this repo's transcripts, the gate's cost log and `gh`, keeps no state and calls no model.
