@@ -27,7 +27,7 @@ the rest, one PR at a time (claude-ship #66):
 | Work | Who | Model, effort |
 |---|---|---|
 | Planning, Codex triage, merge decisions | the main session | Opus, the session's effort |
-| Questions about the code, for the plan (its Bash is held to read-only `git` and `gh` by `hooks/explorer-bash.sh`) | `agents/ship-explorer.md` | Haiku, medium |
+| Questions about the code, for the plan and the implementer's orientation (its Bash is held to read-only `git` and `gh` by `hooks/explorer-bash.sh`) | `agents/ship-explorer.md` | Haiku, medium |
 | Implementing a unit, fixing its gate and Codex findings, opening the PR | `agents/ship-implementer.md` | Sonnet, high; Haiku for trivial units |
 | Implementing a unit in local mode (no git, PR, gate or Codex; it never commits) | `agents/ship-local-implementer.md` | Sonnet, high |
 | Running each Codex round for the implementer: CI first (a red head goes back to the implementer, with the failing jobs' log tails, before any request), request, wait, findings, the rule-decided issues and resolves (its Bash and Write are held to the ship scripts and one triage file by `hooks/codex-bash.sh`) | `agents/ship-codex.md` | Haiku, medium |

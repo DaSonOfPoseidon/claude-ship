@@ -89,7 +89,9 @@ Delete a unit's plan file after its PR merges, and `loop.md` after the last unit
 2. Explore with one `ship-explorer` call: a numbered list of tight questions (where X is, Y's signature, which
    tests cover Z, quote the lines that decide W). Not the built-in Explore, which runs on your model.
 3. Split the objective into units of one PR each, small enough to review in one sitting, in dependency
-   order. For each, write a section in the shape of `~/.claude/skills/ship/templates/plan.md`, with its tier.
+   order. For each, write a section in the shape of `~/.claude/skills/ship/templates/plan.md`, with its tier. Put the
+   file:line facts the implementer needs in each unit's plan (the functions to change, their callers, the covering
+   tests and their fixture helpers), so the implementer rarely has to explore.
 4. Write this to the plan-mode plan file and ask for approval. Once approved, copy it to `loop.md`, write
    each unit's plan file, and start the loop. Don't ask again per PR.
 
