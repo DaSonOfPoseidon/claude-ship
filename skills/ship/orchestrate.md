@@ -40,7 +40,7 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Implement a **normal** or **high-risk** unit, fix its gate and Codex findings | `ship-implementer` agent | Sonnet, high |
 | Implement a unit in **Local mode** (no git, PR, gate or Codex), fix its failed checks and verification | `ship-local-implementer` agent | Sonnet, high |
 | Implement a **trivial** unit (docs or config, no logic, ~20 lines) | `ship-implementer` with `model: haiku` | Haiku, high |
-| Run a Codex round: wait for CI (a red head is reported, not reviewed), request, wait, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
+| Run a Codex round: request once the pushed head settles (CI runs alongside), wait, wait for CI and read it, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
 | Fix a red CI inside the PR: read the failing jobs' log tails, fix, push, up to 2 rounds | the `ship-implementer`, from `ship-codex`'s `ci-failures:` block | Sonnet, high |
 | The mechanics under it: wait, list, file issues, CI failures | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`, `ci-failures.sh`) | none |
 
@@ -103,9 +103,10 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
 2. **Plan** it, if it has no plan file yet (above).
 3. **Implement:** start a `ship-implementer` with the plan file's path, the default branch, and "open the PR
    and run the Codex rounds", plus `model: haiku` for a trivial unit. Keep its agent id for this PR. The
-   implementer starts a `ship-codex` agent after each push, which first waits for CI (a red head goes back to the
-   implementer with the failing jobs' log tails, and Codex isn't requested), then requests the review, waits,
-   reads the findings, and applies the rule-decided outcomes (the ship skill's step 4 table: a P3 is filed as an
+   implementer starts a `ship-codex` agent after each push, which requests the review as soon as the pushed commit is
+   the PR's head (it doesn't wait for CI), waits for it, then waits for CI to settle and reads it and the findings
+   (a red CI goes to the implementer with the failing jobs' log tails, next to the round's findings), and applies
+   the rule-decided outcomes (the ship skill's step 4 table: a P3 is filed as an
    issue unless the round also has a P0-P2 finding, and then it goes to the implementer with the other fixes; P2 in
    round 3 is filed). The implementer reads each finding it is sent in full and judges it, the P0-P2 ones first: it
    fixes the valid ones, answers the invalid ones with evidence, fixes or answers the round's P3s too if it
@@ -117,7 +118,7 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      live, follow **A unit with no report** below. Don't start a replacement without it, since the branch may
      already hold commits or a PR.
    - `clean`, with CI green: go to 6.
-   - `ci: fail`, or `codex:` `ci-fail`: the implementer already ran the CI fix rounds (up to 2) and is reporting
+   - `ci: fail`: the implementer already ran the CI fix rounds (up to 2) and is reporting
      what is left. If it stopped, handle it per the stop table below ("CI fails for a reason outside the PR").
      Never read CI logs in the main session. In the fallback flow, run
      `~/.claude/skills/ship/ci-failures.sh <pr>` from the implementer's worktree, once `gh pr view <pr> --json
@@ -127,8 +128,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    - It stopped (`stopped because:`), or `codex:` is `stop`, `stalled`, `timeout`, `ci-timeout`, `round-cap` or
      `error`: handle it as the stop table below says. A `stop:` line is a P0/P1 finding in round 3 or later: ask
      the user. `stalled` is Codex stalling (or never acknowledging a request) twice on one head: tell the user.
-     `ci-timeout` is checks still pending after 20 minutes, with no fix round run and no request made: tell the
-     user (a stuck runner). `round-cap` and `timeout` need no new request unless the user asks.
+     `ci-timeout` is a finished review that was clean, with checks still pending after 20 minutes and no fix round
+     run: tell the user (a stuck runner). `round-cap` and `timeout` need no new request unless the user asks.
    - `denied:` lines: the agent's triage write or call was denied, or `codex-triage.sh` failed part-way (auto
      mode denies subagents some calls, #100). `file:` names the triage file, `done:` the threads the script
      finished, and `denied:` quotes its `failed:` line (the thread and step that failed). If that line is
@@ -146,12 +147,14 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      flow** below.
    - `ship-codex` ended without a final outcome (an early `codex: error` whose `stopped because:` starts with
      `wait unfinished:`, or `codex: no final report`, where the implementer resumed it once
-     and still got no `outcome:`): it may have stopped anywhere, step 0's CI wait included, before any request.
+     and still got no `outcome:`): it may have stopped anywhere, the wait for CI after the review
+     included, and may or may not have requested.
      `ship-codex` waits in the foreground and ends its turn only with its report (#142, #147), and its hook
      denies `run_in_background` (#171), so this should be rare. Stop any `ship-codex` still left on the PR
      (`ListAgents`, then `TaskStop`), then pick the PR up as **Resuming** step 2 says: it starts a fresh
      `ship-codex` (in `mode: triage-only` when the head's review has already completed), which requests only if
-     none is out, waits CI in bounded chunks and resolves the `replied` threads before waiting. Pass as `replied`
+     none is out, resolves the `replied` threads before waiting, waits for the review and then for CI, in bounded
+     chunks. Pass as `replied`
      the threads the implementer already answered. Don't post `@codex review` by hand.
 5. **Fallback flow (the implementer couldn't start `ship-codex`).** It requested round 1 and stopped. Then:
    - Run `~/.claude/skills/ship/codex-wait.sh <pr>` alone in a background command (nothing chained after it),
