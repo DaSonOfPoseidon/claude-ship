@@ -137,12 +137,13 @@ wait for the review yourself and the orchestrator sees only your final report.
 
    **P3 threads go last.** `ship-codex` sends a P3 in its `fix:` lines only when the round has a P0-P2 (or `P?`)
    thread too, because a valid one gets a commit and so another review comes anyway. Judge the P0-P2 and `P?`
-   threads first, then handle the P3s by what that produced:
+   threads first, then handle the P3s by whether the round gets a commit at all: a valid P0-P2 finding, or a CI
+   failure you fix (the report's `ci-failures:` block), each start a new review:
 
    | The P0-P2 / `P?` threads | The round's P3 threads |
    |---|---|
-   | at least one valid, so you commit | judge each like any thread: valid, fix it in the same push; not valid, reply with evidence; beyond this PR's scope, file it (below). Reply to all of them and pass them as `replied` |
-   | none valid, so no commit | don't read, reply to or pass them: `mode: resolve-only` with the replied P0-P2 ids files them |
+   | at least one valid, or none valid but a CI fix to commit: you commit either way | judge each like any thread: valid, fix it in the same push; not valid, reply with evidence; beyond this PR's scope, file it (below). Reply to all of them and pass them as `replied` |
+   | none valid and no CI fix, so no commit | don't read, reply to or pass them: `mode: resolve-only` with the replied P0-P2 ids files them |
 
    A P3 beyond this PR's scope is filed with `sh ~/.claude/hooks/p3-issue.sh <slug> <finding.json> <pr>`, where the JSON
    (written with the Write tool to your scratchpad) has string fields `file`, `title` and `body`: `file` and `title`
@@ -150,7 +151,7 @@ wait for the review yourself and the orchestrator sees only your final report.
    reply on the thread with that link. If the call is denied, stop and report it. Never leave a P3 thread open and
    unanswered across a normal round: an open thread keeps the status at `failure`, so the next wait returns at once.
 
-   **When you judged every P0-P2 thread not valid** and made no commit, there is nothing new to review: the head is
+   **When you judged every P0-P2 thread not valid** and made no commit (no CI fix either), there is nothing new to review: the head is
    the one Codex already reviewed, and another request would spend a round on it. Start `ship-codex` with
    `mode: resolve-only` and the replied thread ids (the P0-P2 ones: the P3s stay untouched, and it files them). It
    resolves the replied threads (the script then rechecks the status), files any P3 left and reports `clean` only if
@@ -166,7 +167,7 @@ wait for the review yourself and the orchestrator sees only your final report.
 The orchestrator sends the Codex findings to fix, each with its thread id.
 
 - Fix them as above: test-first, sweep, checks, commit, push through the gate. Judge the P0-P2 findings first.
-  A P3 among them is judged only if one of those gets a commit; with no commit, leave the P3 threads alone (no
+  A P3 among them is judged only if one of those gets a commit (or the same push fixes a CI failure); with no commit, leave the P3 threads alone (no
   read, no reply, not in `replied:`) and say so in the report: the orchestrator files them.
 - For each fixed finding, reply on its thread naming the fixing commit (GraphQL
   `addPullRequestReviewThreadReply` with the thread id). **Don't resolve it**: the orchestrator resolves the

@@ -128,7 +128,7 @@ no request, so they read CI once, without waiting).
 
 ## Resolve only
 
-The implementer sends this when it judged every P0-P2 finding of a round not valid, so it made no commit and a new
+The implementer sends this when it judged every P0-P2 finding of a round not valid, so it made no commit (and had no CI failure to fix) and a new
 review would only cost a round for the same head. It left the round's P3 threads untouched (a P3 is judged only
 when a P0-P2 finding gets a commit), so they may still be open. Don't request or wait. `replied` must hold the
 thread ids (none: `outcome: error`).
