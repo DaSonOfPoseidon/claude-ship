@@ -2,7 +2,7 @@
 # Prints each PR's Claude Code usage and API-price cost, split by role (the main session, then each
 # subagent type) and model, plus the main session's peak context and the gate's reviewer runs (`gate <stage>` rows,
 # from its cost log). Run it from a checkout of the repo: it reads only this repo's transcripts
-# (~/.claude/projects/<slug>, or $CLAUDE_PROJECTS_DIR/<slug>), the gate's cost log (~/.claude/state/review-costs.jsonl,
+# (~/.claude/projects/<slug>, or $CLAUDE_PROJECTS_DIR/<slug>, plus its worktrees' dirs), the gate's cost log (~/.claude/state/review-costs.jsonl,
 # or $CLAUDE_REVIEW_COSTS) and `gh`, keeps no state, and calls no model. How requests and gate runs are attributed
 # to PRs: docs/scripts.md.
 # Usage: token-report.sh <pr> [<pr>...]
@@ -57,7 +57,30 @@ common=$(git rev-parse --path-format=absolute --git-common-dir) || {
 top=${common%/.git}
 slug=$(printf %s "$top" | tr -c 'A-Za-z0-9' '-')
 dir=${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}/$slug
-if [ ! -d "$dir" ]; then
+# A session started in a worktree logs under that directory's own slug (#248), so besides the main checkout's dir
+# the report reads the dirs of the repo's worktrees and of every removed `.claude/worktrees` one (a `/.claude/` in
+# the path is `--claude-` in the slug). Only that prefix: `${slug}-*` would take in other repos (`app-foo`).
+# A removed worktree outside `.claude/worktrees` is missed. `dirs` is one candidate per line.
+projects=${dir%/*}
+wts=$(git worktree list --porcelain) || exit 1
+dirs=$({
+	printf '%s\n' "$dir"
+	printf '%s\n' "$wts" | sed -n 's/^worktree //p' | while IFS= read -r wt; do
+		printf '%s/%s\n' "$projects" "$(printf %s "$wt" | tr -c 'A-Za-z0-9' '-')"
+	done
+	for d in "$projects/$slug"--claude-worktrees-*; do
+		printf '%s\n' "$d"
+	done
+} | awk '!seen[$0]++')
+# No transcript dir at all (the main checkout's or a worktree's) is exit 2; a repo whose sessions all ran in
+# worktrees has none at $dir.
+found=
+while IFS= read -r d; do
+	[ -d "$d" ] && found=1
+done <<EOF
+$dirs
+EOF
+if [ -z "$found" ]; then
 	echo "token-report.sh: no transcripts at $dir" >&2
 	exit 2
 fi
@@ -204,18 +227,24 @@ extract() {
 			cr: ($u.cache_read_input_tokens // 0), w5: ($w5 + ([$cc - $w5 - $w1, 0] | max)), w1: $w1}' "$1" >>"$tmp/records"
 }
 : >"$tmp/records"
-for f in "$dir"/*.jsonl; do
-	[ -f "$f" ] || continue
-	extract "$f" main main
-done
-for f in "$dir"/*/subagents/agent-*.jsonl; do
-	[ -f "$f" ] || continue
-	role=
-	if [ -f "${f%.jsonl}.meta.json" ]; then
-		role=$(jq -r '(.agentType // empty) | select(type == "string")' "${f%.jsonl}.meta.json" 2>/dev/null) || role=
-	fi
-	extract "$f" sub "${role:-subagent}"
-done
+# Every transcript dir that exists (`dirs`, above): the main checkout's and the worktrees'.
+while IFS= read -r d; do
+	[ -d "$d" ] || continue
+	for f in "$d"/*.jsonl; do
+		[ -f "$f" ] || continue
+		extract "$f" main main
+	done
+	for f in "$d"/*/subagents/agent-*.jsonl; do
+		[ -f "$f" ] || continue
+		role=
+		if [ -f "${f%.jsonl}.meta.json" ]; then
+			role=$(jq -r '(.agentType // empty) | select(type == "string")' "${f%.jsonl}.meta.json" 2>/dev/null) || role=
+		fi
+		extract "$f" sub "${role:-subagent}"
+	done
+done <<EOF
+$dirs
+EOF
 
 # Report lines, tab separated: H header, N no usage, R row, T total, P peak, W model without a price.
 # Costs are integer nano-dollars (tokens x $/MTok x 1000), so rounding to the cent is exact.
@@ -274,6 +303,7 @@ jq -r -s --slurpfile w "$tmp/windowsAll" --slurpfile g "$tmp/gate" --arg repo "$
 		($gm | group_by([.stage, .model])[]
 			| "R\tgate \(.[0].stage)\t\(.[0].model)\t\(length)\t-\t-\t-\t-\t\(nano | money)"),
 		"T\t\(($mine | length) + ($gm | length))\t\($mine | sum(.i))\t\($mine | sum(.o))\t\($mine | sum(.cr))\t\($mine | sum(.w5 + .w1))\t\($mine + $gm | nano | money)",
+		(if ($mine | map(select(.k == "main")) | length) == 0 then "M" else empty end),
 		(if ($mine | length) > 0 then "P\t\($mine | map(select(.k == "main") | .i + .cr + .w5 + .w1) | max // 0)" else empty end),
 		($mine | map(select(.c == null) | .model) | unique[] | "W\t\(.)")
 	  end' "$tmp/records" >"$tmp/report"
@@ -281,6 +311,7 @@ jq -r -s --slurpfile w "$tmp/windowsAll" --slurpfile g "$tmp/gate" --arg repo "$
 awk -F'\t' '
 	function money(c) { return c == "?" ? "?" : sprintf("$%d.%02d", int(c / 100), c % 100) }
 	$1 == "H" {
+		pr = $2
 		if (NR > 1) print ""
 		printf "PR #%s %s (%s → %s)\n", $2, $3, $4, $5
 		rows = 0
@@ -292,6 +323,7 @@ awk -F'\t' '
 	}
 	$1 == "R" { printf "%-18s %-20s %8s %12s %12s %12s %12s %10s\n", $2, $3, $4, $5, $6, $7, $8, money($9) }
 	$1 == "T" { printf "%-18s %-20s %8s %12s %12s %12s %12s %10s\n", "total", "", $2, $3, $4, $5, $6, money($7) }
+	$1 == "M" { printf "token-report.sh: PR #%s has subagent or gate rows but no main-session row; its main session may have run in a worktree that is gone\n", pr > "/dev/stderr" }
 	$1 == "P" { printf "peak main context: %s tokens\n", $2 }
 	$1 == "W" && !seen[$2]++ { printf "token-report.sh: no price for model %s; its cost shows as ?\n", $2 > "/dev/stderr" }
 ' "$tmp/report"

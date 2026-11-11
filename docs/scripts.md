@@ -328,8 +328,13 @@ printed, and a request won by another PR is dropped, so a PR's row is the same w
 `gh pr list`, or a PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would reach
 the window back to the session's start. A whole subagent transcript belongs to the PR whose window holds its last
 request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
-printed. A session started in a worktree logs under that directory's own slug, so neither it nor its subagents
-are counted.
+printed. A session started in a worktree logs under that directory's own slug (#248), so besides the main
+checkout's transcript dir the script reads the dir of each worktree `git worktree list` shows, and every existing
+`<slug>--claude-worktrees-*` dir (a removed worktree under `.claude/worktrees`: `/.claude/` in the path is
+`--claude-` in the slug). Only that prefix, never `<slug>-*`, which would take in other repos (`app-foo`). Their
+main and subagent transcripts go through the same window rules; the script exits 2 only when none of these dirs
+exists. A removed worktree outside `.claude/worktrees` is
+still missed, so a printed PR with subagent or gate rows but no `main` row prints a warning on stderr.
 
 **Gate runs** (#110). The gate's reviewers leave no transcript, but `hooks/review-gate.sh` appends one row per run
 to `~/.claude/state/review-costs.jsonl` (`$CLAUDE_REVIEW_COSTS` overrides the path, for tests). Each PR gets `gate
