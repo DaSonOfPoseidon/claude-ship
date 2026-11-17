@@ -141,7 +141,11 @@ or `--input` (also inside a short-flag cluster such as `-iF`), and every word th
 is no option, as a path with a variable does (`repos/o/r/issues/$n/…`), so `-X$m` and a bare `$flags` are not reads. A call
 with a wrapper the gate doesn't unwrap, or one `xargs` feeds, isn't a read; nor is a `gh api` the tree doesn't show (in a string
 it couldn't parse, or next to another `gh` command, as in `gh issue list; echo 'gh api'`): the text scan decides those, and
-blocks what it can't read. (`gh -R o/r api …` has a flag before `api` and is no `gh api` call for the gate, as before.) A write that names `{owner}/{repo}` goes to whichever repo gh finds where it runs, so the opt-in lookup also asks the
+blocks what it can't read. Only gh's global options may stand between `gh` and `api`: `-R X`, `--repo X`, `--repo=X`,
+`--hostname X` and `--hostname=X` (`gh -R o/r api …` is a `gh api` call, judged like `gh api …`). The tree reads one as a `gh api`
+call when each has a literal value that is no option; any other word before `api` (`--help`, `-X`, an unknown option) or a
+dynamic value (`-R $r`) makes it no `gh api` call for the tree, so the text scan decides, and it blocks (`api_global`).
+A write that names `{owner}/{repo}` goes to whichever repo gh finds where it runs, so the opt-in lookup also asks the
 directory of every `cd` the tree shows, whether or not the command is a push (a `cd` that is not one literal path blocks).
 `tests/gate-api.sh` and `tests/gate-push.sh` cover it.
 
@@ -338,6 +342,10 @@ repo), one line per repo it writes to.
 - One line per simple command (separators split it), each `gh api` call scanned on its own. A segment that ends
   in `$` was cut by an unquoted `$(`, which hides the rest of its words, like a backtick. A `gh api` the raw
   command shows but the word-split form loses can't be scanned, so it blocks.
+- Only gh's global options may come between `gh` and `api` (`-R X`, `--repo X`, `--repo=X`, `--hostname X`,
+  `--hostname=X`; the value is plain `[HOST/]OWNER/REPO` or a host name); anything else there blocks. A write (one not
+  on the allowlist) also counts against the repo `-R` or `--repo` names, next to the repos the endpoint names and the
+  ones where the command runs, so either being opted in applies the allowlist.
 - gh reads the repo from `GH_REPO`, or from the remotes here; the gate follows only the remotes. `GH_REPO` may
   be quoted apart (`GH_RE''PO`) or inherited, so the word-split form and the environment count too.
 

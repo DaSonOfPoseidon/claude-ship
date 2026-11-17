@@ -66,7 +66,8 @@ review finds a new class.
   of `git push`'s own arguments sees (claude-ship #3, five gate rounds). Check the whole command, and block
   any option or variable you don't explicitly allow. To find a subcommand, skip only the options you know take a
   value: a pattern that lets any option take one read `git --no-pager config` as option `config` (claude-ship
-  #14).
+  #14). The `gh api` scan matched only `gh api`, so `gh -R o/r api -X DELETE …` was never scanned (claude-ship #265): the
+  words between `gh` and `api` are matched as options, and only gh's global options pass.
 - **Shell quoting and expansion hide the real argument from a text check.** `repos/o/r/con''tents`,
   `repos/${OWNER}/${REPO}/git/refs` and `-f query="$(cat q.graphql)"` don't contain the text gh finally sends.
   `git -c "a=b c" push` hid the push itself. Split words with a left-to-right scanner (the gate's is jq) that
