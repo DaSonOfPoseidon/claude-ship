@@ -11,6 +11,23 @@ mkdir -p "$tmp/bin" "$tmp/home"
 link_shfmt "$tmp/home"
 printf '#!/bin/sh\necho true\n' >"$tmp/bin/gh"
 chmod +x "$tmp/bin/gh"
+# The gate fetches origin's default branch (`git fetch -q origin ...`) once a push has no pass, and the fixtures' origin is a real
+# GitHub URL: that fetch would ask github.com for credentials, which once hung this test for minutes. Every case that gets that
+# far wants the fetch to fail, so a git ahead of the real one in PATH fails it at once. The cases that need a fetch to work
+# (rbin below) name a local repo instead of `origin`, which passes through.
+mkdir -p "$tmp/netbin"
+cat >"$tmp/netbin/git" <<EOF
+#!/bin/sh
+if [ "\$1 \$2 \$3" = "fetch -q origin" ]; then
+	echo "fatal: no network in tests/gate-push.sh" >&2
+	exit 128
+fi
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$tmp/netbin/git"
+PATH=$tmp/netbin:$PATH
+GIT_TERMINAL_PROMPT=0
+export PATH GIT_TERMINAL_PROMPT
 export HOME="$tmp/home"
 # The gate wants the pre-push check active before it lets a push through (docs/gate.md › Pre-push check).
 gate_git_hooks "$HOME"
