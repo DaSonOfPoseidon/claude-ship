@@ -286,17 +286,22 @@ wrapper: every spelling the scan missed was the next finding, claude-ship #222),
   `config.worktree` of its linked worktrees under `.git/worktrees`), and of the session's own repo (found from the working
   directory; a linked worktree's shared config too), for a `core.hooksPath` in `[core]` that isn't the deployed directory
   (`~/` is the home directory). `REVIEW_GATE_SCAN_ROOT` replaces `/srv/CodeServer`; the tests use it so the machine's own
-  checkouts stay out of them;
+  checkouts stay out of them. In a repo with `extensions.worktreeConfig` on, a worktree's `config.worktree` beats the shared
+  config, so a file that looks off is judged by what `git config --get core.hooksPath` says in each checkout it applies to (the
+  session's directory, for the session's repo): a shared `.husky` that a worktree overrides with the deployed directory is no
+  override there, and a deployed shared value is none where `config.worktree` says `.husky` (claude-ship #241);
 - the session's repo, whether the hook is on there at all: `git config --get core.hooksPath` is
   `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` and its `pre-push` is executable (install.sh not run, or the hook deleted).
 
-These are plain file reads while all is well: the global config is searched for the deployed path, and `git` and `gh` run only for
-a checkout that looks off, which is then asked for its opt-in (`CLAUDE_AUTONOMOUS`; GitHub unreachable blocks). An override in a
+These are file reads while all is well: the deployed path is looked up in the global config through git (`git config --global
+--includes`, so an `include.path` counts; the system config when the global one sets none), and `git` and `gh` run only for a
+checkout that looks off, which is then asked for its opt-in (`CLAUDE_AUTONOMOUS`; GitHub unreachable blocks). An override in a
 repo that has not opted in is left alone. For an opted-in one, every Bash command blocks, wherever it runs, with the path, the value
 and what the user should run (`./install.sh`, or `git config --local --unset core.hooksPath` in that repo: Claude can't, the write is
-denied above). Includes (`include.path`) and a `GIT_DIR` or `GIT_CONFIG_*` set in the command are not read (Gate scope), and a
-checkout outside `/srv/CodeServer` is covered only while it is the session's own. A canonical push is also checked by git's own
-value in the directory it runs in (Push shape). `--no-verify` is no longer one of the push options the gate allows (Push shape).
+denied above). Includes (`include.path`) in a checkout's local config and a `GIT_DIR` or `GIT_CONFIG_*` set in the command are not
+read (Gate scope), and a checkout outside `/srv/CodeServer` is covered only while it is the session's own. A canonical push is also
+checked by git's own value in the directory it runs in (Push shape), and its block names that directory and the value. `--no-verify`
+is no longer one of the push options the gate allows (Push shape).
 
 The stubs in `~/.claude/git-hooks` are protected like the installed hooks (Tamper protection): a Write, or a Bash command
 that writes there, blocks. The lines git sends are saved to a temp file first; if that save fails (full disk, file size

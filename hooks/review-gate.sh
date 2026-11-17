@@ -778,6 +778,79 @@ repo_configs() {
 		[ -f "$rc_f" ] && printf '%s\n' "$rc_f"
 	done
 }
+# Whether the deployed directory is the global core.hooksPath, as git reads it (includes too), or the system one when the global
+# config sets none.
+global_hooks() {
+	gl_v=$(git config --global --includes --get core.hooksPath 2>/dev/null) || gl_v=$(git config --system --includes --get core.hooksPath 2>/dev/null)
+	[ "$gl_v" = "$want_hooks" ]
+}
+hk_tab=$(printf '\t')
+# first_off <the value its file sets>, checkout directories on stdin: git's own core.hooksPath in the first of them where it is not
+# the deployed directory (that file's value when git can't tell, which fails closed). Nothing when it is in every one.
+first_off() {
+	while IFS= read -r fo_d; do
+		[ -d "$fo_d" ] || continue
+		fo_v=$(git -C "$fo_d" config --type=path --get core.hooksPath 2>/dev/null </dev/null)
+		if [ "$fo_v" != "$want_hooks" ]; then
+			printf '%s\n' "${fo_v:-$1}"
+			return 0
+		fi
+	done
+	return 1
+}
+# worktree_dir <a linked worktree's directory under .git/worktrees>: the worktree's own directory, the parent of the .git file its
+# gitdir file names (relative to that directory when it is not absolute).
+worktree_dir() {
+	wd_p=$(sed -n '1s,/[^/]*$,,p' "$1/gitdir")
+	case $wd_p in
+	'') ;;
+	/*) printf '%s\n' "$wd_p" ;;
+	*) printf '%s\n' "$1/$wd_p" ;;
+	esac
+}
+# hooks_effective [dir]: the "<file><TAB><value>" lines of hooks_overrides on stdin. In a repo with extensions.worktreeConfig on, a
+# worktree's config.worktree beats the shared config, so a file is judged by what git reads in each checkout it applies to (dir,
+# when given, is the only one): its line stays only when some checkout's effective value is not the deployed directory, and
+# carries that value (claude-ship #241). A repo without the extension keeps its lines: git reads no config.worktree there.
+hooks_effective() {
+	while IFS= read -r he_line; do
+		[ -n "$he_line" ] || continue
+		he_file=${he_line%%"$hk_tab"*}
+		he_val=${he_line#*"$hk_tab"}
+		he_dir=${he_file%/*}
+		he_wt=
+		he_common=$he_dir
+		if [ "${he_file##*/}" = config.worktree ] && [ -f "$he_dir/gitdir" ]; then
+			he_wt=$he_dir
+			he_common=${he_dir%/*}
+			he_common=${he_common%/*}
+		fi
+		if [ "$(git config --file "$he_common/config" --type=bool --get extensions.worktreeConfig 2>/dev/null </dev/null)" != true ]; then
+			printf '%s\n' "$he_line"
+			continue
+		fi
+		# The checkouts, one per line: a linked one's directory is the parent of the .git file its gitdir names.
+		if [ -n "${1:-}" ]; then
+			he_list=$1
+		elif [ -n "$he_wt" ]; then
+			he_list=$(worktree_dir "$he_wt")
+		else
+			he_list=
+			case $he_common in */.git) he_list=${he_common%/.git} ;; esac
+			if [ "${he_file##*/}" = config ]; then
+				for he_w in "$he_common"/worktrees/*/gitdir; do
+					[ -f "$he_w" ] && he_list=$he_list$tamper_nl$(worktree_dir "${he_w%/gitdir}")
+				done
+			fi
+		fi
+		# No checkout to ask (a bare repo): the file's own answer stands.
+		case $he_list in
+		*[![:space:]]*) he_off=$(printf '%s\n' "$he_list" | first_off "$he_val") ;;
+		*) he_off=$he_val ;;
+		esac
+		[ -z "$he_off" ] || printf '%s\t%s\n' "$he_file" "$he_off"
+	done
+}
 # Is the repo around <dir> opted in? Fails closed (blocks) when GitHub can't say.
 hooks_optin() {
 	hk_slugs=$(cd "$1" 2>/dev/null && remote_slugs)
@@ -798,7 +871,7 @@ for hk_f in "$scan_root"/*/.git/config "$scan_root"/*/.git/config.worktree "$sca
 done
 hk_found=
 if [ $# -gt 0 ]; then
-	hk_found=$(hooks_overrides "$@")
+	hk_found=$(hooks_overrides "$@" | hooks_effective)
 fi
 hk_own=$(repo_configs "$cwd")
 hk_own_found=
@@ -809,9 +882,8 @@ if [ -n "$hk_own" ]; then
 	set -- $hk_own
 	set +f
 	IFS=$hk_old
-	hk_own_found=$(hooks_overrides "$@")
+	hk_own_found=$(hooks_overrides "$@" | hooks_effective "$cwd")
 fi
-hk_tab=$(printf '	')
 # hooks_block <lines of "file<TAB>value"> [dir]: blocks when the repo of a file (or <dir>) is opted in.
 hooks_block() {
 	case $1 in *[![:space:]]*) ;; *) return 0 ;; esac
@@ -834,8 +906,9 @@ hooks_block() {
 hooks_block "$hk_found"
 hooks_block "$hk_own_found" "$cwd"
 # The session's repo with no override of its own can still be off: the global setting missing or pointing elsewhere (install.sh
-# not run), or the hook gone. The common case is read from the global config without running git.
-if [ -n "$hk_own" ] && { [ ! -x "$want_hooks/pre-push" ] || ! grep -Fqs "$want_hooks" "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; }; then
+# not run), or the hook gone. The common case is read from the global config (git reads it, so an include counts; the system
+# config when the global one sets nothing) without asking GitHub.
+if [ -n "$hk_own" ] && { [ ! -x "$want_hooks/pre-push" ] || ! global_hooks; }; then
 	if hooks_optin "$cwd" && ! (cd "$cwd" && hooks_ok); then
 		no_hooks "$cwd" "$(cd "$cwd" && git config --get core.hooksPath)"
 	fi
@@ -1423,7 +1496,7 @@ EOF
 # A push in an opted-in repo needs the pre-push check active where it runs: core.hooksPath at the deployed git-hooks (install.sh
 # sets it) and an executable pre-push in it, else the push would skip the check that refuses an unreviewed one
 # (docs/gate.md › Pre-push check). The value git would use counts, including a repo's own.
-hooks_ok || no_hooks
+hooks_ok || no_hooks "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" "$(git config --get core.hooksPath)"
 if ! why=$(push_scope); then
 	echo "Blocked: the review gate reviews HEAD, but $why. Push HEAD's branch to origin from its own worktree, e.g. \`git push -u origin HEAD\`." >&2
 	exit 2
