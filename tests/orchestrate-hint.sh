@@ -49,11 +49,29 @@ hint() {
 	fi
 }
 
+# note <want: yes|no> <description>: checks the last hint's output for the defaults notice (claude-ship #260), which
+# says the repo has no `## PR loop` section and that the loop runs on its defaults.
+note() {
+	got=no
+	[ -s "$tmp/out" ] && jq -e '.hookSpecificOutput.additionalContext | test("runs on its defaults")' "$tmp/out" >/dev/null 2>&1 &&
+		got=yes
+	if [ "$got" != "$1" ]; then
+		echo "FAIL (defaults notice $got, want $1): $2"
+		sed 's/^/  /' "$tmp/out"
+		fail=1
+	fi
+}
+
 echo true >"$tmp/vars/CLAUDE_AUTONOMOUS"
 echo true >"$tmp/vars/CLAUDE_ORCHESTRATE"
 hint no "default mode" default s1
 hint no "auto mode" auto s1
 hint yes "plan mode, both on" plan s1
+note yes "no AGENTS.md or CLAUDE.md: the loop runs on its defaults"
+jq -e '.hookSpecificOutput.additionalContext | test("merge: no") and test("status:ready") and test("120000") and test("templates/AGENTS.md") and test("unasked")' "$tmp/out" >/dev/null || {
+	echo "FAIL: the defaults notice doesn't list the defaults and the offer"
+	fail=1
+}
 hint no "second prompt in the same session" plan s1
 hint yes "a new session" plan s2
 hint no "outside a git repo" plan s3 "$tmp/notrepo"
@@ -208,6 +226,49 @@ echo true >"$tmp/vars/CLAUDE_AUTONOMOUS"
 echo true >"$tmp/vars/CLAUDE_ORCHESTRATE"
 hint yes "git repo, PR loop without a mode, variables on" plan l16 "$tmp/l-gitother"
 hint local "git repo with the marker, variables on" plan l17 "$tmp/l-gitmode"
+note no "local loop output has no defaults notice"
+
+# Defaults notice (claude-ship #260): a git repo whose AGENTS.md and CLAUDE.md both lack a live `## PR loop`
+# section gets the notice with the GitHub hint; a live section in either file means no notice. Fences and
+# comments are literal, as for the mode line.
+for d in n-agents n-claude n-none n-fence n-comment n-other n-both n-crlf n-tpl n-tpl2 n-clauderef; do
+	mkdir -p "$tmp/$d"
+	git init -q "$tmp/$d"
+done
+printf '# Rules\n\n## PR loop\n\n- checks: `make`\n' >"$tmp/n-agents/AGENTS.md"
+printf '# Rules\n\n## PR loop\n- merge: yes\n' >"$tmp/n-claude/CLAUDE.md"
+printf '# Rules\n\n## Code Review Rules\n- be careful\n' >"$tmp/n-none/AGENTS.md"
+printf '## Notes\n```\n## PR loop\n- merge: yes\n```\n' >"$tmp/n-fence/AGENTS.md"
+printf '<!-- Optional\n## PR loop\n- merge: yes\n-->\n' >"$tmp/n-comment/AGENTS.md"
+printf '## PR loops\n- merge: yes\n\n## Other PR loop\n' >"$tmp/n-other/AGENTS.md"
+printf '## Notes\n' >"$tmp/n-both/AGENTS.md"
+printf '## Notes\n' >"$tmp/n-both/CLAUDE.md"
+printf '## PR loop\r\n- merge: no\r\n' >"$tmp/n-crlf/AGENTS.md"
+printf '@AGENTS.md\n' >"$tmp/n-clauderef/CLAUDE.md"
+cp "$root/skills/ship/templates/AGENTS.md" "$tmp/n-tpl/AGENTS.md"
+sed -e '/^<!-- Optional/d' -e '/^-->$/d' -e 's/^     //' "$root/skills/ship/templates/AGENTS.md" >"$tmp/n-tpl2/AGENTS.md"
+hint yes "notice: section in AGENTS.md" plan n1 "$tmp/n-agents"
+note no "a section in AGENTS.md means no notice"
+hint yes "notice: section only in CLAUDE.md" plan n2 "$tmp/n-claude"
+note no "a section only in CLAUDE.md means no notice"
+hint yes "notice: AGENTS.md without the section" plan n3 "$tmp/n-none"
+note yes "an AGENTS.md without the section gets the notice"
+hint yes "notice: section inside a code fence" plan n4 "$tmp/n-fence"
+note yes "a section inside a code fence is missing"
+hint yes "notice: section inside an HTML comment" plan n5 "$tmp/n-comment"
+note yes "a section inside an HTML comment is missing"
+hint yes "notice: headings that only look like it" plan n6 "$tmp/n-other"
+note yes "other headings are not the section"
+hint yes "notice: both files without the section" plan n7 "$tmp/n-both"
+note yes "both files without the section get the notice"
+hint yes "notice: CRLF section" plan n8 "$tmp/n-crlf"
+note no "a CRLF section counts"
+hint yes "notice: CLAUDE.md that only imports AGENTS.md" plan n9 "$tmp/n-clauderef"
+note yes "an import line is not a section"
+hint yes "notice: the template as shipped" plan n10 "$tmp/n-tpl"
+note yes "the template's commented block counts as missing"
+hint yes "notice: the template uncommented" plan n11 "$tmp/n-tpl2"
+note no "the template uncommented has the section"
 
 # Input that isn't JSON passes without a hint.
 printf 'not json' | TMPDIR=$tmp PATH=$tmp/bin:$PATH sh "$root/hooks/orchestrate-hint.sh" >"$tmp/out" 2>&1
