@@ -355,6 +355,20 @@ gate) are the user's to change; claude-ship's source changes through reviewed PR
 `Edit`, `MultiEdit` and `NotebookEdit` calls on those paths block. A project's own `.claude/settings` may change,
 but not to turn hooks off (`disableAllHooks`).
 
+**Two layers.** The installed files and the gate's state are held two ways, and each does a different job:
+
+- **The immutable flag** (below, *Immutable install*) holds the installed gate, prompts, skill, ship agents, shfmt, the git
+  hook stubs and the managed settings drop-in against any command Claude runs, however it is spelled. It is what stops a
+  command written to get past a check, and only the user lifts it (`! sudo chattr -i <path>`).
+- **The literal check** below catches the plain slip: a common file tool writing a protected path that the command names
+  literally, with a message that says why. It is also the only protection of `.git/review-gate`, since the gate writes
+  there and the directory can't be immutable, and a second line for the user's settings, where the registration may still be
+  live.
+
+Because the flag holds the line, the Bash check doesn't try to follow a path through a variable or an interpreter, and it
+follows a `cd` only for the two targets the flag doesn't cover (below). That used to be its job, and every spelling it missed was the next finding (#187 and the issues after it: #195, #196,
+#198 to #203); those false blocks and parser gaps went with the code that had them.
+
 For Bash, writing gate state or the installed gate would bypass the review; reading its reports is fine. The check
 reads the command's syntax tree, not its text, so a protected path in a file name, a quoted string or a heredoc body
 isn't a write (#135, #40).
@@ -369,111 +383,92 @@ blocks.
 and process substitutions, and inside an unquoted heredoc body, since those run) and every statement's redirects.
 A word is *literal* when all its parts are plain text or quoted text without expansions (escapes and quotes are
 resolved, a leading `~` stays text, `$HOME` and `${HOME}` alone are the home directory); a variable, a substitution,
-a glob, a brace list or `$'...'` makes it *dynamic*. The protected paths are the home directory, then
-`.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)`, plus `.git/review-gate` and the managed settings
-directory `/etc/claude-code` (the whole directory: a policy file added there could override the gate's registration; it
-is a fixed path because Claude Code reads that one, whatever `CLAUDE_SHIP_MANAGED_DIR` says to the installer). A path is
-compared **after it is resolved** (below), never as the text it was written as. The command blocks when:
+a glob, a brace list or `$'...'` makes it *dynamic*, and a dynamic word is not read. The protected paths are the home
+directory, then `.claude/(hooks|git-hooks|skills/ship|bin)` (the directory itself or anything in it),
+`.claude/settings*` and `.claude/agents/ship-*`, plus `.git/review-gate` in any repo and the managed settings directory
+`/etc/claude-code` (the whole directory: a policy file added there could override the gate's registration; it is a fixed path
+because Claude Code reads that one, whatever `CLAUDE_SHIP_MANAGED_DIR` says to the installer).
 
-- a write redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, and `>&` when its word isn't a descriptor or `-`) has a
-  target that is protected once resolved, or
-- a command whose effective word is a writing tool (`rm`, `touch`, `cp`, `mv`, `ln`, `tee`, `install`, `truncate`,
-  `dd`, `chmod`, `sed` with `-i` or `--in-place`, `find … -delete`) has a word that resolves to a protected path
-  among its words (a `cp` that only reads a protected source blocks too: stricter than needed, and what the text
-  check did), or one of the writers below has a protected target, or
-- a literal word holds a redirect to a protected path (`awk '{ print > "…/.git/review-gate/x" }'`), or
-- a literal word is a command line that names a protected path: a writing tool starts it, or follows `;`, `&`, `|`,
-  `(`, `{` or a quote, optionally after `sudo`, `env`, `nohup`, `exec`, `command`, `time`, `xargs` or `nice`
-  (`watch 'rm ~/.claude/hooks/x'`, `su -c`, `ssh host '…; rm …'`, awk's `system("rm …")`). Prose that mentions a
-  tool (`git commit -m "docs: cp of ~/.claude/hooks/x"`) isn't one, or
-- the command names a protected literal word and also writes a file other than `/dev/null`, `/dev/stdout` or
-  `/dev/stderr` by redirect (`cat ~/.claude/hooks/x >/tmp/y`), as the text check did, or
+A word names a protected path after `~`, `$HOME` and `${HOME}` are expanded and the path is folded: `//`, `/./`, a trailing
+`/.` and `seg/..` go (a `..` above `/` stays at `/`), lexically, with no filesystem access, so **symlinks are out of scope**.
+A relative word is made absolute from the hook input's `cwd` (the `$PWD` of the gate without one). One narrow `cd` rule adds a
+second base, for the targets the immutable flag doesn't cover (`.git/review-gate` and `~/.claude/settings*`): a top-level
+statement that is just `cd LITERAL`, or a `cd LITERAL` on the left of `&&` (`cd a && cd b && rm x`, or `cd a; rm x`), sets
+the directory the later relative words and redirect targets are also resolved from, and only those two targets are looked
+for there. LITERAL is folded like any word (`~`, `$HOME`, `${HOME}`) and is relative to the `cd` before it, or to the `cwd`.
+No candidate sets, no variables, no `env -C`: a `cd` with an option (`cd -P x`, `cd -`), a dynamic word or no operand
+leaves the directory unknown, and relative words then resolve from the `cwd` alone. A `cd` that ends a chain that runs
+something else (`x && cd y`), one in a subshell, a function or a nested string (`sh -c`) is not followed. The command word and a wrapper before it are not file names, so a command named `rm` in a protected
+working directory doesn't count; for an option only its `=VALUE` is a path (`dd of=…`, `--target-directory=…`).
+
+The command blocks when:
+
+- a write redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`, and `>&` when its word isn't a descriptor or `-`) has a literal target
+  that names a protected path, or
+- the effective command of a simple command is a writing tool and a literal word among its words names a protected path. The
+  writers are `cp`, `mv`, `rm`, `rmdir`, `ln`, `install`, `tee`, `touch`, `truncate`, `dd`, `rsync`, `unlink`, `shred`,
+  `mkdir`, `chmod`, `chown`, `chgrp`, `tar`, `unzip`, `patch`, and `sed` or `perl` with an in-place option (`-i`, `-ni`,
+  `-i.bak`, `--in-place`; `perl -pi -e …`). A `cp` or `tar -t` that only reads a protected file blocks too: the tool is a
+  writer and the word is literal, and that is the whole test. `find … -delete` counts as an `rm`, and so does each command
+  after `-exec`, `-execdir`, `-ok` or `-okdir`, with the protected word anywhere in the `find`, or
 - a string it runs as shell blocks by these rules: `sh|bash|dash|zsh|ksh|ash -c STRING` and `eval ARGS` are parsed
-  again, to a depth of 3.
+  again, to a depth of 3, or
+- the command text holds `disableAllHooks` and a write (by these rules) names a `.claude/settings` file, as for the Write
+  tool: a project's own settings may change, but not to turn hooks off.
 
-**Resolution** (#187). The text of a path is not the file: `~/.claude/./hooks/x`, `~/.claude//hooks/x`,
-`~/.claude/y/../hooks/x`, `${HOME}/.claude/hooks/x`, `~root/.claude/hooks/x`, and `rm hooks/x` after `cd ~/.claude` are
-all the same file. So every word of a writer and every redirect target is resolved before the comparison with the
-protected list, lexically (no filesystem access, so **symlinks are out of scope**: a link to a protected directory
-passes):
-
-- `~`, `~/…`, `~<own user>`, a leading `$HOME`/`${HOME}` (also inside double quotes) are the home directory. Any other
-  `~name` has a home the gate doesn't know: it blocks a writer when the rest of the word has `/.claude/` or ends in
-  `/.claude`, and is dynamic otherwise.
-- `//`, `/./`, a trailing `/.` and `seg/..` are folded (a `..` above `/` stays at `/`), and a relative word is made
-  absolute from the working directory: the hook input's `cwd` (the `$PWD` of the gate without one), moved by the `cd`
-  and `pushd` the command runs. A `cd` that runs first (alone, or on the left of `&&`; `a && cd b && c` follows it in
-  order, each one only for what comes after it in the chain) sets the directory for what follows; after an `&&` chain
-  both the directory before it and the one it ended in are candidates, since a `cd` in it may not have run. A `cd` that may not run in order (after `||`, in an `if`, a loop, a block,
-  a function, a substitution) adds a **candidate**: the statement's relative words are resolved from the directory
-  before it and from every such target, and are protected when any of them is. A `cd` in a subshell, a pipeline or the
-  background doesn't leave it. A `cd` to something dynamic (`cd $d`, `cd -`, `popd`) makes the directory unknown, and
-  relative words stay with the fallback below; so does a `cd` inside a string run by `eval` (the string's own commands
-  start from the directory the `eval` runs in, but its `cd` doesn't carry out). More than 32 candidates become unknown
-  too. `env -C DIR` and `sudo -D DIR` add DIR as one more candidate.
-- A word with a dynamic, glob or brace part is cut at it: when the **literal start** resolves to `~/.claude`, below it, or
-  to a path whose rest could still be a protected file (`~/.claude/$x/…`, `~/.claude/hook?/…`, `~/.claude/{hooks,y}/…`,
-  `~/.claude/s*`; likewise `/etc`, `/etc/$x/…` and `/etc/claude-$x/…` for the managed directory), a writer with it blocks. `~/.claude/projects/$x` doesn't, and neither does a start of just `~/` or `/`
-  (`rm ~/$x`, `rm ~/.*.swp`): those stay with the fallback, so `rm` of a variable isn't blocked everywhere.
-- The old text comparison still counts as well, on the word as written, so nothing the text check blocked passes now
-  (`/dev/null,~/.claude/hooks/x`): a word's `NAME=VALUE` value is resolved too (`of=hooks/x`,
-  `--target-directory=~/.claude/hooks`).
-- A relative word is resolved from the working directory only if it can be a file name. The command's own name, the first
-  word, options, a number (`644`, `4M`), a symbolic mode (`u+x`) and a sed script (`s/a/b/`) are not, and for `NAME=VALUE`
-  only the value is a path (`dd if=/tmp/a of=/tmp/b` in `~/.claude/hooks` passes). They still count as written or when
-  absolute.
-- The `Write`, `Edit`, `MultiEdit` and `NotebookEdit` path is folded the same way (relative to the same `cwd`) before the
-  protected-path check, and also checked as written.
-
-**More writers** (#187): each blocks only when its target resolves to a protected path (a download, an archive or a
-copy elsewhere passes, and so do the forms that write no file: `-o -`, `tar -O`, `tar -cf -`, `wget --spider`): `curl -o|--output FILE` and `--output-dir DIR`, `curl -O|--remote-name` into the current
-directory; `wget -O FILE`, `wget -P DIR`, and `wget` into the current directory; `tar` with `-C|--directory DIR` when it
-extracts (into the current directory without one) and `-f|--file FILE` when it creates or appends (`c r u A`); `rsync`
-and `scp`, last argument (a `host:path` is remote); `sponge FILE`; `node`, `nodejs`, `ruby` and `php`, like `python`
-and `perl`; and `git -C DIR SUB` when DIR is under a protected directory or is `~/.claude` itself, unless SUB is one of
-`status`, `log`, `diff`, `show`, `rev-parse`, `ls-files`.
-
-The *effective word* is the command after leading assignments and these wrappers with their own options: `env`,
+The *effective command* is the command after leading assignments and these wrappers with their own options: `env`,
 `command`, `builtin`, `exec`, `nohup`, `nice`, `time`, `timeout`, `stdbuf`, `sudo`, `doas`, `xargs`, `setsid`; for
-`find` it's each command after `-exec`, `-execdir`, `-ok` or `-okdir`. A wrapper option the gate doesn't know
-makes the command unreadable.
+`find` it's each command after `-exec`, `-execdir`, `-ok` or `-okdir`. A wrapper option the gate doesn't know makes the
+command unreadable, and an unreadable command is not blocked here.
 
-**The fallback.** When the tree can't settle it, the gate runs the old text check unchanged (apart from adding
-`~/.claude/bin/`, the in-place `sed` forms and the writers above): a command that names a protected path writes when it runs a writing tool or redirects anywhere
-but another descriptor or `/dev/null`, `/dev/stdout`, `/dev/stderr`, with the raw text and the unmarked words both
-read, so a quoted `>` counts. It runs when:
+What blocks and what passes, with a protected `~/.claude/hooks`:
 
-- a word of a simple command or a write redirect's target is dynamic;
-- a wrapper can't be unwrapped, or `xargs` or `find -exec` hands arguments the command line doesn't show to a
-  writing tool (with no protected word among its words) or to a shell or `eval`;
-- a writing tool's name (or `sed`, `python`, `perl`) is a later word of a command, behind a wrapper the gate doesn't
-  list (`flock`, `ionice`, `watch`, `busybox`), with a protected word among the words;
-- one word of a command holds a `>` and another names a protected path (`awk '{ print > "out" }' ~/.claude/hooks/x`);
-- a `cd` or `pushd` target is protected (it settles nothing by itself: the writes that follow are resolved from it, and
-  the fallback only reads the text);
-- a shell runs without `-c` (a script, stdin, `bash <<EOF`, a pipe into `sh`), `source` or `.` runs a file, or
-  `python` or `perl` runs without a protected word among its words: their scripts and stdin can write;
-- a string run as shell doesn't parse or is nested deeper than 3;
-- `disableAllHooks` appears anywhere in the command text.
+| Command | Result |
+|---|---|
+| `rm ~/.claude/hooks/x`, `cp x $HOME/.claude/hooks/x`, `rm ~/.claude/./hooks/../hooks/x`, `rm /root/.claude//hooks/x` (the home directory written out) | blocked |
+| `rm -rf .git/review-gate`, `: > .git/review-gate/abc.pass`, `echo x > /etc/claude-code/managed-settings.json` | blocked |
+| `cd ~/.claude && rm settings.json`, `cd ~/.claude; echo x > settings.local.json`, `cd repo/.git && rm -r review-gate` (from the directory above `repo`) | blocked (the `cd` rule) |
+| `cd /tmp && rm settings.json`, `cd ~/.claude && cd /tmp && rm settings.json`, `cd $d && rm settings.json`, `cd ~/.claude && cat settings.json` | passes |
+| `sed -i s/a/b/ ~/.claude/hooks/x`, `perl -pi -e … ~/.claude/hooks/x`, `tar xf a.tar -C ~/.claude/hooks`, `tee`, `dd of=…` | blocked |
+| `sudo tee ~/.claude/settings.json`, `find ~/.claude/hooks -delete`, `sh -c 'rm ~/.claude/hooks/x'`, `~/.claude/skills/ship/token-report.sh 12 >~/.claude/hooks/o` | blocked |
+| `cat`, `grep`, `rg`, `diff`, `less`, `ls`, `lsattr`, `sha256sum`, `sed -n p` of a protected file; `grep curl ~/.claude/hooks/x` | passes |
+| `~/.claude/skills/ship/codex-round.sh 12`, `sh ~/.claude/skills/ship/codex-wait.sh 12`, `token-report.sh 12 >/tmp/out 2>&1` | passes (running a ship script writes nothing protected) |
+| a heredoc to `/tmp` that mentions `rm ~/.claude/hooks/x`, `git commit -m "fix: rm ~/.claude/hooks/x"` | passes |
+| `git -C ~/.claude/hooks status`, `curl -o ~/.claude/hooks/x URL`, `wget -O …`, `scp` | passes (`git`, `curl`, `wget`, `scp` aren't writers; the flag covers them) |
 
-What the tree check passes that the text check blocked, on purpose: a protected path inside a file name, a quoted
-argument when no `>` comes before the protected path inside it (`gh issue create --body "… ~/.claude/skills/ship/x.sh
-<PR> …"`, `git commit -m "fix: rm ~/.claude/hooks/x"`), a heredoc body, a read of a protected path piped into a
-writing tool whose own arguments aren't protected (`cat ~/.claude/hooks/x | tee /tmp/y`), or a write command and a
-read of a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
-What it newly blocks: `sed -ni`/`--in-place`, `find … -delete`, `~/.claude/bin/`, the other spellings of a protected path
-and the writers above. What neither check covers is out of scope by design: see [Threat model](#threat-model).
+**What the check does not read.** These pass here: they are out of scope under Gate scope (AGENTS.md › Code Review Rules,
+[Threat model](#threat-model)), and the immutable flag holds the installed files against them:
+
+- a word with an expansion (`rm "$p"/x` after `p=~/.claude/hooks`, `rm ~/.claude/hooks/*`, `of=~/.claude/hooks/$f`, a
+  command substitution, `$'...'`);
+- a `cd` to anything the flag covers (`cd ~/.claude/hooks && rm review-gate.sh`: the `cd` rule above follows a `cd` for
+  `.git/review-gate` and `~/.claude/settings*` only), `pushd`, `env -C`, `sudo -D`, `git -C`, and a `cd` the rule doesn't follow
+  (in a subshell, after `||`, to a dynamic word): nothing else tracks the working directory the command makes;
+- an interpreter or what it reads (`python`, `node`, `ruby`, `php`, `awk`'s `system`, a shell run without `-c`, `source`, a
+  script on stdin or piped into `sh`), and a string nested deeper than 3;
+- a wrapper the gate doesn't unwrap (`flock`, `watch`, `ionice`, `busybox`, `su -c`, `ssh host '…'`, an unknown wrapper
+  option), and `xargs` or `find -exec` handing a writer arguments the command line doesn't show;
+- a link, copy or rename onto a protected file, and symlinks in a path;
+- tools that write but aren't in the list: `curl -o`, `wget -O` and `-P`, `scp`, `sponge`, `git` and the rest.
+
+The old check read all of these (a resolution of every path through `cd` candidates, `env -C`, `sudo -D`, optargs, `nonpath`,
+extra writers for `curl`, `wget`, `tar -C`, `rsync`, `scp`, `sponge` and the interpreters, and a text fallback for whatever the
+tree couldn't settle). Each rule made a new false block or a new gap for a reviewer to find (#195, #196, #198 to #203), and
+with the install immutable the only thing it still guarded was the user's own settings and the gate's state. What it newly
+passes that the text check blocked, on purpose: a protected path inside a file name, a quoted argument, a heredoc body,
+a read of a protected path written to a file elsewhere (`cat ~/.claude/hooks/x >/tmp/y`), and a write command and a read of
+a protected path that are separate commands (`rm plan.md && ls ~/.claude/agents/x.md`).
 
 **`chattr` is denied** (#189). `chattr` sets and lifts the immutable flag that locks the installed files (below), so any
 call whose effective command is `chattr`, behind the wrappers above and `find -exec`, `xargs` or a string run as shell,
 blocks with a message asking the user to run `! sudo chattr -i <path>` themselves. `lsattr`, and a `chattr` that is only a
-word (`grep -n chattr install.sh`, `echo chattr`, a file called `chattr.md`), pass. The fallback blocks a command it can't
-read when the word `chattr` stands on its own in it (`c=chattr; $c -i x`), since it can't tell a command from an
-argument there. `install.sh` itself is not affected: the gate sees `./install.sh`, not what runs inside it.
+word (`grep -n chattr install.sh`, `echo chattr`, a file called `chattr.md`), pass. A `chattr` built at run time
+(`c=chattr; $c -i x`) is not read: it is out of scope, like any command built that way. `install.sh` itself is not
+affected: the gate sees `./install.sh`, not what runs inside it.
 
-**Immutable install** (#189). The text checks above stop what Claude plausibly types; they don't stop a command written to
-get past them. So `install.sh` also takes the files out of reach of any command Claude runs, without relying on how the
-command is spelled:
+**Immutable install** (#189). The literal check above stops what Claude plausibly types; it doesn't stop a command written
+to get past it, and it follows no path through a variable or an interpreter, and a `cd` only for the two targets above. So `install.sh` also takes the files
+out of reach of any command Claude runs, without relying on how the command is spelled:
 
 - **Managed settings.** It copies `settings/claude-ship.json` to
   `/etc/claude-code/managed-settings.d/claude-ship.json` (`CLAUDE_SHIP_MANAGED_DIR` moves it, for the tests). Managed

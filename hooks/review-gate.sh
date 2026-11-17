@@ -201,15 +201,21 @@ if printf '%s' "$cmd_all" | grep -Eq 'gh[[:space:]].*variable[[:space:]]+(set|de
 	echo "Blocked: CLAUDE_AUTONOMOUS, CLAUDE_ORCHESTRATE and the CLAUDE_P3_* variables are the user's to change. Ask them to run the \`gh variable\` command with \`!\`." >&2
 	exit 2
 fi
-# Tamper protection: a command that writes gate state, the installed gate or shfmt (docs/gate.md › Tamper protection).
-# prot_re is the protected paths as a regex for jq: ~ or the home directory, then the gate's files; `.git/review-gate`
-# is the gate's state in any repo; /etc/claude-code is the managed settings directory the gate is registered in (claude-ship
-# #189), spelled with any number of slashes (a path that goes through `..` or a relative one is resolved, and tested with
-# prot_res).
-home_re=$(printf '%s' "$HOME" | sed 's/[][\.*^$(){}?+|]/\\&/g')
-prot_re="(~|$home_re)/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate|/etc/+claude-code(\$|[^\\w.-])"
-# The same for a path already resolved (an absolute, folded one): anchored at the home directory.
-prot_res="^$hn_re/\\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)|\\.git/review-gate|^/etc/claude-code(/|\$)"
+# Tamper protection: a Bash command that writes gate state, the installed gate or shfmt (docs/gate.md › Tamper protection).
+# It blocks the plain slip only: a common file tool, or a redirect, whose literal word names a protected path. The installed
+# files are immutable (the flag install.sh sets), which holds against everything this check does not read: a path built at
+# run time, a `cd`, an interpreter, a wrapper it does not unwrap (AGENTS.md › Gate scope). `.git/review-gate` can't be
+# immutable, since the gate writes it, so the literal check is its protection.
+# prot_res is the protected paths as a regex for jq, for a path already resolved (an absolute, folded one): the gate's files
+# under the home directory (the directories with or without the slash after them), `.git/review-gate` in any repo, and
+# /etc/claude-code, the managed settings directory the gate is registered in (claude-ship #189).
+prot_res="^$hn_re/\\.claude/((hooks|git-hooks|skills/ship|bin)(/|\$)|settings|agents/ship-)|/\\.git/review-gate(/|\$)|^/etc/claude-code(/|\$)"
+# narrow_res is the part of it a `cd` is followed for: the targets the immutable flag does not cover, the gate state and the
+# settings (docs/gate.md › Tamper protection).
+narrow_res="^$hn_re/\\.claude/settings|/\\.git/review-gate(/|\$)"
+# `disableAllHooks` among the words: a write to a settings file then blocks too, as it does for the Write tool.
+dah=0
+if printf '%s' "$cmd_all" | grep -q disableAllHooks; then dah=1; fi
 # The jq definitions both tree programs share (tamper_jq, push_jq): the last part of a path, and the literal value of a
 # word (`wv`: null when it is not literal).
 tree_defs='
@@ -225,78 +231,42 @@ def pv: if .Type == "Lit" then (.Value | unq)
 def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 '
 # The command's simple commands and redirects read from its syntax tree, `$tree`, as events, one object each:
-#   {k: "block", p, w}  a literal word p names a protected path and writes (w says how)
-#   {k: "dyn"}          something the tree can't settle: a word that isn't literal (a variable, a substitution, a
-#                       glob, `$'...'`), a wrapper it can't unwrap, a protected `cd`, a shell or `source` run
-#                       without a `-c` string, `python` or `perl` (their stdin or script may write)
+#   {k: "block", p, w}  a literal word p names a protected path and writes (w says how: the writing tool, or the redirect)
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
-#   {k: "wr", t}        a write redirect to the literal target t
-#   {k: "lw", t}        a literal word t that names a protected path
-#   {k: "gh"}          a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
+#   {k: "gh"}           a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
 #   {k: "deny", m}      a `push --no-verify`, a write of core.hooksPath (docs/gate.md › Pre-push check) or a `chattr`
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
-# kept as text); anything else is dynamic. The output, for the loop below: the verdict (deny, block, dyn, pass, or bad
-# when the input is no tree) on the first line, then the message of a block; or `gh` (a gh event) or `nogh` (none), then
+# kept as text, `$HOME` and `${HOME}` on their own the home directory); anything else is dynamic and is not read: a variable,
+# a substitution, a glob, `$'...'`. The output, for the loop below: the verdict (deny, block, pass, or bad when the input is
+# no tree) on the first line, then the message of a block or a deny; or, for pass, `gh` (a gh event) or `nogh` (none), then
 # the strings to parse again, one JSON string per line.
 tamper_jq="$tree_defs$path_defs"'
-def isprot: test($prot);
-def pprot: test($protr);
-# The value of a word for the path checks: marker 1 stands for a word the tree can not read, marker 2 for a dynamic word whose
-# literal start already reaches a protected path (`~/.claude/$x/y`): both are text no real path starts with.
-def disp: sub("^[\u0001\u0002]"; "");
-# The text of a Lit before its first glob or brace character, escapes resolved.
-def litpre: [scan("\\\\[\\s\\S]|[^\\\\]")] as $t
-	| ([range(0; $t | length) | select($t[.] | test("^[*?\\[{]$"))] | first // ($t | length)) as $i
-	| $t[:$i] | map(if startswith("\\") then .[1:] else . end) | join("");
-def lu: (gsub("\\\\[\\s\\S]"; "") | test("[*?\\[]|\\{[^}]*(,|\\.\\.)[^}]*\\}")) as $g
-	| if $g then {s: litpre, full: false}
-	else {s: (gsub("\\\\\n"; "") | gsub("\\\\(?<c>[\\s\\S])"; .c)), full: true} end;
 # $HOME and ${HOME} on their own, with nothing else done to them, are the home directory.
 def hm: .Type == "ParamExp" and .Param.Value? == "HOME" and ((keys - ["Type", "Dollar", "Rbrace", "Short", "Param", "Pos", "End"]) | length) == 0;
-# One part of a word as {s: its text so far, full: false from the first part that is not literal text}.
-def pacc:
-	if .Type == "Lit" then (.Value | lu)
-	elif .Type == "SglQuoted" then (if .Dollar then {s: "", full: false} else {s: .Value, full: true} end)
-	elif .Type == "DblQuoted" then
-		(if .Dollar then {s: "", full: false}
-		else reduce (.Parts[]?) as $q ({s: "", full: true};
-			if .full then (. as $st | (if $q.Type == "Lit" then {s: ($q.Value | dq), full: true} else ($q | pacc) end) as $r | {s: ($st.s + $r.s), full: $r.full})
-			else . end) end)
-	elif hm then {s: $home, full: true}
-	else {s: "", full: false} end;
-def wacc: reduce (.Parts[]?) as $p ({s: "", full: true};
-	if .full then (. as $st | ($p | pacc) as $r | {s: ($st.s + $r.s), full: $r.full}) else . end);
+# One part of a word as its literal text, `$HOME` the home directory, or null.
+def lp:
+	if .Type == "Lit" then (.Value | unq)
+	elif .Type == "SglQuoted" then (if .Dollar then null else .Value end)
+	elif .Type == "DblQuoted" then (if .Dollar then null
+		else ([.Parts[]? | if .Type == "Lit" then (.Value | dq) elif hm then $home else null end] | if any(. == null) then null else join("") end) end)
+	elif hm then $home
+	else null end;
 # The literal value of a word, written as it is (`~` kept) except that $HOME is the home directory, or null.
-def wl: wv // (wacc | if .full and ((.s | startswith("~") | not) or (.s | tilde) != null) then .s else null end);
-# Does a path that starts like this (a dynamic or glob part follows) reach a protected file?
-def reaches:
-	def etc: . == "/etc" or (startswith("/etc/") and (.[5:] as $m | ("claude-code" | startswith($m)) or ($m | startswith("claude-code"))));
-	if test("\\.git/review-gate") or etc then true
-	else ($home + "/.claude") as $r
-	| if . == $r then true
-	elif startswith($r + "/") then (.[($r | length) + 1:] as $m | any(["hooks", "git-hooks", "settings", "skills/ship/", "agents/ship-", "bin/"][]; . as $t | ($t | startswith($m)) or ($m | startswith($t))))
-	else false end end;
-# The absolute paths a word names, from each candidate working directory; $keep keeps a trailing slash.
-def abs($cs; $keep): tilde as $t
-	| if $t == null then []
-	elif ($t | startswith("/")) then [$t | norm($keep)]
-	else [$cs[] | select(. != null) | (. + "/" + $t) | norm($keep)] end;
-def dynmark($cs): wacc as $a | $a.s as $s
-	| (if ($s | startswith("~")) and ($s | tilde) == null then ($s | sub("^~[^/]*"; "") | test("/\\.claude(/|$)"))
-	else any($s | abs($cs; true)[]; reaches) end) as $hit
-	| if $hit then "\u0002" + $s else null end;
-def wv2($cs): wl // dynmark($cs);
-# The path in a word: the word, or for `of=PATH` and `--target-directory=PATH` the value after the `=`.
-def rvals: if test("^[^/=]+=.") then sub("^[^=]*="; "") else . end;
-# Words that are no file names though they stand among the operands of a writer: a number (a size, a mode such as 644), a
-# symbolic mode (u+x,go-w) and a sed script (s/a/b/). They are not resolved from the working directory.
-def nonpath: test("^[0-9]+[A-Za-z]{0,2}$") or test("^[ugoa]*[-+=][rwxXstugo]+(,[ugoa]*[-+=][rwxXstugo]*)*$") or test("^[sy]/");
-# Is the word a protected path, once it is resolved? The text check stays too (a name that is no path, such as
-# `/dev/null,~/.claude/hooks/x`, still counts).
-def rprot($cs): startswith("\u0002") or isprot or any(rvals; any(abs(if nonpath then [] else $cs end; false)[]; pprot));
-# A directory is protected when a file in it would be.
-def dprot($cs): rprot($cs) or ((. + "/x") | rprot($cs));
-def cwdprot($cs): [$cs[] | select(. != null and ((. + "/x") | pprot))];
+def wl: [.Parts[]? | lp] | if any(. == null) then null else join("") end;
+# The absolute path a literal word names: `~` and `~/…` the home directory, a relative word from $base, `//`, `.` and `..`
+# folded. null for a `~name` whose home is not known.
+def resolve($base): tilde as $t | if $t == null then null
+	elif ($t | startswith("/")) then ($t | norm(false)) else ($base + "/" + $t | norm(false)) end;
+# Is the path a literal word names protected? A relative word is read from the working directory the hook input gives, and,
+# when a `cd` before it is known ($cd, the one the `evs` rule below follows; null when none), from there as well, but only
+# for the narrow targets. `disableAllHooks` in the command also protects any `.claude/settings` file.
+def prot($cd):
+	def at($b; $re): resolve($b) as $r | $r != null and ($r | test($re) or ($dah == "1" and test("\\.claude/settings")));
+	at($cwd; $protr) or ($cd != null and at($cd; $narrowr));
+# A word names a protected path, itself or after the `=` of `of=PATH` and `--target-directory=PATH`. $rel is false for the
+# command and a wrapper, which are not file names: only an absolute or `~` word counts for them.
+def named($rel; $cd): [., (if test("^-{0,2}[^/=]+=.") then sub("^[^=]*="; "") else empty end)]
+	| any(($rel or startswith("/") or startswith("~")) and prot($cd));
 # The words left after the options of a wrapper: $val are the options that take the next word, $flag those that take
 # none. null for an option it does not know, so the caller treats the command as unreadable.
 def skipopts($w; $val; $flag):
@@ -355,30 +325,6 @@ def shellstr($a):
 			else {k: "dyn"} end
 		end;
 	go(0);
-# The values of an option that takes one: $sh are its short letters (in a cluster the rest of the word is the value, or
-# else the next word), $lg its long names (`--name=V` or `--name V`; a unique start of a name is enough).
-def optargs($a; $sh; $lg):
-	[range(0; $a | length) as $i | $a[$i] as $x
-	| if ($x | test("^--[^=]")) then
-		(($x | ltrimstr("--") | sub("=.*$"; "")) as $n
-		| if ($n | length) >= 2 and any($lg[]; . == $n or startswith($n)) then
-			(if ($x | contains("=")) then ($x | sub("^[^=]*="; "")) else ($a[$i + 1] // empty) end)
-		else empty end)
-	elif ($x | test("^-[^-]")) then
-		($x[1:]) as $cl
-		| first(range(0; $cl | length) as $j | select(($sh | index($cl[$j:$j + 1])) != null)
-			| ($cl[$j + 1:]) as $r | if $r != "" then $r else ($a[$i + 1] // empty) end)
-	else empty end];
-# `git [-C DIR]... [-c K=V]... SUB`: the -C directories and the subcommand.
-def gitargs($a):
-	def go($i; $d):
-		if $i >= ($a | length) then {dirs: $d, sub: null}
-		else $a[$i] as $x
-		| if $x == "-C" then go($i + 2; $d + [$a[$i + 1] // ""])
-		elif ($x | test("^(-c|--exec-path|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)$")) then go($i + 2; $d)
-		elif ($x | startswith("-")) then go($i + 1; $d)
-		else {dirs: $d, sub: $x} end end;
-	go(0; []);
 # What skips the pre-push check hooks/git-hook.sh makes of Claude pushes (docs/gate.md › Pre-push check), read from the words
 # after `git`: `push --no-verify`, and a write of core.hooksPath, which points git at that hook: `-c core.hooksPath=…`
 # (also `-ccore.hooksPath=…`), `--config-env=core.hooksPath=…`, and `git config` in any form that is not a read (a bare key,
@@ -414,108 +360,46 @@ def gitdeny($a):
 	elif $g.sub == "push" and ($g.rest | any(. == "--no-verify")) then
 		{k: "deny", m: "`git push --no-verify` would skip the review gate\u0027s pre-push check, which refuses an unreviewed push. Push without it; if a review is wrong, ask the user to waive it."}
 	else empty end;
-# A write: block when any of $ps (the protected targets) is there.
-def wbl($ps; $why): if ($ps | length) > 0 then {k: "block", p: ($ps[0] | disp), w: $why} else empty end;
-def remote: test("^[^/]*:");
-# The words of a command that name a protected path. A relative word is resolved from the working directory unless it is the
-# command (or the first word, a wrapper) or an option: `rm` after `cd ~/.claude/hooks` is not the file hooks/rm.
-# `=VALUE` of an option still is a path.
-def protwords($all; $c0; $cs):
+# The words of a simple command that name a protected path, among the words $all of the whole command (wrappers included) with
+# a marker for each word that is not literal; $c0 is the effective command word. The command (and the wrapper before it) is
+# not a file name; an option counts only by its `=VALUE`.
+def protwords($all; $c0; $cd):
 	([range(0; $all | length) | select($all[.] == $c0)] | first) as $f
 	| [range(0; $all | length) as $i | $all[$i] as $x
-		| select(if $i == 0 or $i == $f then ($x | rprot([]))
-			elif ($x | startswith("-")) then (($x | rprot([])) or ($x | test("^-[^=]*=.")) and ($x | sub("^[^=]*="; "") | rprot($cs)))
-			elif ($x | nonpath) then ($x | rprot([]))
-			else ($x | rprot($cs)) end)
+		| select($x != "\u0001")
+		| select(if $i == 0 or $i == $f then ($x | named(false; $cd))
+			elif ($x | startswith("-")) then (($x | test("^-[^=]*=.")) and ($x | sub("^[^=]*="; "") | named(true; $cd)))
+			else ($x | named(true; $cd)) end)
 		| $x];
-# What a command writes, by its name and arguments, for the paths of the effective command $e (after wrappers); $all are the
-# words of the whole simple command, wrappers included, and $cs the candidate working directories.
-def wcheck($e; $all; $cs):
+# The writing tools: a command that changes files, and `sed` and `perl` with an in-place option.
+def writer($c; $a):
+	($c | test("^(cp|mv|rm|rmdir|ln|install|tee|touch|truncate|dd|rsync|unlink|shred|mkdir|chmod|chown|chgrp|tar|unzip|patch)$"))
+	or ($c == "sed" and ($a | any(test("^-[^-efl]*i|^--in-place"))))
+	or ($c == "perl" and ($a | any(test("^-[^-eEMmIxdDCV]*i"))));
+# What an effective command $e does (its words, after wrappers; $all are the words of the whole simple command): a denial, a
+# string it runs as shell, or a write of a protected path.
+def cmdev($e; $all; $cd):
 	($e.w[0] | bn) as $c | $e.w[1:] as $a
-	| if ($c | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod)$")) or ($c == "sed" and ($a | any(test("^-[a-zA-Z]*i|^--in-place")))) then
-		(protwords($all; $e.w[0]; $cs) as $pw | if ($pw | length) > 0 then {k: "block", p: ($pw[0] | disp), w: $c} elif $e.x then {k: "dyn"} else empty end)
-	elif ($c | test("^(python[0-9.]*|perl|node|nodejs|ruby|php)$")) then
-		(protwords($all; $e.w[0]; $cs) as $pw | if ($pw | length) > 0 then {k: "block", p: ($pw[0] | disp), w: $c} else {k: "dyn"} end)
-	elif $c == "curl" then
-		(optargs($a; ""; ["output-dir"])) as $od
-		| wbl([optargs($a; "o"; ["output"])[] | select(. != "-" and rprot($cs))] + [$od[] | select(dprot($cs))]
-			+ (if ($od | length) == 0 and ($a | any(test("^-[^-]*O") or . == "--remote-name" or . == "--remote-name-all")) then cwdprot($cs) else [] end); "curl")
-	elif $c == "wget" then
-		(optargs($a; "O"; ["output-document"]) | map(select(. != "-"))) as $o
-		| (optargs($a; "P"; ["directory-prefix"])) as $p
-		| wbl([$o[] | select(rprot($cs))] + [$p[] | select(dprot($cs))]
-			+ (if ($o | length) == 0 and ($p | length) == 0 and ($a | any(. == "--spider") | not) then cwdprot($cs) else [] end); "wget")
-	elif $c == "tar" then
-		# A cluster of short options (`-xvf`, or `xvf` first) is flags up to the first option that takes a value; the rest of
-		# the word, or the next word, is that value (`-xfOUT.tar` has no -O).
-		[range(0; $a | length) as $i | $a[$i] as $x
-			| select(($x | test("^-[^-]")) or ($i == 0 and ($x | test("^[A-Za-z]+$"))))
-			| {i: $i} + ($x | ltrimstr("-") | capture("^(?<fl>[^fCbILTXKNgVFH]*)(?<t>[fCbILTXKNgVFH]?)(?<r>.*)$"; "s"))] as $cls
-		| (($cls | any(.fl | test("x"))) or ($a | any(. == "--extract" or . == "--get"))) as $ext0
-		| (($cls | any(.fl | test("O"))) or ($a | any(. == "--to-stdout"))) as $stdout
-		| (($cls | any(.fl | test("[cruA]"))) or ($a | any(. == "--create" or . == "--append" or . == "--update" or . == "--concatenate"))) as $crt
-		| ($ext0 and ($stdout | not)) as $ext
-		| ([$cls[] | select(.t == "f") | if .r != "" then .r else ($a[.i + 1] // empty) end] + optargs($a; ""; ["file"]) | map(select(. != "-"))) as $files
-		| ([$cls[] | select(.t == "C") | if .r != "" then .r else ($a[.i + 1] // empty) end] + optargs($a; ""; ["directory"])) as $dirs
-		| wbl((if $crt then [$files[] | select(rprot($cs))] else [] end)
-			+ (if $ext then (if ($dirs | length) > 0 then [$dirs[] | select(dprot($cs))] else cwdprot($cs) end) else [] end); "tar")
-	elif ($c == "rsync" or $c == "scp") then
-		[$a[] | select(startswith("-") | not)] as $pos
-		| ($pos | last) as $l
-		| wbl(if ($pos | length) >= 2 and ($l | remote | not) and ($l | dprot($cs)) then [$l] else [] end; $c)
-	elif $c == "sponge" then
-		([$a[] | select(startswith("-") | not)] | last) as $l
-		| wbl(if $l != null and ($l | rprot($cs)) then [$l] else [] end; $c)
-	elif $c == "chattr" then
+	| if $c == "chattr" then
 		{k: "deny", m: "chattr sets and lifts the immutable flag that locks the installed review gate (hooks, skill, ship agents, shfmt, git hooks and the managed settings drop-in). Only the user changes it: ask them to run `! sudo chattr -i <path>`."}
-	elif $c == "git" then
-		gitdeny($a),
-		(gitargs($a) as $g
-		| if $g.sub != null and (["status", "log", "diff", "show", "rev-parse", "ls-files"] | index($g.sub) | not) then
-			wbl([$g.dirs[] | select(dprot($cs) or any(abs($cs; false)[]; . == $home + "/.claude"))]; "git -C")
-		else empty end)
+	elif $c == "git" then gitdeny($a)
+	elif ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x then empty else shellstr($a) | select(.k == "str") end)
+	elif $c == "eval" then (if $e.x or ($a | length) == 0 then empty else {k: "str", v: ($a | join(" "))} end)
+	elif writer($c; $a) then (protwords($all; $e.w[0]; $cd) | first // empty | {k: "block", p: ., w: $c})
 	else empty end;
-def cmdev($e; $all; $cs):
-	($e.w[0] | bn) as $c | $e.w[1:] as $a
-	| if ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x then {k: "dyn"} else shellstr($a) | if .k == "str" then . + {c: $cs} else . end end)
-	elif $c == "eval" then (if $e.x then {k: "dyn"} elif ($a | length) > 0 then {k: "str", v: ($a | join(" ")), c: $cs} else empty end)
-	elif ($c | test("^(source|\\.)$")) then {k: "dyn"}
-	elif ($c | test("^(cd|pushd)$")) then
-		([$a[] | select(startswith("-") | not)] | first) as $t
-		| if $t != null and ($t | rprot($cs)) then {k: "dyn"} else empty end
-	else wcheck($e; $all; $cs) end;
-def redirs($cs): (.Redirs? // [])[]
+# A redirect that writes to a literal target that is protected (`>&2`, `>&-` and `>&1-` are descriptors, not files).
+def redirs($cd): (.Redirs? // [])[]
 	| select(.Op | test("^(>|>>|>\\||<>|&>|&>>|>&)$"))
-	| .Op as $op | (.Word | wv) as $t0 | (.Word | wv2($cs)) as $t
-	| if $t == null then {k: "dyn"}
-	elif $op == ">&" and $t0 != null and ($t0 | test("^([0-9]+-?|-)$")) then empty
-	else (if $t0 == null then {k: "dyn"} else empty end), {k: "wr", t: $t, op: $op, prot: ($t | rprot($cs))} end;
-# Shapes the tree can not read as a write but the text check blocked, so they fall back to it: a writing tool named
-# after the command word (behind a wrapper the gate does not list: flock, ionice, watch, busybox...) with a protected
-# word among the words, and a `>` in one word (an awk program) with a protected path in another.
-def odd($w; $effs; $cs):
-	any($effs[]; any(.w[1:][]; bn | test("^(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed|python[0-9.]*|perl|node|nodejs|ruby|php|curl|wget|tar|rsync|scp|sponge)$"))) and (protwords($w; $w[0]; $cs) | length) > 0
-	or any(range(0; $w | length); . as $i | ($w[$i] | contains(">")) and any(range(0; $w | length); . as $j | $j != $i and ($w[$j] | rprot($cs))));
-# `env -C DIR cmd` and `sudo -D DIR cmd` run cmd in DIR: it is one more directory its relative paths may start from.
-def wrapdirs($ws; $cs0): if any($ws[]; bn == "env" or bn == "sudo") then [optargs($ws; "CD"; ["chdir"])[] | abs($cs0; false)[]] else [] end;
-def calls($cs0):
-	(.Args? // []) as $args | [$args[] | wv] as $w0
-	| ([$args[] | wl // "\u0001"]) as $wl
-	| ($cs0 + wrapdirs($wl; $cs0) | unique) as $cs
-	| [$args[] | wv2($cs)] as $w
-	| if ($w | length) == 0 then empty
-	else
-		(if any($w0[]; . == null) then {k: "dyn"} else empty end),
-		(if any($w[]; . == null) then
-			(($w | map(. // "\u0001")) as $ws | eff($ws; false) as $effs | if $effs == null then empty else ($effs[] | wcheck(.; $ws; $cs)) end)
-		else
-			(eff($w; false) as $e0 | if $e0 != null and odd($w; $e0; $cs) then {k: "dyn"} else empty end),
-			($w[] | select(isprot and test("(^|[;&|({\n\"\u0027])\\s*((sudo|env|nohup|exec|command|time|xargs|nice)\\s+)*(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|python[0-9.]*|perl|sed\\s+(-[a-zA-Z]*i|--in-place))(\\s|$)")) | {k: "block", p: disp, w: "a command line"}),
-			(protwords($w; $w[0]; $cs)[] | select(startswith("\u0002") | not) | {k: "lw", t: .}),
-			($w[] | select(test(">+[|&]?\\s*[\"\u0027]?[^\\s;&|\"\u0027]*(" + $prot + ")")) | {k: "block", p: ., w: ">"}),
-			(eff($w; false) as $effs | if $effs == null then {k: "dyn"} else ($effs[] | cmdev(.; $w; $cs)) end)
-		end)
-	end;
+	| .Op as $op | (.Word | wl) as $t
+	| select($t != null and ($op != ">&" or ($t | test("^([0-9]+-?|-)$") | not)))
+	| select($t | named(true; $cd))
+	| {k: "block", p: $t, w: ($op + $t)};
+# The events of a simple command: what its effective commands do. Words that are not literal count as markers, so the
+# wrappers still unwrap; a wrapper the gate does not know makes the command unreadable, and nothing is said of it.
+def calls($cd):
+	([(.Args? // [])[] | wl // "\u0001"]) as $ws
+	| if ($ws | length) == 0 then empty
+	else eff($ws; false) as $effs | if $effs == null then empty else ($effs[] | cmdev(.; $ws; $cd)) end end;
 # A literal word `gh` among the words of a command that may run it: the `gh` itself, behind a wrapper (`sudo gh api`, `xargs gh api`,
 # or one the gate does not unwrap: `flock l gh api`), or in a string it cannot unwrap. Words after `echo` or `printf`, and a `gh api`
 # in a heredoc body, are data, not a call (docs/gate.md › Command reading).
@@ -524,118 +408,64 @@ def ghev:
 	| eff($ws; false) as $effs
 	| if $effs == null then {k: "gh"}
 	else ($effs[] | select(((.w[0] | bn) | test("^(echo|printf)$") | not) and (.w | any(bn == "gh"))) | {k: "gh"}) end;
-# The working directory, tracked lexically. $cs is the set of directories the next command may run in (null: unknown, after a
-# `cd` to something dynamic). cdev: the target of each effective `cd` or `pushd` in a simple command (null: unknown).
-def cdev($w): ($w | map(. // "\u0001")) as $ws | (eff($ws; false) // [])[]
-	| (.w[0] | bn) as $c | .w[1:] as $a
-	| select($c == "cd" or $c == "pushd" or $c == "popd")
-	| ([$a[] | select(test("^-[LPe@]+$|^--$") | not)] | first) as $t
-	| if $c == "popd" then null
-	elif $t == null then (if $c == "cd" then "~" else null end)
-	elif $t == "-" or $t == "\u0001" then null
-	else $t end;
-def cdto($cs; $t): (if $t == null then [null] else ([$t | abs($cs; false)[]] | if length == 0 then [null] else . end) end) | unique;
-# Adds the directory a `cd` may lead to; more than 32 candidates become "unknown" as well.
-def addcd($cs; $t): ($cs + cdto($cs; $t) | unique) | if length > 32 then (.[:32] + [null] | unique) else . end;
-# The `cd`s inside a node, in order; $leaky: only those that can change the directory of the shell that runs the node
-# (not in a subshell, a substitution, a pipeline or the background).
-def cdcalls($leaky):
-	def go:
-		if type == "object" then
-			if $leaky and (.Type == "Subshell" or .Type == "CmdSubst" or .Type == "ProcSubst" or .Background == true or (.Type == "BinaryCmd" and (.Op == "|" or .Op == "|&"))) then empty
-			elif .Type == "CallExpr" then cdev([(.Args? // [])[] | wl]), (.[]? | go)
-			else (.[]? | go) end
-		elif type == "array" then (.[] | go)
-		else empty end;
-	go;
-def evs($cs): [.. | objects | (if .Type == "CallExpr" then (calls($cs), ghev) else empty end), (if has("Redirs") then redirs($cs) else empty end)];
-# A statement that is just `cd DIR`, `pushd DIR` (nothing else, no redirect): its directory is then certain for what follows.
-def plaincd: .Cmd.Type == "CallExpr" and ((.Redirs // []) | length) == 0 and .Negated != true and .Background != true
-	and ([cdev([(.Cmd.Args? // [])[] | wl])] | length) > 0;
-# The commands of `a && b && c` in order: each runs only after the one before it succeeded, so a `cd` among them changes the
-# directory of the rest. Anything else (`||`, a pipe, a block, a background command) is one command.
-def elems:
-	if .Background != true and .Negated != true and ((.Redirs // []) | length) == 0 and .Cmd.Type == "BinaryCmd" and .Cmd.Op == "&&"
-	then (.Cmd.X | elems) + (.Cmd.Y | elems) else [.] end;
-# One command: the events it makes, the directories it runs in (every `cd` inside it counts, as it may not run in order)
-# and the directories that follow (a plain `cd` replaces them; any other `cd` adds to them).
-def estep($el):
-	. as $st
-	| ($el | plaincd) as $pc
-	| (if $pc then ([$el.Cmd.Args[] | wl] as $ws | [cdev($ws)] | first) else null end) as $t
-	| (if $pc then $st.c else (reduce ($el | cdcalls(false)) as $x ($st.c; addcd(.; $x))) end) as $ec
-	| (if $pc then cdto($st.c; $t) else (reduce ($el | cdcalls(true)) as $x ($st.c; addcd(.; $x))) end) as $nc
-	| {c: $nc, ev: ($st.ev + (if any($ec[]; . == null) then [{k: "dyn"}] else [] end) + ($el | evs($ec)))};
+# The events of one statement, its commands and redirects all through it, with $cd the directory a `cd` before it left.
+def evat($cd): [.. | objects | (if .Type == "CallExpr" then (calls($cd), ghev) else empty end), (if has("Redirs") then redirs($cd) else empty end)];
+# The one `cd` the check follows, for the narrow targets only (the gate state and the settings, which the immutable flag does not
+# cover): a top-level statement that is just `cd LITERAL`, or such a `cd` on the left of `&&` (`cd a && cd b && rm x` is three
+# units, and `cd a; rm x` two statements), sets the directory that later relative words and redirect targets also resolve
+# from. LITERAL is folded like any word (`~`, `$HOME`) and is relative to the cd before it, or to the working directory. A `cd`
+# with an option, a dynamic word or no operand leaves the directory unknown (null): no variables, no candidate sets, no `env -C`.
+def iscd: .Cmd.Type == "CallExpr" and ((.Redirs // []) | length) == 0 and (.Background // false | not) and (.Negated // false | not)
+	and ((.Cmd.Args // [])[0] | if . == null then false else wl == "cd" end);
+def cdto($cd):
+	([(.Cmd.Args // [])[] | wl]) as $w
+	| if ($w | length) != 2 or $w[1] == null or $w[1] == "" or ($w[1] | startswith("-")) then null
+	else ($w[1] | resolve(($cd // $cwd))) end;
+# A top-level statement as its units: the commands of an `a && b && c` chain, anything else one unit.
+def units: if .Cmd.Type == "BinaryCmd" and .Cmd.Op == "&&" and (.Background // false | not) and (.Negated // false | not)
+	then (.Cmd.X | units) + (.Cmd.Y | units) else [.] end;
+# A `cd` unit sets the directory unless it ends a chain that runs something else (`x && cd y` may not have run the cd).
+def evs:
+	reduce (.Stmts // [])[] as $s ({cd: null, ev: []};
+		($s | units) as $u
+		| ($u | length) as $n
+		| ($u | all(iscd)) as $allcd
+		| reduce range(0; $n) as $i (.;
+			.cd as $c
+			| $u[$i] as $x
+			| .ev += ($x | evat($c))
+			| if ($x | iscd) and ($n == 1 or $i < $n - 1 or $allcd) then .cd = ($x | cdto($c)) else . end))
+	| .ev;
 if .Type != "File" then "bad"
 else
-	(reduce ((.Stmts // [])[]) as $s ({c: ($cands // [($cwd | norm(false))]), ev: []};
-		. as $st | ($s | elems) as $els
-		| reduce $els[] as $el ($st; estep($el))
-		| if ($els | length) > 1 then .c = ($st.c + .c | unique | if length > 32 then (.[:32] + [null] | unique) else . end) else . end)).ev as $ev
-	| ($ev | map(select(.k == "lw")) | first) as $lw
-	| ($ev | map(select(.k == "block")) | first) as $b
-	| ($ev | map(select(.k == "wr" and .prot)) | first) as $wp
-	| ($ev | map(select(.k == "wr" and (.t | test("^/dev/(null|stdout|stderr)$") | not))) | first) as $wo
-	| (if $b != null then {p: $b.p, w: $b.w}
-		elif $wp != null then {p: ($wp.t | disp), w: ($wp.op + ($wp.t | disp))}
-		elif $lw != null and $wo != null then {p: $lw.t, w: ($wo.op + ($wo.t | disp))}
-		else null end) as $blk
+	evs as $ev
 	| ($ev | map(select(.k == "deny")) | first) as $gd
+	| ($ev | map(select(.k == "block")) | first) as $b
 	| if $gd != null then "deny", $gd.m
-		elif $blk != null then "block", "`\($blk.p)` and writes with `\($blk.w)`"
-		else (if any($ev[]; .k == "dyn") then "dyn" else "pass" end),
-			(if any($ev[]; .k == "gh") then "gh" else "nogh" end),
-			($ev[] | select(.k == "str") | {v: .v, c: .c} | tojson) end
+		elif $b != null then "block", "`\($b.p)` and writes with `\($b.w)`"
+		else "pass", (if any($ev[]; .k == "gh") then "gh" else "nogh" end),
+			($ev[] | select(.k == "str") | {v: .v} | tojson) end
 end'
-# What the tree can't settle falls back to the text check: a command that names gate state or the installed gate
-# writes when it runs a writing tool or redirects anywhere but a descriptor or /dev/null. A quoted `>` counts:
-# `sh -c "… > f"`. It reads the raw command and its words with their quoting removed, so it also catches what a
-# variable or substitution hides from the tree.
-text_tamper() {
-	# `chattr` as a word of a command the tree couldn't settle (`c=chattr; $c -i x`): it can't tell the command from an argument,
-	# so it blocks (docs/gate.md › Tamper protection).
-	if printf '%s' "$cmd_all" | grep -Eq '(^|[^[:alnum:]_.-])chattr([^[:alnum:]_.-]|$)'; then
-		echo "Blocked: chattr sets and lifts the immutable flag that locks the installed review gate. Only the user changes it: ask them to run \`! sudo chattr -i <path>\`. (This command has parts the gate can't read, and names chattr.)" >&2
-		exit 2
-	fi
-	protected=$(printf '%s' "$cmd_all" |
-		grep -Eo "(~|$HOME|\\\$HOME)/\.claude/(hooks|git-hooks|settings|skills/ship|agents/ship-|bin/)[^[:space:]]*|[^[:space:]]*\.git/review-gate[^[:space:]]*|/etc/+claude-code([^[:alnum:]_.-][^[:space:]]*|\$)|disableAllHooks" | head -1)
-	if [ -n "$protected" ]; then
-		write=$(printf '%s' "$cmd_all" |
-			sed -E 's/[0-9]*>&([0-9]+|-)['\''"]?([[:space:];&|)]|$)/\2/g; s#(&|[0-9]*)>>?[|]?[[:space:]]*/dev/(null|stdout|stderr)['\''"]?([[:space:];&|)]|$)#\3#g' |
-			grep -Eo '[^[:space:]]*>[^[:space:]]*([[:space:]]+[^[:space:];&|]+)?' | head -1)
-		[ -n "$write" ] || write=$(printf '%s' "$cmd_all" |
-			grep -Eo '(^|[^[:alnum:]_-])(rm|touch|cp|mv|ln|tee|install|truncate|dd|chmod|sed[[:space:]]+(-[a-zA-Z]*i|--in-place)|python3?|perl|node|nodejs|ruby|php|curl|wget|tar|rsync|scp|sponge)([^[:alnum:]_-]|$)' |
-			head -1 | sed -E 's/^[^[:alpha:]]//; s/[^[:alpha:]]$//')
-		if [ -n "$write" ]; then
-			echo "Blocked: don't change the review gate's state, script, prompts or settings; reading its reports is fine. This command names \`$protected\` and writes with \`$write\`." >&2
-			exit 2
-		fi
-	fi
-}
 # Walks the tree, then the strings it runs as shell (`sh -c`, `eval`) to a depth of 3, each parsed again. A string
-# that doesn't parse, or sits deeper, is dynamic. The same walk finds whether a `gh` is named anywhere (gh_seen, for the
-# `gh api` scan below: docs/gate.md › Command reading); a string it can't read counts as one.
-tamper_dyn=0
+# that doesn't parse, or sits deeper, is not read by the tamper check; it counts as naming a `gh`, since the `gh api` scan
+# below can't tell (gh_seen: a `gh` is named anywhere; docs/gate.md › Command reading).
 gh_seen=0
-printf '%s' "$cmd_all" | grep -q disableAllHooks && tamper_dyn=1
 tamper_nl=$(printf '\n_')
 tamper_nl=${tamper_nl%_}
 pending=
 depth=0
 cur=$tree
-cur_c=null
 while [ -n "$cur" ]; do
-	# One jq run per tree: its first line is the verdict (block, dyn, pass, or bad for something that is no tree), and
-	# the rest the message of a block, or `gh` or `nogh` and the strings the command runs as shell, one
-	# JSON object per line ({v: the string, c: the directories it runs in}).
-	res=$(printf '%s' "$cur" | jq -r --arg prot "$prot_re" --arg protr "$prot_res" --arg home "$hn" --arg user "$user" \
-		--arg cwd "$cwd" --argjson cands "$cur_c" "$tamper_jq") || unreadable "command syntax tree"
+	# One jq run per tree: its first line is the verdict (deny, block, pass, or bad for something that is no tree), and
+	# the rest the message of a deny or a block, or `gh` or `nogh` and the strings the command runs as shell, one
+	# JSON object per line ({v: the string}).
+	res=$(printf '%s' "$cur" | jq -r --arg protr "$prot_res" --arg narrowr "$narrow_res" --arg home "$hn" --arg user "$user" \
+		--arg cwd "$cwd" --arg dah "$dah" "$tamper_jq") || unreadable "command syntax tree"
 	verdict=${res%%"$tamper_nl"*}
 	rest=
 	case $res in *"$tamper_nl"*) rest=${res#*"$tamper_nl"} ;; esac
 	case $verdict in
-	dyn | pass)
+	pass)
 		gg=${rest%%"$tamper_nl"*}
 		case $rest in
 		*"$tamper_nl"*) rest=${rest#*"$tamper_nl"} ;;
@@ -653,12 +483,10 @@ while [ -n "$cur" ]; do
 		echo "Blocked: $rest" >&2
 		exit 2
 		;;
-	dyn) tamper_dyn=1 ;;
 	pass) ;;
 	bad)
 		# Only a string run as shell can fail to make a tree: the command's own parse was checked above.
 		[ "$depth" != 0 ] || unreadable "command syntax tree"
-		tamper_dyn=1
 		gh_seen=1
 		;;
 	*) unreadable "command syntax tree" ;;
@@ -681,20 +509,16 @@ while [ -n "$cur" ]; do
 		esac
 		depth=${item%% *}
 		if [ "$depth" -gt 3 ]; then
-			tamper_dyn=1
 			gh_seen=1
 			continue
 		fi
 		text=$(printf '%s' "${item#* }" | jq -r '.v') || unreadable "command syntax tree"
-		cur_c=$(printf '%s' "${item#* }" | jq -c '.c') || unreadable "command syntax tree"
 		if ! cur=$(printf '%s' "$text" | "$shfmt" -ln bash --to-json 2>/dev/null) || [ -z "$cur" ]; then
-			tamper_dyn=1
 			gh_seen=1
 			cur=
 		fi
 	done
 done
-[ "$tamper_dyn" = 0 ] || text_tamper
 # The push shape, read from the same tree (docs/gate.md › Push shape). The gate starts a review for a canonical push only and
 # leaves every other command to the pre-push check (docs/gate.md › Command reading). A canonical push is one statement that is
 # `git push ARGS` (git or PATH/git, whatever global options come before `push`), either alone or after leading `cd ARGS &&`

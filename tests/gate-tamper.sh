@@ -1,7 +1,9 @@
 #!/bin/sh
-# Tests the review gate's check against Bash commands that write its own files and state: a write blocks,
-# while reading them, or redirecting only to another descriptor or /dev/null, passes (claude-ship #21).
-# The commands are literal text for the gate to read, so `~` in them must stay unexpanded.
+# Tests the review gate's tamper check: a Bash command that names a protected path literally and writes it blocks; anything
+# else passes (docs/gate.md › Tamper protection). The check reads the command's syntax tree and compares only literal
+# words, so what a command builds at run time, a `cd`, an interpreter and the like are out of its scope: the installed
+# files are immutable (chattr +i) and that flag holds them. The commands are literal text for the gate to read, so `~` in
+# them must stay unexpanded.
 # shellcheck disable=SC2088
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -16,10 +18,36 @@ printf '#!/bin/sh\necho true\n' >"$tmp/bin/gh"
 chmod +x "$tmp/bin/gh"
 fail=0
 
-# expect <exit code> <command>: runs the gate on a Bash call of the command, outside any git repo.
-expect() {
-	jq -nc --arg c "$2" --arg d "$tmp" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
-		HOME=$tmp/home PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+# gate_call <stderr file> <working directory> <command>: runs the gate on a Bash call of the command, outside any git repo.
+gate_call() {
+	jq -nc --arg c "$3" --arg d "$2" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		HOME=$tmp/home PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$1"
+}
+# expectc <exit code> <working directory> <command>: checks the gate's exit code for the command. The cases run a few at a
+# time in the background (each gate run is a handful of processes, and there are hundreds) and report into $tmp/fails.
+n=0
+: >"$tmp/fails"
+expectc() {
+	n=$((n + 1))
+	(
+		gate_call "$tmp/err.$n" "$2" "$3"
+		rc=$?
+		if [ "$rc" != "$1" ]; then
+			out=$(
+				printf 'FAIL (exit %s, want %s; cwd %s): %s\n' "$rc" "$1" "$2" "$3"
+				sed 's/^/  /' "$tmp/err.$n"
+			)
+			printf '%s\n' "$out" >>"$tmp/fails"
+		fi
+	) &
+	[ $((n % 8)) != 0 ] || wait
+}
+# expect <exit code> <command>: the same from an unprotected working directory.
+expect() { expectc "$1" "$tmp" "$2"; }
+# expect_err <exit code> <command>: one case run on its own, leaving the gate's message in $tmp/err.
+expect_err() {
+	wait
+	gate_call "$tmp/err" "$tmp" "$2"
 	rc=$?
 	if [ "$rc" != "$1" ]; then
 		echo "FAIL (exit $rc, want $1): $2"
@@ -28,211 +56,8 @@ expect() {
 	fi
 }
 
-# Reads and descriptor-only redirects pass.
-expect 0 '~/.claude/skills/ship/codex-request.sh 29 2>&1 | tail -3'
-expect 0 '~/.claude/skills/ship/codex-wait.sh 29 2>/dev/null'
-expect 0 '~/.claude/skills/ship/codex-wait.sh 29 >/dev/null 2>&1'
-expect 0 '~/.claude/skills/ship/codex-wait.sh 29 &>/dev/null'
-expect 0 'ls ~/x/.git/review-gate/ >&2'
-expect 0 'cat ~/.claude/hooks/review-prompt.md'
-expect 0 "sh -c 'cat ~/.claude/hooks/review-gate.sh >/dev/null'"
-expect 0 'sh -c "cat ~/.claude/hooks/review-gate.sh 2>&1"'
-expect 0 "sh -c 'cat ~/.claude/hooks/review-gate.sh >&2'"
-expect 0 '~/.claude/hooks/p3-issue.sh acme/app /tmp/s/finding.json 2>&1'
-expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-request.sh 29 2>&1 | tail"'
-
-# Writes block, by redirect or by tool.
-expect 2 'echo x > ~/.claude/hooks/review-gate.sh'
-expect 2 'echo x >> $HOME/.claude/settings.json'
-expect 2 'echo x 2>&1 >~/.claude/hooks/x'
-expect 2 'echo x &> ~/.claude/hooks/x'
-expect 2 'echo x >| ~/.claude/hooks/x'
-expect 2 'echo x 2>/dev/null >~/.claude/skills/ship/SKILL.md'
-expect 2 'echo x >/dev/null,~/.claude/skills/ship/SKILL.md'
-expect 2 'cat ~/.claude/hooks/review-gate.sh >/dev/null,x'
-expect 2 'cat ~/.claude/hooks/review-gate.sh >&2,x'
-expect 2 "cat ~/.claude/hooks/review-gate.sh >/dev/null'x'"
-expect 2 "cat ~/.claude/hooks/review-gate.sh >&2'.txt'"
-expect 2 ': > /repo/.git/review-gate/abc.pass'
-expect 2 'cd ~/.claude/hooks && echo x >review-gate.sh'
-# `>&1/…` is a file named after the digits, not a descriptor.
-expect 2 ': >&1/../.git/review-gate/abc.waived'
-expect 2 ': 2>&-x/.git/review-gate/abc.pass'
-expect 2 "echo \$'x' > ~/.claude/hooks/x"
-# A quoted `>` may still redirect, inside a shell or interpreter the command runs.
-expect 2 'sh -c "echo x > ~/.claude/hooks/review-gate.sh"'
-expect 2 "bash -c 'echo x >> ~/.claude/settings.json'"
-expect 2 "eval 'echo x > /repo/.git/review-gate/abc.pass'"
-expect 2 "awk 'BEGIN { print \"x\" > \"/repo/.git/review-gate/abc.pass\" }'"
-expect 2 'gh issue create --title t --body "echo x > ~/.claude/hooks/x"'
-expect 2 'cp /tmp/x ~/.claude/hooks/review-gate.sh'
-expect 2 'echo x | tee ~/.claude/skills/ship/SKILL.md'
-expect 2 'sed -i s/a/b/ ~/.claude/hooks/review-prompt.md'
-expect 2 'echo x > ~/.claude/hooks/review-lib.sh'
-expect 0 'cat ~/.claude/hooks/review-lib.sh'
-expect 2 'rm -rf /repo/.git/review-gate'
-expect 2 'jq ".disableAllHooks = true" s.json > .claude/settings.local.json'
-expect 2 'echo x > ~/.claude/agents/ship-implementer.md'
-expect 2 'cp /tmp/x $HOME/.claude/agents/ship-explorer.md'
-expect 0 'cat ~/.claude/agents/ship-implementer.md'
-# Other agents are the user's own, outside the gate's files.
-expect 0 'echo x > ~/.claude/agents/mine.md'
-
-# The check reads the command's syntax tree (shfmt), so a protected path in a file name, a quoted string or a heredoc
-# body is not a write (claude-ship #135, #40).
-expect 0 'head -15 agents/ship-explorer.md; ls hooks; grep -n "permissionDecision\|allow" hooks/explorer-bash.sh | head; grep -n "settings" install.sh | head; jq '"'.permissions'"' ~/.claude/settings.json'
-expect 0 'ls >"/dev/null" ~/.claude/hooks'
-expect 0 'cat ~/.claude/hooks/review-gate.sh 2>"/dev/null"'
-expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-wait.sh <PR> stalls"'
-expect 0 'rm .git/claude-ship/plan-x.md && ls -l ~/.claude/agents/ship-codex.md'
-expect 0 'cat <<EOF
-rm ~/.claude/hooks/x is what the old check read as a write
-EOF'
-expect 0 "git commit -m 'docs: cp of ~/.claude/hooks/x is read-only'"
-# Accepted by the owner (#135): the text check blocked both, the tree reads a message and a read as what they are.
-expect 0 'git commit -m "fix: rm ~/.claude/hooks/x"'
-expect 0 'cat ~/.claude/hooks/x | tee /tmp/y'
-# A command that names a protected path and writes a file elsewhere blocks, as it did before; /dev/null is no file.
-expect 2 'echo x >/tmp/y && cat ~/.claude/hooks/x | head -3'
-expect 0 'echo x >/dev/null && cat ~/.claude/hooks/x | head -3 2>&1'
-# A write command with a protected literal argument blocks even when it only reads that file (cp's source): that is
-# stricter than needed, and it is what the text check did.
-expect 2 'cp ~/.claude/hooks/review-gate.sh /tmp/x'
-
-# Writes the tree shows through wrappers, nested shells, find and redirects.
-expect 2 "bash -c 'rm ~/.claude/hooks/review-gate.sh'"
-expect 2 'eval "rm ~/.claude/hooks/review-gate.sh"'
-expect 2 'd=~/.claude/hooks; rm $d/review-gate.sh'
-expect 2 'cd ~/.claude/hooks && rm review-gate.sh'
-expect 2 'find ~/.claude/hooks -name x -exec rm {} +'
-expect 2 'find ~/.claude/hooks -name x -exec rm {} \;'
-expect 2 'find ~/.claude/hooks -name x -delete'
-# A shell that find or xargs hands arguments to runs on files the command line doesn't show.
-expect 2 "find ~/.claude/hooks -type f -exec sh -c 'rm {}' \\;"
-expect 2 "ls ~/.claude/hooks | xargs sh -c 'rm \"\$@\"' x"
-expect 0 "find . -name '*.md' -exec grep -l x {} +"
-expect 2 'env FOO=1 rm ~/.claude/hooks/x'
-expect 2 'sudo tee ~/.claude/settings.json </tmp/x'
-expect 2 'echo x | tee -a ~/.claude/hooks/x'
-expect 2 'echo x >~/.claude/bin/shfmt'
-expect 2 'cp /tmp/x ~/.claude/bin/shfmt'
-expect 2 'nice -n 5 timeout 9 rm ~/.claude/hooks/x'
-expect 2 'command rm ~/.claude/hooks/x'
-expect 2 'echo ~/.claude/hooks/x | xargs rm'
-expect 2 'echo $(rm ~/.claude/hooks/x)'
-expect 2 'cat <<EOF
-$(rm ~/.claude/hooks/x)
-EOF'
-expect 2 'sh -c "bash -c \"rm ~/.claude/hooks/x\""'
-expect 2 'echo rm ~/.claude/hooks/x | sh'
-expect 2 'python3 - <<EOF
-open("/x/.git/review-gate/a.pass", "w")
-EOF'
-expect 2 'cat ~/.claude/hooks/x >/tmp/copy'
-expect 2 'sed -ni s/a/b/ ~/.claude/hooks/review-prompt.md'
-expect 2 'sed --in-place s/a/b/ ~/.claude/settings.json'
-expect 0 'sed -n s/a/b/p ~/.claude/hooks/review-prompt.md'
-# A write redirect's target is read from the tree, not from the text around it.
-expect 2 ': >&1/../.git/review-gate/abc.waived'
-expect 2 'echo x 2>~/.claude/hooks/x'
-expect 2 'echo x >"~/.claude/hooks/x"'
-expect 2 "echo x >'~/.claude/hooks/x'"
-expect 2 'echo x <>~/.claude/hooks/x'
-expect 2 'echo x &>>~/.claude/hooks/x'
-expect 2 'echo x &>~/.claude/hooks/x'
-expect 2 'echo x >|~/.claude/hooks/x'
-expect 2 '{ echo x; } > ~/.claude/hooks/x'
-expect 0 'cat < ~/.claude/hooks/x'
-expect 0 'cat <~/.claude/hooks/x >/dev/stdout'
-# What the tree can't settle falls back to the text check (a variable, a command substitution or a glob in a word,
-# a protected `cd`, `disableAllHooks`): it reads `cat $(echo …)` as it always did, a read, and blocks a write.
-expect 0 'cat $(echo ~/.claude/hooks/x)'
-expect 2 'rm $(echo ~/.claude/hooks/x)'
-expect 2 'rm ~/.claude/hooks/*'
-expect 2 'x=1; rm ~/.claude/hooks/$x'
-expect 2 'pushd ~/.claude/hooks && echo x >review-gate.sh'
-expect 2 'cd "$HOME/.claude/hooks" && echo x >review-gate.sh'
-expect 2 'echo disableAllHooks >.claude/settings.local.json'
-expect 0 'echo disableAllHooks'
-# Only literal words are read as paths: a variable holding the path hides it from the tree, and the fallback sees it.
-expect 2 'f=~/.claude/hooks/x; echo y >$f'
-expect 2 'f=~/.claude/hooks/x; echo y | tee $f'
-# Escapes and quoting inside a word are resolved, not matched as text.
-expect 2 'rm ~/.claude/ho\oks/x'
-expect 2 "rm ~/.claude/'hooks'/x"
-expect 2 'rm ~/.claude/"hooks"/x'
-expect 2 'rm ~/.claude/ho""oks/x'
-
-# The git hook stubs (the pre-push check) are protected like the hooks.
-expect 2 'rm ~/.claude/git-hooks/pre-push'
-expect 2 'echo exit 0 > ~/.claude/git-hooks/pre-push'
-expect 2 'sh -c "chmod -x ~/.claude/git-hooks/pre-push"'
-expect 2 "echo x >$tmp/home/.claude/git-hooks/pre-commit"
-expect 2 'cd ~/.claude && rm git-hooks/pre-push'
-expect 0 'cat ~/.claude/git-hooks/pre-push'
-expect 0 'ls ~/.claude/git-hooks-notes'
-# The home directory written out is as protected as `~`.
-expect 2 "rm $tmp/home/.claude/hooks/x"
-expect 2 "echo x >$tmp/home/.claude/settings.json"
-# Every construct that runs a command reaches the tree walk.
-expect 2 "sh -xc 'rm ~/.claude/hooks/x'"
-expect 2 'time rm ~/.claude/hooks/x'
-expect 2 '! rm ~/.claude/hooks/x'
-expect 2 'if true; then rm ~/.claude/hooks/x; fi'
-expect 2 'f() { rm ~/.claude/hooks/x; }; f'
-expect 2 'diff <(rm ~/.claude/hooks/x) /dev/null'
-expect 2 'true && { rm ~/.claude/hooks/x; }'
-expect 2 '(cd /tmp; rm ~/.claude/hooks/x)'
-# A writing tool behind a wrapper the gate doesn't list, or a `>` in one word with a protected path in another (an awk
-# program next to its file), is read by the text check, as before (the gate's own review of this change, #135).
-expect 2 'flock /tmp/l rm ~/.claude/hooks/x'
-expect 2 'watch rm ~/.claude/hooks/x'
-expect 2 'ionice -c3 rm ~/.claude/hooks/x'
-expect 2 'busybox rm ~/.claude/hooks/x'
-expect 2 'taskset 1 cp /tmp/x ~/.claude/hooks/x'
-expect 2 'strace -o /tmp/t sed -i s/a/b/ ~/.claude/hooks/x'
-# A word that is a command line (it starts with a writing tool, or one follows `;`, `&`, `|`, `(`, `{` or a quote) and
-# names a protected path writes: `watch 'rm …'`, `su -c`, `ssh host '…'`, awk's system(). Prose that mentions a tool
-# (a commit message, an issue body) is not a command line.
-expect 2 "awk 'BEGIN{system(\"rm ~/.claude/hooks/x\")}'"
-expect 2 "watch 'rm ~/.claude/hooks/x'"
-expect 2 "su -c 'rm ~/.claude/hooks/x'"
-expect 2 "ssh host 'cd /tmp; rm ~/.claude/hooks/x'"
-expect 2 "flock -c 'sudo tee ~/.claude/settings.json' /tmp/l"
-expect 2 "ssh host 'echo y | tee -a ~/.claude/hooks/x'"
-expect 0 'gh issue create --title t --body "the rm of ~/.claude/hooks/x and a cp of ~/.claude/settings.json"'
-expect 0 "ssh host 'cat ~/.claude/hooks/x'"
-expect 0 "watch 'sed -n 1p ~/.claude/hooks/x'"
-expect 0 'ionice -c3 ls ~/.claude/hooks'
-expect 0 'flock /tmp/l ls ~/.claude/hooks'
-expect 2 "awk '{ print > \"out\" }' ~/.claude/hooks/x"
-expect 2 "awk '{ print > \"/tmp/o\" }' ~/.claude/settings.json"
-expect 0 "awk '{ print }' ~/.claude/settings.json"
-# A wrapper option the gate doesn't know, a script on stdin and a pipe into a writing tool fall back to the text.
-expect 2 'sudo -i rm ~/.claude/hooks/x'
-expect 2 'timeout --bogus 5 rm ~/.claude/hooks/x'
-expect 2 "env -S 'rm ~/.claude/hooks/x'"
-expect 2 'ls ~/.claude/hooks | xargs rm'
-expect 0 'ls ~/.claude/hooks | xargs ls -l'
-expect 2 'bash <<EOF
-rm ~/.claude/hooks/x
-EOF'
-expect 0 'bash <<EOF
-ls ~/.claude/hooks
-EOF'
-expect 0 'sh tests/gate-tamper.sh'
-expect 0 "sh -c 'ls ~/.claude/hooks'"
-# Shells nested past the depth cap fall back too.
-nest='rm ~/.claude/hooks/x'
-for _ in 1 2 3 4 5; do nest="sh -c '$(printf '%s' "$nest" | sed "s/'/'\\\\''/g")'"; done
-expect 2 "$nest"
-nest='ls ~/.claude/hooks'
-for _ in 1 2 3 4 5; do nest="sh -c '$(printf '%s' "$nest" | sed "s/'/'\\\\''/g")'"; done
-expect 0 "$nest"
-
-# A protected path is compared after it is resolved, not as the text it was written as (claude-ship #187): `.`, `//` and
-# `..`, a relative path after `cd`, `$HOME`, `~user`, and a glob, brace or variable below ~/.claude.
-user=$(id -un)
+h=$tmp/home
+# `up` goes from the working directory ($tmp) to the root: a relative path that reaches / again.
 depth=$(printf '%s' "$tmp" | tr -cd / | wc -c)
 up=
 i=0
@@ -240,202 +65,495 @@ while [ "$i" -lt "$depth" ]; do
 	up=$up../
 	i=$((i + 1))
 done
-rel=${tmp#/}/home/.claude/hooks/x
-expect 2 'rm ~/.claude/./hooks/review-gate.sh'
-expect 2 'rm ~/.claude//hooks/review-gate.sh'
-expect 2 'rm ~/.claude/hooks/./review-gate.sh'
-expect 2 'rm ~/.claude/x/../hooks/review-gate.sh'
+
+# --- What blocks -----------------------------------------------------------------------------------------------------
+
+# Each writing tool against each protected root, in the three forms a path is written: `~`, `$HOME` and the home directory
+# itself. The writers are cp mv rm rmdir ln install tee touch truncate dd rsync unlink shred mkdir chmod chown chgrp tar
+# unzip patch, and sed and perl with an in-place option; `@` stands for the path. The form rotates with the writer and the
+# root, so every pair has one form, and each writer and each root gets all three.
+writers='cp /tmp/x @|mv /tmp/x @|rm -rf @|rmdir @|ln -s /tmp/x @|install -m 644 /tmp/x @|tee @|touch @|truncate -s 0 @|dd of=@|rsync /tmp/x @|unlink @|shred @|mkdir @|chmod 600 @|chown me @|chgrp me @|tar xf a.tar -C @|unzip a.zip -d @|patch @ /tmp/p|sed -i s/a/b/ @|perl -pi -e s/a/b/ @'
+# The roots below ~/.claude (hooks, settings, skills/ship, agents/ship-, bin/, git-hooks); the managed directory and the
+# gate's state follow, which have no `~` form.
+claude_roots='hooks/review-gate.sh settings.json skills/ship/SKILL.md agents/ship-implementer.md bin/shfmt git-hooks/pre-push'
+oldifs=$IFS
+IFS='|'
+set -f
+# shellcheck disable=SC2086 # the writer list is split on `|` on purpose
+set -- $writers
+set +f
+IFS=$oldifs
+wi=0
+for w in "$@"; do
+	ri=0
+	for r in $claude_roots; do
+		case $(((wi + ri) % 3)) in
+		0) p="~/.claude/$r" ;;
+		1) p="\$HOME/.claude/$r" ;;
+		2) p="$h/.claude/$r" ;;
+		esac
+		expect 2 "$(printf '%s' "$w" | sed "s#@#$p#")"
+		ri=$((ri + 1))
+	done
+	for p in /etc/claude-code/managed-settings.d/claude-ship.json /repo/.git/review-gate/abc.pass .git/review-gate/abc.pass; do
+		expect 2 "$(printf '%s' "$w" | sed "s#@#$p#")"
+	done
+	wi=$((wi + 1))
+done
+# The directories themselves, and the managed directory, are protected like what is in them.
+expect 2 'rm -rf ~/.claude/hooks'
+expect 2 'rm -rf ~/.claude/skills/ship'
+expect 2 'mv ~/.claude/bin /tmp/bin'
+expect 2 'rm -rf /etc/claude-code'
+expect 2 'rm -rf .git/review-gate'
+expect 2 'rm -rf /repo/.git/review-gate'
+
+# Redirects, in every form of every root.
+for r in $claude_roots; do
+	for p in "~/.claude/$r" "\$HOME/.claude/$r" "\"\${HOME}/.claude/$r\"" "$h/.claude/$r"; do
+		expect 2 "echo x > $p"
+		expect 2 "echo x >> $p"
+	done
+done
+for p in /etc/claude-code/managed-settings.json /repo/.git/review-gate/abc.pass .git/review-gate/abc.waived; do
+	expect 2 "echo x > $p"
+	expect 2 "echo x >> $p"
+done
+expect 2 'echo x 2>&1 >~/.claude/hooks/x'
+expect 2 'echo x 2>~/.claude/hooks/x'
+expect 2 'echo x &> ~/.claude/hooks/x'
+expect 2 'echo x &>> ~/.claude/hooks/x'
+expect 2 'echo x >| ~/.claude/hooks/x'
+expect 2 'echo x <>~/.claude/hooks/x'
+expect 2 'echo x 2>/dev/null >~/.claude/skills/ship/SKILL.md'
+expect 2 '{ echo x; } > ~/.claude/hooks/x'
+expect 2 ': > /repo/.git/review-gate/abc.pass'
+expect 2 ': >&1/../.git/review-gate/abc.waived'
+expect 2 ': 2>&-x/.git/review-gate/abc.pass'
+expect 2 'echo x >"~/.claude/hooks/x"'
+expect 2 "echo x >'~/.claude/hooks/x'"
+expect 2 'echo x > ~/.claude/agents/ship-implementer.md'
+expect 2 "echo x >$h/.claude/git-hooks/pre-commit"
+expect 2 'cat >~/.claude/hooks/x <<EOF
+data
+EOF'
+expect 2 'cat <<EOF >~/.claude/hooks/x
+data
+EOF'
+
+# A write anywhere in the tree: after a pipe, in a chain, in a substitution, a block, an `if`, a function, a subshell, after
+# `!` or `time`. Every simple command in it is read.
+expect 2 'echo x | tee -a ~/.claude/hooks/x'
+expect 2 'echo $(rm ~/.claude/hooks/x)'
+expect 2 'echo `rm ~/.claude/hooks/x`'
+expect 2 'cat <<EOF
+$(rm ~/.claude/hooks/x)
+EOF'
+expect 2 'diff <(rm ~/.claude/hooks/x) /dev/null'
+expect 2 'true && { rm ~/.claude/hooks/x; }'
+expect 2 '(cd /tmp; rm ~/.claude/hooks/x)'
+expect 2 'if true; then rm ~/.claude/hooks/x; fi'
+expect 2 'f() { rm ~/.claude/hooks/x; }; f'
+expect 2 '! rm ~/.claude/hooks/x'
+expect 2 'time rm ~/.claude/hooks/x'
+expect 2 'rm /tmp/y && rm ~/.claude/hooks/x'
+expect 2 'ls | rm ~/.claude/hooks/x'
+expect 2 'gh issue create --title t --body "$(rm ~/.claude/hooks/x)"'
+
+# The wrappers `eff` knows, and `find`.
+expect 2 'env FOO=1 rm ~/.claude/hooks/x'
+expect 2 'sudo tee ~/.claude/settings.json </tmp/x'
+expect 2 'nice -n 5 timeout 9 rm ~/.claude/hooks/x'
+expect 2 'command rm ~/.claude/hooks/x'
+expect 2 '/bin/rm ~/.claude/hooks/x'
+expect 2 'find ~/.claude/hooks -name x -exec rm {} +'
+expect 2 'find ~/.claude/hooks -name x -exec rm {} \;'
+expect 2 'find ~/.claude/hooks -name x -delete'
+# A string a shell runs is parsed again, to a depth of 3.
+expect 2 "bash -c 'rm ~/.claude/hooks/review-gate.sh'"
+expect 2 'sh -c "echo x > ~/.claude/hooks/review-gate.sh"'
+expect 2 "sh -xc 'rm ~/.claude/hooks/x'"
+expect 2 'eval "rm ~/.claude/hooks/review-gate.sh"'
+expect 2 "eval 'echo x > /repo/.git/review-gate/abc.pass'"
+expect 2 'sh -c "bash -c \"rm ~/.claude/hooks/x\""'
+expect 2 'sh -c "chmod -x ~/.claude/git-hooks/pre-push"'
+
+# The edge cases of the path: absolute, doubled slashes, `.` and `..`, quoting, and the working directory for a relative word.
+expect 2 "rm $h/.claude/hooks/x"
+expect 2 "rm /$h//.claude//hooks/x"
+expect 2 'rm ~/.claude/./hooks/x'
+expect 2 'rm ~/.claude//hooks/x'
+expect 2 'rm ~/.claude/hooks/./x'
+expect 2 'rm ~/.claude/hooks/../hooks/x'
+expect 2 'rm ~/.claude/projects/../hooks/x'
+expect 2 "rm $h/../home/.claude/hooks/x"
+expect 2 "rm $up${tmp#/}/home/.claude/hooks/x"
 expect 2 'echo x > ~/.claude/./hooks/review-gate.sh'
 expect 2 'echo x > ~/.claude/hooks/../hooks/x'
-expect 2 'cd ~/.claude && rm hooks/review-gate.sh'
-expect 2 'cd ~ && rm .claude/hooks/review-gate.sh'
-expect 2 'cd ~/.claude; rm hooks/review-gate.sh'
-expect 2 'cd ~/.claude/hooks && echo x > review-gate.sh'
-expect 2 'cd ~/.claude && echo x > settings.json'
-expect 2 'cd ~/.claude && cd hooks && rm review-gate.sh'
-expect 2 'cd ~/.claude && (cd hooks && rm x)'
-expect 2 "cd / && rm $rel"
-expect 2 "rm $up$rel"
-expect 2 "rm $up${tmp#/}//home/.claude/hooks/x"
-expect 2 "rm $tmp//home/.claude/hooks/x"
-expect 2 "rm $tmp/home/../home/.claude/hooks/x"
-expect 2 "echo x > $up$rel"
+expect 2 'rm ~/.claude/ho\oks/x'
+expect 2 "rm ~/.claude/'hooks'/x"
+expect 2 'rm ~/.claude/"hooks"/x'
+expect 2 'rm ~/.claude/ho""oks/x'
 expect 2 'rm "$HOME/.claude/hooks/x"'
 expect 2 'rm ${HOME}/.claude/hooks/x'
-expect 2 'rm $HOME/.claude/hooks/x'
-expect 2 'echo x > "${HOME}/.claude/hooks/x"'
-expect 2 "rm ~$user/.claude/hooks/x"
-expect 2 'rm ~nobody/.claude/hooks/x'
-expect 2 'x=hooks; rm ~/.claude/$x/review-gate.sh'
-expect 2 'rm ~/.claude/hook?/review-gate.sh'
-expect 2 'rm ~/.claude/{hooks,y}/review-gate.sh'
-expect 2 'rm ~/.claude/hooks/review-gat?.sh'
-expect 2 'x=1; echo y > ~/.claude/$x/review-gate.sh'
-expect 2 'true || cd ~/.claude; rm hooks/review-gate.sh'
-expect 2 'if true; then cd ~/.claude; fi; rm hooks/x'
-expect 2 'for d in a; do cd ~/.claude; done; rm hooks/x'
-expect 2 'f() { cd ~/.claude; }; f; rm hooks/x'
-expect 2 'cd ~/.claude || exit; rm hooks/x'
-expect 2 'cd ~/.claude && sh -c "rm hooks/x"'
-expect 2 'cd ~/.claude && eval "rm hooks/x"'
-expect 2 'cd ~/.claude && env FOO=1 rm hooks/x'
-expect 2 'cd ~/.claude && nice -n 5 rm hooks/x'
-expect 2 'cd ~/.claude && timeout 9 rm hooks/x'
-expect 2 'cd ~/.claude && sudo rm hooks/x'
-expect 2 'cd ~/.claude && command rm hooks/x'
-expect 2 'cd ~/.claude && xargs rm hooks/x'
-# A `cd` after the first command of an `&&` chain may not run, so the directory before it stays a candidate.
-expect 2 'cd ~/.claude; false && cd /tmp; rm hooks/x'
-expect 2 'cd ~/.claude; true && cd /tmp && echo ok; rm hooks/x'
-expect 2 'env -C ~/.claude rm hooks/x'
-expect 2 'env --chdir=~/.claude rm hooks/x'
-expect 2 'sudo -D ~/.claude rm hooks/x'
-expect 2 'cd ~/.claude/projects/x && rm ../../hooks/y'
-expect 2 'cd ~/.claude/projects && cd .. && rm hooks/x'
-expect 2 'cd ~/.claude && rm hook*/x'
-expect 2 'cd ~/.claude && rm -rf hooks'
-expect 2 'cd ~/.claude && find hooks -name x -exec rm {} +'
-expect 2 'echo $(cd ~/.claude && rm hooks/x)'
-expect 2 'cd ~/.claude && echo `rm hooks/x`'
-expect 2 'cd ~/.claude && { rm hooks/x; }'
-expect 2 'cd ~/.claude && cat hooks/x > /tmp/y'
-expect 2 'cd ~/.claude && curl -o hooks/x URL'
-expect 2 'cd ~/.claude && dd of=hooks/x'
-expect 2 'cp --target-directory=~/.claude/./hooks a'
-expect 2 'rm ~/.claude/./hooks/x ~/.claude/projects/p/memory/x.md'
-expect 2 'curl -o ~/.claude/hooks/x URL'
-expect 2 'curl -o ~/.claude/./hooks/x URL'
-expect 2 'curl --output ~/.claude/hooks/x URL'
-expect 2 'curl --output=~/.claude/hooks/x URL'
-expect 2 'curl -sSLo ~/.claude/hooks/x URL'
-expect 2 "curl -o$tmp/home/.claude/hooks/x URL"
-expect 2 'cd ~/.claude/hooks && curl -O URL'
-expect 2 'curl --remote-name --output-dir ~/.claude/hooks URL'
-expect 2 'wget -O ~/.claude/settings.json URL'
-expect 2 'wget -qO ~/.claude/hooks/x URL'
-expect 2 'wget -P ~/.claude/hooks URL'
-expect 2 'wget --directory-prefix=~/.claude/hooks URL'
-expect 2 'cd ~/.claude/hooks && wget URL'
-expect 2 'tar -C ~/.claude/hooks -xf a.tar'
-expect 2 'tar xf a.tar -C ~/.claude/hooks'
-expect 2 'tar --directory=~/.claude/hooks -xf a.tar'
-expect 2 'tar -cf ~/.claude/hooks/a.tar x'
-expect 2 'tar cf ~/.claude/bin/a.tar x'
-expect 2 'tar --create --file ~/.claude/hooks/a.tar x'
-expect 2 'cd ~/.claude/hooks && tar xf a.tar'
-expect 2 'rsync a ~/.claude/hooks/'
-expect 2 'rsync -a --delete src/ ~/.claude/hooks'
-expect 2 'scp h:a ~/.claude/bin/'
-expect 2 'echo x | sponge ~/.claude/settings.json'
-expect 2 'sponge -a ~/.claude/hooks/x'
-expect 2 "node -e 'require(\"fs\").rmSync(process.argv[1])' ~/.claude/hooks/x"
-expect 2 "ruby -e 'File.delete(ARGV[0])' ~/.claude/hooks/x"
-expect 2 "php -r 'unlink(\$argv[1]);' ~/.claude/hooks/x"
-expect 2 'git -C ~/.claude/hooks checkout .'
-expect 2 'git -C ~/.claude commit -am x'
-expect 2 'git -C ~/.claude/./skills/ship reset --hard'
-expect 2 'cd ~/.claude && git -C hooks checkout .'
-expect 2 'sed -ni s/a/b/ ~/.claude/./hooks/x'
-expect 2 'sed -i.bak s/a/b/ ~/.claude/./hooks/x'
+expect 2 'rm .git/review-gate/abc.pass'
+expect 2 'rm /repo/.git/review-gate/abc.pass'
+expect 2 'rm /etc//claude-code/managed-settings.json'
+expect 2 'rm /etc/./claude-code/managed-settings.json'
+expect 2 'rm /etc/claude-code/../claude-code/managed-settings.json'
+expect 2 'rm /etc/claude-"code"/managed-settings.json'
+expect 2 "rm '/etc/claude-code/managed-settings.json'"
+expect 2 "cp x ${up}etc/claude-code/managed-settings.json"
+# A relative word is resolved from the input's working directory, and from nothing else.
+expectc 2 "$h/.claude/hooks" 'rm x'
+expectc 2 "$h/.claude/hooks" 'rm -f x'
+expectc 2 "$h/.claude/hooks" 'sudo rm x'
+expectc 2 "$h/.claude/hooks" 'cp /tmp/a review-gate.sh'
+expectc 2 "$h/.claude/hooks" 'echo hi > x'
+expectc 2 "$h/.claude/hooks" 'tee x </tmp/a'
+expectc 2 "$h/.claude/hooks" 'rm 1'
+expectc 2 "$h/.claude/hooks" 'dd of=x'
+expectc 2 "$h/.claude/hooks" 'sed -i s/a/b/ review-gate.sh'
+expectc 2 "$h/.claude/hooks" ': > review-gate.sh'
+expectc 2 "$h/.claude/hooks" 'cd /tmp/missing; : > review-gate.sh'
+expectc 2 "$h/.claude" 'rm hooks/x'
+expectc 2 "$h/.claude" 'rm ../.claude/hooks/x'
+expectc 2 "$h/.claude" 'echo x > settings.json'
+expectc 2 "$h" 'rm .claude/hooks/x'
+expectc 2 /repo 'rm .git/review-gate/abc.pass'
+expectc 2 /etc 'rm claude-code/managed-settings.json'
+expectc 2 /etc/claude-code 'rm managed-settings.json'
+# One narrow `cd`: a statement that is just `cd LITERAL`, or one on the left of `&&`, sets where later relative words and
+# redirect targets resolve from, for the two targets the immutable flag does not cover: the gate's state and the settings
+# under ~/.claude (the cd's word has ~ and $HOME folded, and is relative to the cwd or to the cd before it).
+expect 2 'cd ~/.claude && rm settings.json'
+expect 2 'cd ~/.claude; echo x > settings.local.json'
+expect 2 'cd repo/.git && rm -r review-gate'
+expect 2 'cd repo/.git; touch review-gate/abc.pass'
+expect 2 'cd /repo/.git/review-gate && touch abc.pass'
+expect 2 'cd "$HOME/.claude" && rm settings.json'
+expect 2 'cd ${HOME}/.claude && tee settings.json </tmp/a'
+expect 2 'cd ~ && cd .claude && rm settings.json'
+expect 2 'cd ~; cd .claude; echo x >> settings.json'
+expect 2 'cd /tmp && cd ~/.claude && rm settings.json'
+expect 2 'cd ~/.claude && ls && rm settings.json'
+expect 2 'cd repo && cd .git && echo x > review-gate/abc.pass'
+expect 2 'cd ~/.claude && sed -i s/a/b/ settings.json'
+# Inside a protected directory the command's own name and its options are not paths, and a write elsewhere passes.
+expectc 0 "$h/.claude/hooks" 'ls'
+expectc 0 "$h/.claude/hooks" 'cat review-gate.sh'
+expectc 0 "$h/.claude/hooks" 'rm /tmp/x'
+expectc 0 "$h/.claude/hooks" 'rm -rf /tmp/x'
+expectc 0 "$h/.claude/hooks" 'cp /tmp/a /tmp/b'
+expectc 0 "$h/.claude/hooks" 'echo hi | tee /tmp/o'
+expectc 0 "$h/.claude/hooks" 'sudo rm /tmp/x'
+expectc 0 "$h/.claude/hooks" 'git status'
+expectc 0 "$h/.claude/projects" 'rm x'
+# The writes of the plan's edge-case table.
+expect 2 'sed -i s/a/b/ ~/.claude/hooks/x'
+expect 2 'sed -i.bak s/a/b/ ~/.claude/hooks/x'
+expect 2 'sed -ni s/a/b/ ~/.claude/hooks/review-prompt.md'
+expect 2 'sed --in-place s/a/b/ ~/.claude/settings.json'
 expect 2 'sed -s --in-place=.bak s/a/b/ ~/.claude//settings.json'
-# Nothing else changes: reads, writes elsewhere under ~/.claude, a project's own hooks directory, and a dynamic path that
-# is not below the protected files.
-expect 0 'rm ~/.claude/projects/p/memory/x.md'
-expect 0 'rm ~/.claude/projects/$x'
-expect 0 'rm ~/.claude/skills/other/x'
-expect 0 'rm ~/.claude/x/../projects/y'
-expect 0 'cd ~/.claude && cat hooks/review-gate.sh'
-expect 0 'cd ~/.claude && ls hooks && grep -n x hooks/review-gate.sh'
-expect 0 'cd ~/.claude/hooks && cat review-gate.sh'
-expect 0 'cd ~/.claude/hooks && ls'
-expect 0 'rm ./build/hooks/x'
-expect 0 'rm hooks/x'
-expect 0 'cd ~ && rm notes/.claude-old'
-expect 0 'cd ~ && rm .claude/projects/x'
-expect 0 'cd ~/.claude && rm projects/x'
-expect 0 'cd ~/.claude && cd /tmp && rm hooks/x'
-expect 0 'env -C /tmp rm hooks/x'
-# The command's own name and its options are not paths: inside a protected directory (spelled so that only the resolved
-# path shows it) a write elsewhere still passes, while a write there blocks.
-expect 0 'cd ~/.claude/./hooks && rm /tmp/x'
-expect 0 'cd ~/.claude/./hooks && rm -rf /tmp/x'
-expect 0 'cd ~/.claude/./hooks && cp /tmp/a /tmp/b'
-expect 0 'cd ~/.claude/./hooks && echo hi | tee /tmp/o'
-# (a protected directory named in the same command as a write elsewhere blocks, as it did)
-expect 2 'cd ~/.claude/./hooks && echo hi > /tmp/o'
-expect 0 'cd ~/.claude/./hooks && sudo rm /tmp/x'
-# Operands that are not file names (a mode, a size, a sed script, `if=FILE`) are not resolved as paths (Codex, #197).
-expect 0 'cd ~/.claude/./hooks && dd if=/tmp/a of=/tmp/b'
-expect 0 'cd ~/.claude/./hooks && dd if=/tmp/a of=/tmp/b bs=4M count=1'
-# A download or archive that goes to stdout writes no file (Codex, #197).
-expect 0 'cd ~/.claude/./hooks && curl -o - https://example.com'
-expect 0 'cd ~/.claude/./hooks && curl -sSL -o- https://example.com'
-expect 0 'cd ~/.claude/./hooks && tar -xOf /tmp/a.tar member'
-expect 0 'cd ~/.claude/./hooks && tar --to-stdout -xf /tmp/a.tar member'
-expect 0 'cd ~/.claude/./hooks && tar -xvOf /tmp/a.tar member'
-# An O (or x, c) after an option that takes a value is part of the value, not a flag.
-expect 2 'cd ~/.claude/./hooks && tar -xfOUT.tar'
-expect 2 'cd ~/.claude/./hooks && tar -xf OUT.tar'
-expect 2 'tar -xfOUT.tar -C ~/.claude/hooks'
-expect 0 'cd ~/.claude/./hooks && tar -cf - x | cat'
-expect 0 'cd ~/.claude/./hooks && wget -q --spider URL'
-expect 2 'cd ~/.claude/./hooks && curl -o x URL'
-expect 2 'cd ~/.claude/./hooks && tar -xf /tmp/a.tar'
-expect 2 'cd ~/.claude/./hooks && tar -xf /tmp/a.tar -C .'
-expect 2 'cd ~/.claude/./hooks && wget URL'
-expect 0 'cd ~/.claude/./hooks && chmod 644 /tmp/f'
-expect 0 'cd ~/.claude/./hooks && chmod u+x,go-w /tmp/f'
-expect 0 'cd ~/.claude/./hooks && sed -i s/a/b/ /tmp/f'
-expect 0 'cd ~/.claude/./hooks && truncate -s 10 /tmp/f'
-expect 2 'cd ~/.claude/./hooks && dd of=x'
-expect 2 'cd ~/.claude/./hooks && dd if=/tmp/a of=review-gate.sh'
-expect 2 'cd ~/.claude/./hooks && chmod 644 x'
-expect 2 'cd ~/.claude/./hooks && chmod u+x review-gate.sh'
-expect 2 'cd ~/.claude/./hooks && sed -i s/a/b/ x'
-expect 2 'cd ~/.claude/./hooks && truncate -s 10 x'
-expect 2 'rm ~/.claude/hooks/x'
-expect 2 'cd ~/.claude/./hooks && rm x'
-expect 2 'cd ~/.claude/./hooks && rm -f x'
-expect 2 'cd ~/.claude/./hooks && tee x </tmp/a'
-expect 2 'cd ~/.claude/./hooks && cp /tmp/a review-gate.sh'
-expect 2 'cd ~/.claude/./hooks && rm --force=x x'
-expect 2 'cd ~/.claude/./hooks && sudo rm x'
-expect 2 'cd ~/.claude/./hooks && echo hi > x'
-expect 0 'cd ~/.claude/projects && rm ../projects/x'
-expect 0 'cd ~/.claude; cd /tmp; rm hooks/x'
-expect 0 '(cd ~/.claude && ls); rm hooks/x'
-expect 0 'rm ~/$x'
-expect 0 'rm ~/.cache/*'
-expect 0 'rm ~/.*.swp'
-expect 0 'rm /tmp/$x'
-expect 0 'rm ~nobody/x'
-expect 0 'rm $HOME/notes/x'
-expect 0 'echo ok > ~/.claude/projects/p/x'
-expect 0 'echo ok > $HOME/.claude/projects/p/x'
+expect 2 'perl -pi -e s/a/b/ ~/.claude/hooks/x'
+expect 2 'perl -i.bak -pe s/a/b/ ~/.claude/hooks/x'
+expect 2 'perl -pie s/a/b/ ~/.claude/hooks/x'
+expect 2 'tar xf a.tar -C ~/.claude/hooks'
+expect 2 'tar -C ~/.claude/hooks -xf a.tar'
+expect 2 'tar cfz ~/.claude/hooks/a.tar.gz x'
+expect 2 'tar --directory=~/.claude/hooks -xf a.tar'
+expect 2 'cp --target-directory=~/.claude/./hooks a'
+expect 2 'dd if=/dev/null of=~/.claude/hooks/x'
+expect 2 'rm ~/.claude/./hooks/x ~/.claude/projects/p/memory/x.md'
+# A write tool that only reads a protected file blocks too: the cp's source is a literal word of a writer.
+expect 2 'cp ~/.claude/hooks/review-gate.sh /tmp/x'
+expect 2 'tar -tf ~/.claude/hooks/a.tar'
+# The git hook stubs, the ship agents, shfmt and the managed settings directory (claude-ship #189).
+expect 2 'rm ~/.claude/git-hooks/pre-push'
+expect 2 'echo exit 0 > ~/.claude/git-hooks/pre-push'
+expect 2 'cp /tmp/x $HOME/.claude/agents/ship-explorer.md'
+expect 2 'cp /tmp/x ~/.claude/bin/shfmt'
+expect 2 'cp x /etc/claude-code/managed-settings.json'
+expect 2 'mv /etc/claude-code/managed-settings.d /tmp/x'
+expect 2 'echo x | tee /etc/claude-code/managed-settings.json'
+expect 2 'sudo tee /etc/claude-code/managed-settings.d/x.json </tmp/x'
+expect 2 'install -m 644 x /etc/claude-code/managed-settings.json'
+expect 2 'tar -xf x.tar -C /etc/claude-code'
+# `disableAllHooks` written into a settings file blocks, as for the Write tool: a project's own `.claude/settings` may
+# change, but not to turn hooks off.
+expect 2 'jq ".disableAllHooks = true" s.json > .claude/settings.local.json'
+expect 2 'echo disableAllHooks >.claude/settings.local.json'
+expect 2 'echo "{\"disableAllHooks\": true}" | tee .claude/settings.json'
+expect 0 'echo disableAllHooks'
+expect 0 'echo x >.claude/settings.local.json'
+expect 0 'grep -n disableAllHooks docs/gate.md'
+expect 0 'git commit -m "feat: block disableAllHooks"'
+# A ship script run with its output sent to a protected place blocks (and to /tmp it passes, below).
+expect 2 '~/.claude/skills/ship/token-report.sh 12 >~/.claude/hooks/out 2>&1'
+expect 2 '~/.claude/skills/ship/token-report.sh 12 >/tmp/out 2>~/.claude/hooks/err'
+expect 2 '~/.claude/skills/ship/token-report.sh 12 &>~/.claude/hooks/out'
+
+# --- What passes -----------------------------------------------------------------------------------------------------
+
+# Reads of every protected root, by the common read tools (the form rotates, as above).
+ti=0
+for t in cat 'grep -n x' 'rg x' 'diff -u' less 'ls -l' lsattr sha256sum; do
+	ri=0
+	for r in $claude_roots; do
+		case $(((ti + ri) % 3)) in
+		0) p="~/.claude/$r" ;;
+		1) p="\$HOME/.claude/$r" ;;
+		2) p="$h/.claude/$r" ;;
+		esac
+		expect 0 "$t $p"
+		ri=$((ri + 1))
+	done
+	expect 0 "$t /etc/claude-code/managed-settings.d/claude-ship.json"
+	expect 0 "$t .git/review-gate/abc.pass"
+	ti=$((ti + 1))
+done
+expect 0 'diff ~/.claude/hooks/review-gate.sh /tmp/y'
+expect 0 'ls -la /etc/claude-code /etc/claude-code/managed-settings.d'
+expect 0 'lsattr -d /etc/claude-code'
+expect 0 'jq . /etc/claude-code/managed-settings.json 2>&1 | head'
+expect 0 'ls ~/x/.git/review-gate/ >&2'
+expect 0 'cat ~/.claude/hooks/x | head -3'
+expect 0 'cat < ~/.claude/hooks/x'
+expect 0 'cat <~/.claude/hooks/x >/dev/stdout'
+expect 0 'jq ".permissions" ~/.claude/settings.json'
+expect 0 'sed -n p ~/.claude/hooks/x'
+expect 0 'sed -n s/a/b/p ~/.claude/hooks/review-prompt.md'
+expect 0 'sed -E -n s/a/b/p ~/.claude/hooks/review-prompt.md'
+expect 0 'perl -ne "print if /x/" ~/.claude/hooks/x'
+expect 0 'perl -MList::Util=sum -e 1 ~/.claude/hooks/x'
+expect 0 'head -15 agents/ship-explorer.md; ls hooks; grep -n "permissionDecision\|allow" hooks/explorer-bash.sh | head; grep -n "settings" install.sh | head; jq '"'.permissions'"' ~/.claude/settings.json'
 expect 0 'cat ~/.claude/./hooks/review-gate.sh'
 expect 0 'ls ~/.claude//hooks'
-expect 0 'curl -o /tmp/x URL'
+# Reads that name a writing tool as an argument next to a protected file (#195).
+expect 0 'grep curl ~/.claude/hooks/review-gate.sh'
+expect 0 'grep -n tar ~/.claude/skills/ship/SKILL.md'
+expect 0 'grep -rn "curl -o\|wget\|tar -x\|rm " ~/.claude/hooks'
+expect 0 'grep -n sponge ~/.claude/hooks/review-gate.sh | head'
+expect 0 'grep node ~/.claude/hooks/review-gate.sh'
+# Descriptor-only redirects and /dev/null.
+expect 0 '~/.claude/skills/ship/codex-request.sh 29 2>&1 | tail -3'
+expect 0 '~/.claude/skills/ship/codex-wait.sh 29 2>/dev/null'
+expect 0 '~/.claude/skills/ship/codex-wait.sh 29 >/dev/null 2>&1'
+expect 0 '~/.claude/skills/ship/codex-wait.sh 29 &>/dev/null'
+expect 0 'cat ~/.claude/hooks/review-gate.sh 2>"/dev/null"'
+expect 0 'ls >"/dev/null" ~/.claude/hooks'
+expect 0 'cat ~/.claude/hooks/review-gate.sh >&2'
+expect 0 'cat ~/.claude/hooks/review-gate.sh >&-'
+expect 0 "sh -c 'cat ~/.claude/hooks/review-gate.sh >/dev/null'"
+expect 0 'sh -c "cat ~/.claude/hooks/review-gate.sh 2>&1"'
+expect 0 "sh -c 'cat ~/.claude/hooks/review-gate.sh >&2'"
+expect 0 "sh -c 'ls ~/.claude/hooks'"
+expect 0 '~/.claude/hooks/p3-issue.sh acme/app /tmp/s/finding.json 2>&1'
+# Running the ship scripts.
+expect 0 '~/.claude/skills/ship/codex-round.sh 12'
+expect 0 'sh ~/.claude/skills/ship/codex-wait.sh 12'
+expect 0 '~/.claude/skills/ship/codex-wait.sh 12 2>&1 | tail -5'
+expect 0 '$HOME/.claude/skills/ship/codex-request.sh 12 acme/app abc123'
+expect 0 'sh "$HOME/.claude/skills/ship/codex-wait.sh" 12'
+expect 0 "$h/.claude/skills/ship/gate-stats.sh"
+# The #135 regression of 2026-11-11: a ship script run with stdout and stderr in a file under /tmp.
+expect 0 '~/.claude/skills/ship/token-report.sh 12 >/tmp/out 2>&1'
+expect 0 '~/.claude/skills/ship/token-report.sh 12 --since 2026-11-01 >/tmp/out.txt 2>/tmp/err.txt'
+expect 0 'sh ~/.claude/skills/ship/token-report.sh 12 > "/tmp/report.md" 2>&1'
+expect 0 '~/.claude/skills/ship/token-report.sh 12 | tee /tmp/report.md'
+# Writes elsewhere under ~/.claude, and names that only start like a protected one.
+expect 0 'echo x > ~/.claude/agents/mine.md'
+expect 0 'echo ok > ~/.claude/projects/p/x'
+expect 0 'echo ok > $HOME/.claude/projects/p/x'
+expect 0 'rm ~/.claude/projects/p/memory/x.md'
+expect 0 'rm ~/.claude/skills/other/x'
+expect 0 'rm ~/.claude/x/../projects/y'
+expect 0 'rm ~/.claude/git-hooks-notes'
+expect 0 'rm ~/.claude/hooks-old/x'
+expect 0 'rm ~/.claude/bin-notes.md'
+expect 0 'rm ~/.claude/skills/ship-notes/x'
+expect 0 'rm ~/.claude/agents/ship'
+expect 0 'rm /etc/claude-codex/y'
+expect 0 'rm /etc/claude-code-notes.md'
+expect 0 'cp x /etc/other.conf'
+expect 0 'rm ./build/hooks/x'
+expect 0 'rm hooks/x'
+expect 0 'rm .git/review-gate-notes'
+expect 0 'rm ~/.claude/.keep'
+expect 0 'echo x > .git/info/exclude'
+expect 0 'cp /tmp/a /tmp/b'
+expect 0 'rm -rf build dist'
+# A protected path inside a quoted string, a message or a heredoc body is no write (claude-ship #135, #40).
+expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-request.sh 29 2>&1 | tail"'
+expect 0 'gh issue create --title t --body "the rm of ~/.claude/hooks/x and a cp of ~/.claude/settings.json"'
+expect 0 'gh issue create --title t --body "echo x > ~/.claude/hooks/x"'
+expect 0 'gh issue create --title t --body "~/.claude/skills/ship/codex-wait.sh <PR> stalls"'
+expect 0 'rm .git/claude-ship/plan-x.md && ls -l ~/.claude/agents/ship-codex.md'
+expect 0 "git commit -m 'docs: cp of ~/.claude/hooks/x is read-only'"
+expect 0 'git commit -m "fix: rm ~/.claude/hooks/x"'
+expect 0 'git commit -m "fix: echo x > ~/.claude/hooks/x"'
+expect 0 'echo "rm ~/.claude/hooks/x"'
+expect 0 'printf "%s\n" "cp x ~/.claude/hooks/y" > /tmp/note'
+expect 0 'cat <<EOF
+rm ~/.claude/hooks/x is what the old check read as a write
+EOF'
+# A heredoc to /tmp.
+expect 0 'cat > /tmp/note.md <<EOF
+rm ~/.claude/hooks/x
+cp /tmp/a ~/.claude/settings.json
+echo x > ~/.claude/hooks/y
+EOF'
+expect 0 'cat >/tmp/x <<EOF
+~/.claude/hooks/x
+EOF'
+expect 0 "cat <<'EOF' | tee /tmp/x
+rm ~/.claude/hooks/x
+EOF"
+# A protected file named in a command that writes elsewhere is no write of it.
+expect 0 'echo ~/.claude/hooks/x > /tmp/list'
+expect 0 'cat ~/.claude/hooks/x >/tmp/copy'
+expect 0 'cat ~/.claude/hooks/x | tee /tmp/y'
+expect 0 'echo x >/tmp/y && cat ~/.claude/hooks/x | head -3'
+expect 0 'ls ~/.claude/hooks > /tmp/listing'
+# The inputs of #195, #196 and #198-#203. From a protected working directory a `wget -O-`, a curl option with an attached
+# value and a mode or size operand of a tool that is not a writer are no writes (#196, #199, #198); `curl`, `wget`, `scp`,
+# `sponge` and the interpreters are not writers the check names; and a stacked `-C`, a variable in a path and a `cd` that
+# may fail are what it does not follow (#200-#203).
+expectc 0 "$h/.claude/hooks" 'wget -qO- https://example.com/i.sh | sh'
+expectc 0 "$h/.claude/hooks" 'wget -O- https://example.com'
+expectc 0 "$h/.claude/hooks" 'wget -q --spider URL'
+expectc 0 "$h/.claude/hooks" 'curl -HContent-Type:x https://example.com'
+expectc 0 "$h/.claude/hooks" 'curl -o - https://example.com'
+expectc 0 "$h/.claude/hooks" 'curl -sSL -o- https://example.com'
+expect 0 'cd ~/.claude/hooks && wget -qO- https://example.com/i.sh | sh'
+expect 0 'cd ~/.claude/hooks && curl -HContent-Type:x https://example.com'
+expect 0 'cd ~/.claude/hooks && rm 1'
+expect 0 'cd ~/.claude/hooks && rm s/x'
+expect 0 'cd ~/.claude/hooks && chmod 644 /tmp/f'
+expect 0 'cd ~/.claude/hooks && dd if=/tmp/a of=/tmp/b bs=4M count=1'
+expect 0 'cd ~/.claude/hooks && cp /tmp/a /tmp/b'
+expect 0 'tar -xf a -C ~/.claude -C hooks'
+expect 0 'f=review-gate.sh; dd if=/dev/null of=~/.claude/./hooks/$f'
+expect 0 'cd /tmp/missing; : > review-gate.sh'
+expect 0 'curl -o ~/.claude/hooks/x URL'
+expect 0 'wget -O ~/.claude/settings.json URL'
+expect 0 'wget -P ~/.claude/hooks URL'
+expect 0 'scp h:a ~/.claude/bin/'
+expect 0 'echo x | sponge ~/.claude/settings.json'
 expect 0 'curl -O URL'
 expect 0 'curl URL | tar -xf - -C /tmp'
-expect 0 'wget -O /tmp/x URL'
 expect 0 'tar -C /tmp -xf a.tar'
-expect 0 'tar -tf ~/.claude/hooks/a.tar'
-expect 0 'tar -C ~/.claude/hooks -cf /tmp/a.tar .'
 expect 0 'tar -czf /tmp/a.tar.gz ~/proj'
+expect 0 'tar -xOf /tmp/a.tar member'
 expect 0 'rsync a /tmp/b'
-expect 0 'rsync ~/.claude/hooks/ /tmp/b'
 expect 0 'scp ~/.claude/hooks/x h:b'
-expect 0 'scp h:~/.claude/hooks/x /tmp/b'
-expect 0 'echo x | sponge /tmp/x'
-expect 0 "node -e 'console.log(1)'"
 expect 0 'node build.js'
+expect 0 'git status'
 expect 0 'git -C ~/.claude/hooks status'
 expect 0 'git -C ~/.claude/hooks log --oneline | head'
 expect 0 'git -C ~/proj checkout .'
-expect 0 'git -C ~/.claude/projects checkout .'
-expect 0 'git status'
+expect 0 'dd if=/tmp/a of=/tmp/b'
+expect 0 'chmod u+x,go-w /tmp/f'
+expect 0 'sed -i s/a/b/ /tmp/f'
+expect 0 'truncate -s 10 /tmp/f'
 
-# The parse fails closed: no shfmt, or a command it can't read, blocks the call.
+# The same cd rule passes elsewhere: a directory that is not protected, a cd that undoes the first, one it cannot read, and
+# reads.
+expect 0 'cd /tmp && rm settings.json'
+expect 0 'cd /tmp && rm review-gate'
+expect 0 'cd /tmp; echo x > settings.json'
+expect 0 'cd ~/.claude && cd /tmp && rm settings.json'
+expect 0 'cd $d && rm settings.json'
+expect 0 'cd ~nobody/.claude && rm settings.json'
+expect 0 'cd ~/.claude && ls settings.json'
+expect 0 'cd ~/.claude && cat settings.json'
+expect 0 'cd repo/.git && cat review-gate/abc.pass'
+expect 0 'cd repo/.git && rm config'
+
+# --- Out of scope: what the immutable flag holds, not the check ------------------------------------------------------
+# The check reads literal words. A path built at run time, a `cd`, an interpreter, a wrapper it doesn't unwrap, the tools
+# that are not writers all pass here (AGENTS.md › Gate scope, docs/gate.md › Threat model); `chattr +i` on the installed
+# files is what keeps them from being written, and only the user lifts it.
+expect 0 'cd ~/.claude/hooks && rm review-gate.sh'
+expect 0 'cd ~/.claude && rm hooks/review-gate.sh'
+expect 0 'cd ~/.claude/hooks && echo x > review-gate.sh'
+expect 0 'pushd ~/.claude/hooks && echo x >review-gate.sh'
+expect 0 'cd ~ && rm .claude/hooks/review-gate.sh'
+expect 0 'cd ~/.claude && cd hooks && rm review-gate.sh'
+expect 0 'env -C ~/.claude rm hooks/x'
+expect 0 'sudo -D ~/.claude rm hooks/x'
+expect 0 'git -C ~/.claude commit -am x'
+expect 0 'git -C ~/.claude/hooks checkout .'
+expect 0 'p=~/.claude/hooks; rm "$p"/x'
+expect 0 'd=~/.claude/hooks; rm $d/review-gate.sh'
+expect 0 'f=~/.claude/hooks/x; echo y >$f'
+expect 0 'f=~/.claude/hooks/x; echo y | tee $f'
+expect 0 'x=hooks; rm ~/.claude/$x/review-gate.sh'
+expect 0 'x=1; rm ~/.claude/hooks/$x'
+expect 0 'rm ~/.claude/hooks/*'
+expect 0 'rm ~/.claude/hook?/review-gate.sh'
+expect 0 'rm ~/.claude/{hooks,y}/review-gate.sh'
+expect 0 'rm $(echo ~/.claude/hooks/x)'
+expect 0 'echo ~/.claude/hooks/x | xargs rm'
+expect 0 'ls ~/.claude/hooks | xargs rm'
+expect 0 'rm ~nobody/.claude/hooks/x'
+expect 0 "rm \$'$h/.claude/hooks/x'"
+expect 0 'echo rm ~/.claude/hooks/x | sh'
+expect 0 'bash <<EOF
+rm ~/.claude/hooks/x
+EOF'
+expect 0 'sh -c "rm ~/.claude/hooks/\$x"'
+expect 0 "python3 -c 'open(\"$h/.claude/hooks/x\", \"w\")'"
+expect 0 "node -e 'require(\"fs\").rmSync(process.argv[1])' ~/.claude/hooks/x"
+expect 0 'python3 - <<EOF
+open("/x/.git/review-gate/a.pass", "w")
+EOF'
+expect 0 "awk 'BEGIN { print \"x\" > \"/repo/.git/review-gate/abc.pass\" }'"
+expect 0 "awk '{ print > \"/tmp/o\" }' ~/.claude/settings.json"
+expect 0 'flock /tmp/l rm ~/.claude/hooks/x'
+expect 0 'watch rm ~/.claude/hooks/x'
+expect 0 'busybox rm ~/.claude/hooks/x'
+expect 0 "su -c 'rm ~/.claude/hooks/x'"
+expect 0 "ssh host 'rm ~/.claude/hooks/x'"
+expect 0 'sudo -i rm ~/.claude/hooks/x'
+expect 0 'timeout --bogus 5 rm ~/.claude/hooks/x'
+expect 0 'c=chattr; $c -i x'
+# A shell nested past the depth cap is not read.
+nest='rm ~/.claude/hooks/x'
+for _ in 1 2 3 4 5; do nest="sh -c '$(printf '%s' "$nest" | sed "s/'/'\\\\''/g")'"; done
+expect 0 "$nest"
+nest='ls ~/.claude/hooks'
+for _ in 1 2 3 4 5; do nest="sh -c '$(printf '%s' "$nest" | sed "s/'/'\\\\''/g")'"; done
+expect 0 "$nest"
+
+# --- chattr is denied (claude-ship #189) -----------------------------------------------------------------------------
+# chattr is how the installed files are locked and unlocked; only the user does either, with `!`.
+expect 2 'chattr -i ~/.claude/hooks/review-gate.sh'
+expect 2 'sudo chattr -R -i ~/.claude'
+expect 2 'chattr +i /tmp/x'
+expect 2 '/usr/bin/chattr -i ~/.claude/hooks/review-gate.sh'
+expect 2 'sudo -u root chattr -i /etc/claude-code'
+expect 2 'env X=1 chattr -i x'
+expect 2 'nice -n 5 chattr -i x'
+expect 2 'command chattr -i x'
+expect 2 'echo x | xargs chattr -i'
+expect 2 'find ~/.claude -exec chattr -i {} +'
+expect 2 "sh -c 'chattr -i ~/.claude/hooks/x'"
+expect 2 'eval "chattr -i x"'
+expect 2 'cd ~/.claude && chattr -R -i .'
+expect 2 'true && chattr -i x'
+expect 2 'echo $(chattr -i x)'
+expect 2 'chattr "-i" x'
+expect 2 "ch\"attr\" -i x"
+expect 0 'lsattr ~/.claude/hooks'
+expect 0 'grep -n chattr install.sh'
+expect 0 'echo chattr -i is for the user'
+expect 0 'git commit -m "feat: chattr +i the files"'
+expect 0 'cat docs/chattr.md'
+expect 0 'ls chattr-notes'
+
+# --- The parse fails closed ------------------------------------------------------------------------------------------
+# No shfmt, or a command it can't read, blocks the call.
 nohome=$tmp/nohome
 mkdir -p "$nohome"
 jq -nc '{tool_name: "Bash", tool_input: {command: "ls"}}' | HOME=$nohome PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
@@ -472,7 +590,7 @@ if [ "$rc" != 2 ] || ! grep -q 'unreadable\|couldn.t read' "$tmp/err"; then
 	sed 's/^/  /' "$tmp/err"
 	fail=1
 fi
-expect 2 'echo "unterminated'
+expect_err 2 'echo "unterminated'
 grep -q "couldn't parse" "$tmp/err" || {
 	echo "FAIL: an unparsable command should say the gate couldn't parse it"
 	cat "$tmp/err"
@@ -482,75 +600,10 @@ expect 2 "echo 'x"
 expect 2 'if then fi'
 expect 0 ''
 
-# The managed settings directory install.sh registers the gate in (claude-ship #189) is protected like the installed gate:
-# a policy file added or changed there, or the gate's drop-in replaced, would switch the gate off for every project.
-expect 2 'cp x /etc/claude-code/managed-settings.json'
-expect 2 'cp x /etc/claude-code/managed-settings.d/claude-ship.json'
-expect 2 'echo x > /etc/claude-code/managed-settings.d/50-x.json'
-expect 2 'echo x >> /etc/claude-code/managed-settings.json'
-expect 2 'rm -rf /etc/claude-code'
-expect 2 'rm /etc/claude-code/managed-settings.d/claude-ship.json'
-expect 2 'mv /etc/claude-code/managed-settings.d /tmp/x'
-expect 2 'echo x | tee /etc/claude-code/managed-settings.json'
-expect 2 'sudo tee /etc/claude-code/managed-settings.d/x.json </tmp/x'
-expect 2 'sed -i s/a/b/ /etc/claude-code/managed-settings.json'
-expect 2 'sh -c "echo x > /etc/claude-code/managed-settings.json"'
-expect 2 'cd /etc/claude-code && echo x > managed-settings.json'
-expect 2 'cd /etc/claude-code/managed-settings.d && rm claude-ship.json'
-expect 2 'cd /etc && rm claude-code/managed-settings.json'
-expect 2 'install -m 644 x /etc/claude-code/managed-settings.json'
-expect 2 'curl -o /etc/claude-code/managed-settings.json https://x.example/y'
-expect 2 'tar -xf x.tar -C /etc/claude-code'
-# The same file under another spelling.
-expect 2 'cp x /etc//claude-code/managed-settings.json'
-expect 2 'cp x /etc/./claude-code/managed-settings.json'
-expect 2 'cp x /etc/claude-code/../claude-code/managed-settings.json'
-expect 2 'cp x /etc/claude-code//managed-settings.d/x.json'
-expect 2 "cp x ${up}etc/claude-code/managed-settings.json"
-expect 2 'cp x "/etc/claude-code/managed-settings.json"'
-expect 2 "cp x '/etc/claude-code/managed-settings.json'"
-expect 2 'cp x /etc/claude-"code"/managed-settings.json'
-expect 2 'd=/etc/claude-code; rm $d/managed-settings.json'
-expect 2 'rm /etc/$x/managed-settings.json'
-expect 2 'rm /etc/claude-$x/managed-settings.json'
-expect 2 'rm /etc$x/claude-code/managed-settings.json'
-# Reading it is fine, and so are other files in /etc and names that only start like the directory.
-expect 0 'cat /etc/claude-code/managed-settings.d/claude-ship.json'
-expect 0 'ls -la /etc/claude-code /etc/claude-code/managed-settings.d'
-expect 0 'jq . /etc/claude-code/managed-settings.json 2>&1 | head'
-expect 0 'cp x /etc/other.conf'
-expect 0 'cp x /etc/claude-codex/y'
-expect 0 'git commit -m "docs: cp of /etc/claude-code/x is a write"'
-# chattr is how the installed files are locked and unlocked; only the user does either, with `!` (claude-ship #189).
-expect 2 'chattr -i ~/.claude/hooks/review-gate.sh'
-expect 2 'sudo chattr -R -i ~/.claude'
-expect 2 'chattr +i /tmp/x'
-expect 2 '/usr/bin/chattr -i ~/.claude/hooks/review-gate.sh'
-expect 2 'sudo -u root chattr -i /etc/claude-code'
-expect 2 'env X=1 chattr -i x'
-expect 2 'nice -n 5 chattr -i x'
-expect 2 'command chattr -i x'
-expect 2 'echo x | xargs chattr -i'
-expect 2 'find ~/.claude -exec chattr -i {} +'
-expect 2 "sh -c 'chattr -i ~/.claude/hooks/x'"
-expect 2 'eval "chattr -i x"'
-expect 2 'cd ~/.claude && chattr -R -i .'
-expect 2 'true && chattr -i x'
-expect 2 'echo $(chattr -i x)'
-expect 2 'chattr "-i" x'
-expect 2 "ch\"attr\" -i x"
-expect 2 'c=chattr; $c -i x'
-expect 0 'lsattr ~/.claude/hooks'
-expect 0 'lsattr -d /etc/claude-code'
-expect 0 'grep -n chattr install.sh'
-expect 0 'echo chattr -i is for the user'
-expect 0 'git commit -m "feat: chattr +i the files"'
-expect 0 'cat docs/chattr.md'
-expect 0 'ls chattr-notes'
-
-# write <exit code> <path>: the Write tool on the path.
+# --- The Write tool --------------------------------------------------------------------------------------------------
+# write <exit code> <path> [text]: the Write tool on the path.
 write() {
-	jq -nc --arg p "$2" --arg d "$tmp" '{tool_name: "Write", tool_input: {file_path: $p, content: "x"}, cwd: $d}' |
+	jq -nc --arg p "$2" --arg t "${3:-x}" --arg d "$tmp" '{tool_name: "Write", tool_input: {file_path: $p, content: $t}, cwd: $d}' |
 		HOME=$tmp/home PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
 	rc=$?
 	if [ "$rc" != "$1" ]; then
@@ -588,6 +641,21 @@ write 2 "${up}etc/claude-code/managed-settings.json"
 write 0 /etc/claude-codex/x
 write 0 /etc/claude-code-notes.md
 write 0 /etc/other.conf
+# The gate's state, in any repo.
+write 2 /repo/.git/review-gate/abc.pass
+write 2 .git/review-gate/abc.waived
+write 0 /repo/.git/info/exclude
+# The user's settings register the gate and are protected whole; a project's own `.claude/settings` may change, but not to
+# turn hooks off.
+write 2 "$tmp/home/.claude/settings.json"
+write 2 "$tmp/home/.claude/settings.local.json"
+write 2 "$tmp/proj/.claude/settings.local.json" '{"disableAllHooks": true}'
+write 0 "$tmp/proj/.claude/settings.local.json" '{"permissions": {}}'
 
+wait
+if [ -s "$tmp/fails" ]; then
+	cat "$tmp/fails"
+	fail=1
+fi
 [ "$fail" = 0 ] && echo "gate-tamper: ok"
 exit "$fail"

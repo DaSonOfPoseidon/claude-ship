@@ -117,6 +117,11 @@ review finds a new class.
   `Write` tool's path. A `cd` that may not run in order is a second candidate directory, not a replacement; a dynamic
   part is cut at its literal start. Keep the old text comparison as well, so no spelling it blocked passes, and test the
   everyday commands that share a prefix (`rm ~/$x`, `~/.claude/projects/…`, `cat` of a protected file).
+  The Bash tamper check no longer resolves paths this far, by design: the installed files are immutable, so it compares
+  only literal words (after `~`, `$HOME` and folding, a relative word from the input's `cwd`), follows one literal `cd`
+  for `.git/review-gate` and `~/.claude/settings*` only (and no other `cd`, variable or
+  symlink), and has no text fallback (claude-ship #195 and #196, #198 to #203 went with that code). The `Write` tool's path
+  is still folded as above. The lesson for a path that has to be compared is the same.
 - **A permission that looks like it belongs to one step may serve others.** Dropping `actions/checkout` took
   `contents: read` with it, but the status script's activity lookup needed it too (claude-ship #18). Before
   removing a permission, list every API call that runs under the token, and keep each permission they need.
