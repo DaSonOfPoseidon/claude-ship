@@ -786,7 +786,7 @@ global_hooks() {
 }
 hk_tab=$(printf '\t')
 # first_off <the value its file sets>, checkout directories on stdin: git's own core.hooksPath in the first of them where it is not
-# the deployed directory (that file's value when git can't tell, which fails closed). Nothing when it is in every one.
+# the deployed directory (that file's value when git can't tell, which fails closed), and success; failure when it is in every one.
 first_off() {
 	while IFS= read -r fo_d; do
 		[ -d "$fo_d" ] || continue
@@ -844,11 +844,13 @@ hooks_effective() {
 			fi
 		fi
 		# No checkout to ask (a bare repo): the file's own answer stands.
+		# first_off's exit status says whether some checkout is off: its value may be empty (an empty hooksPath is an override, and
+		# an unset one is no pass), so the output's length can't say.
 		case $he_list in
-		*[![:space:]]*) he_off=$(printf '%s\n' "$he_list" | first_off "$he_val") ;;
+		*[![:space:]]*) he_off=$(printf '%s\n' "$he_list" | first_off "$he_val") || continue ;;
 		*) he_off=$he_val ;;
 		esac
-		[ -z "$he_off" ] || printf '%s\t%s\n' "$he_file" "$he_off"
+		printf '%s\t%s\n' "$he_file" "$he_off"
 	done
 }
 # Is the repo around <dir> opted in? Fails closed (blocks) when GitHub can't say.

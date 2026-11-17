@@ -278,6 +278,17 @@ grep -q "in $repo (core.hooksPath is '.husky')" "$tmp/err" || {
 }
 git -C "$repo" config --worktree --unset core.hooksPath
 expect 0 'ls'
+# An explicitly empty value is an override too, not "no override": its effective value is empty, and the empty one differs from the
+# deployed path all the same.
+git -C "$repo" config --worktree --unset core.hooksPath
+git -C "$main_repo" config core.hooksPath ""
+expect 2 'ls'
+expect 2 'git push -u origin HEAD'
+git -C "$main_repo" config core.hooksPath "$deployed"
+git -C "$repo" config --worktree core.hooksPath ""
+expect 2 'ls'
+git -C "$repo" config --worktree --unset core.hooksPath
+expect 0 'ls'
 git -C "$main_repo" config --unset core.hooksPath
 git -C "$main_repo" config --unset extensions.worktreeConfig
 # The same for the checkouts under the scan root: the main one and a linked worktree each count by their own value.
@@ -286,8 +297,13 @@ git -C "$scan/husky" config core.hooksPath .husky
 expect 2 'ls'
 git -C "$scan/husky" config --worktree core.hooksPath "$deployed"
 expect 0 'ls'
+git -C "$scan/husky" config --worktree core.hooksPath ""
+expect 2 'ls'
+git -C "$scan/husky" config --worktree core.hooksPath "$deployed"
 git -C "$scan/husky" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
 git -C "$scan/husky" worktree add -q "$tmp/wt2" -b wtbranch2
+# A newer git copies the main checkout's config.worktree into a new worktree's: start wt2 with none of its own, whatever git does.
+rm -f "$scan/husky/.git/worktrees/wtbranch2/config.worktree" "$scan/husky/.git/worktrees/wt2/config.worktree"
 expect 2 'ls'
 git -C "$tmp/wt2" config --worktree core.hooksPath "$deployed"
 expect 0 'ls'
