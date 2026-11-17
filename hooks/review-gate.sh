@@ -412,8 +412,10 @@ def ghev:
 # A `gh api` call as an event, {k: "gapi", r}, where r says the tree shows it as a read: no option that makes a write (`-X`,
 # `--method`, `-f`, `-F`, `--field`, `--raw-field`, `--input`, also inside a short-flag cluster as `-iF`), and every word it
 # does not read literally starts with literal text that is no option (a path `repos/o/r/issues/$n/...`), so `-X$m` and a bare
-# `$flags` are not a read. A call whose arguments xargs or find supply is not one either. Anything the tree does not show
-# as `gh api` (`gh -R o/r api`, a wrapper the gate does not unwrap) makes no event.
+# `$flags` are not a read. A call whose arguments xargs or find supply is not one either. Only the global options `-R X`,
+# `--repo X`, `--repo=X`, `--hostname X` and `--hostname=X` may stand between `gh` and `api`, each with a literal value that is no
+# option (`gh -R o/r api` is a `gh api` call). Anything else the tree does not show as `gh api` (another word before `api`, a
+# dynamic option value, a wrapper the gate does not unwrap) makes no event, and the text scan below blocks what it cannot read.
 def dynok: (.Parts[0]? // empty) as $p
 	| (if $p.Type == "Lit" then $p.Value elif $p.Type == "DblQuoted" and ($p.Dollar | not) then ($p.Parts[0]? | select(.Type == "Lit") | .Value) else null end)
 	| . != null and test("^[^-]");
@@ -423,11 +425,20 @@ def rdok: all(.[];
 	elif test("^--(method|field|raw-field|input)(=|$)") then false
 	elif test("^-[^-]*[fFX]") then false
 	else true end);
+# The words after `api` in the words after `gh`, when only global options come before `api`; else null.
+def gapi_args:
+	if length == 0 then null
+	elif .[0] == "api" then .[1:]
+	elif (.[0] | test("^(-R|--repo|--hostname)$")) then
+		(if length > 1 and .[1] != "\u0001" and .[1] != "\u0002" and (.[1] | test("^[^-]")) then .[2:] | gapi_args else null end)
+	elif (.[0] | test("^--(repo|hostname)=[^-]")) then .[1:] | gapi_args
+	else null end;
 def gapi:
 	([(.Args? // [])[] | wv // (if dynok then "\u0002" else "\u0001" end)]) as $ws
 	| eff($ws; false) as $effs
 	| if $effs == null then empty
-	else ($effs[] | select(((.w[0] | bn) == "gh") and .w[1] == "api") | {k: "gapi", r: ((.x | not) and (.w[2:] | rdok))}) end;
+	else ($effs[] | select((.w[0] | bn) == "gh") | (.w[1:] | gapi_args) as $a | select($a != null)
+		| {k: "gapi", r: ((.x | not) and ($a | rdok))}) end;
 # The events of one statement, its commands and redirects all through it, with $cd the directory a `cd` before it left.
 def evat($cd): [.. | objects | (if .Type == "CallExpr" then (calls($cd), ghev, gapi) else empty end), (if has("Redirs") then redirs($cd) else empty end)];
 # The one `cd` the check follows, for the narrow targets only (the gate state and the settings, which the immutable flag does not
@@ -829,7 +840,9 @@ if [ -n "$hk_own" ] && { [ ! -x "$want_hooks/pre-push" ] || ! grep -Fqs "$want_h
 		no_hooks "$cwd" "$(cd "$cwd" && git config --get core.hooksPath)"
 	fi
 fi
-gh_api='(^|[^[:alnum:]_.-])gh[[:space:]]+api([^[:alnum:]_-]|$)'
+# `gh`, then only options (each with an optional value, as the git pattern above), then `api`: `gh -R o/r api` is a `gh api` call too.
+# Group 2 is the options between them; api_scan checks that they are gh's global options (docs/gate.md › `gh api`).
+gh_api='(^|[^[:alnum:]_.-])gh(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+api([^[:alnum:]_-]|$)'
 # Nothing else is the gate's to read: a command that is neither a canonical push nor a `gh api` call passes, whatever its text
 # says, since the pre-push check refuses an unreviewed push however it started (docs/gate.md › Command reading). A `gh api`
 # call is one with a `gh` in the tree (gh_seen), so a heredoc body or an `echo` that mentions it is data.
@@ -847,9 +860,72 @@ fi
 # `gh api` writes in an opted-in repo pass only if the ship skill makes them (docs/gate.md › REST allowlist).
 # Each call is read word by word from $words; it writes when its method isn't GET, gh's default once it has
 # fields or an --input.
-# api_scan <words after `gh api`> prints nothing (no such write), `block <why>`, or `repo <owner/repo>`
-# (`{owner}/{repo}` for gh's placeholders), one line per repo it writes to.
+# api_global <the options between `gh` and `api`> prints `block <why>` unless they are only gh's global options (`-R X`, `--repo X`,
+# `--repo=X`, `--hostname X`, `--hostname=X`, each with a plain value), else `repo <owner/repo>` for each repo they name.
+api_global() (
+	set -f
+	want=
+	out=
+	for w in $1; do
+		if [ -n "$want" ]; then
+			v=$w
+		else
+			case $w in
+			-R | --repo) want=repo ;;
+			--hostname) want=host ;;
+			--repo=*) want=repo v=${w#--repo=} ;;
+			--hostname=*) want=host v=${w#--hostname=} ;;
+			*)
+				echo "block has an option before \`api\` the review gate doesn't read (\`$w\`)"
+				exit 0
+				;;
+			esac
+			case $w in -R | --repo | --hostname) continue ;; esac
+		fi
+		case $want in
+		repo)
+			# `[HOST/]OWNER/REPO`.
+			s=$v
+			case $v in */*/*) s=${v#*/} ;; esac
+			if ! printf '%s' "$s" | grep -Eq '^[[:alnum:]_.][[:alnum:]_.-]*/[[:alnum:]_.][[:alnum:]_.-]*$'; then
+				echo "block names a repo the review gate can't read (\`$w\`)"
+				exit 0
+			fi
+			out="$out${out:+
+}repo $s"
+			;;
+		*)
+			if ! printf '%s' "$v" | grep -Eq '^[[:alnum:]_.][[:alnum:]_.-]*(:[0-9]+)?$'; then
+				echo "block names a host the review gate can't read (\`$w\`)"
+				exit 0
+			fi
+			;;
+		esac
+		want=
+	done
+	if [ -n "$want" ]; then
+		echo "block has an option before \`api\` with no value"
+		exit 0
+	fi
+	printf '%s' "$out"
+)
+# api_scan <words after `gh api`> <the options before `api`> prints nothing (no such write), `block <why>`, or `repo <owner/repo>`
+# (`{owner}/{repo}` for gh's placeholders, `here` for an endpoint naming no repo), one line per repo it writes to. A write also
+# counts against the repo `-R` names: either one opted in applies the allowlist (api_call has the allowlist).
 api_scan() (
+	g=$(api_global "$2")
+	case $g in 'block '*)
+		printf '%s\n' "$g"
+		exit 0
+		;;
+	esac
+	r=$(api_call "$1")
+	[ -n "$r" ] || exit 0
+	printf '%s\n' "$r"
+	case $r in 'block '*) exit 0 ;; esac
+	[ -z "$g" ] || printf '%s\n' "$g"
+)
+api_call() (
 	set -f
 	method=
 	fields=
@@ -1031,7 +1107,7 @@ if [ "$gh_seen" = 1 ] && [ "$api_reads" = 0 ] && printf '%s\n%s\n' "$cmd" "$word
 		grep -E "$gh_api" | while IFS= read -r seg; do
 		case $seg in
 		*'$' | *'`'*) echo "block holds a command substitution the review gate can't read" ;;
-		*) api_scan "$(printf '%s' "$seg" | sed -E "s/.*${gh_api}//")" ;;
+		*) api_scan "$(printf '%s' "$seg" | sed -E "s/.*${gh_api}//")" "$(printf '%s' "$seg" | sed -E "s/.*${gh_api}.*/\\2/")" ;;
 		esac
 	done)
 	# A `gh api` the raw command shows but the word-split form loses can't be scanned.

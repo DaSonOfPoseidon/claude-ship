@@ -16,7 +16,7 @@ fail=0
 
 # gate <exit code> <tool call JSON>: runs the gate on the call, outside any git repo, in a repo that opted in.
 gate() {
-	printf '%s' "$2" | HOME=$tmp/home PATH=$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	printf '%s' "$2" | HOME=$tmp/home PATH=${stub:-$tmp/bin}:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
 	rc=$?
 	if [ "$rc" != "$1" ]; then
 		echo "FAIL (exit $rc, want $1): $2"
@@ -109,6 +109,54 @@ bash 2 'echo "$(gh api repos/acme/app/pulls/1)" "$(gh api -X DELETE repos/acme/a
 bash 2 'echo "$(gh api repos/acme/app/pulls/1)"; echo "gh api"'
 bash 2 'echo "$(xargs gh api repos/acme/app/pulls/1)"'
 bash 2 'echo "$(sh -c "gh api -X DELETE repos/acme/app/git/refs/heads/x")"'
+
+# Global options before `api` (`-R`, `--repo`, `--hostname`) don't change what the call is: a read passes, a write must be on the
+# allowlist, and a form the gate can't read (a dynamic value, another option) blocks (claude-ship #265).
+bash 0 'gh -R acme/app api repos/acme/app/pulls/1'
+bash 0 'gh --repo acme/app api repos/acme/app/pulls/1'
+bash 0 'gh --repo=acme/app api repos/acme/app/pulls/1'
+bash 0 'gh --hostname github.com api repos/acme/app/pulls/1'
+bash 0 'gh --hostname=github.com -R acme/app api repos/acme/app/pulls/1 --jq ".title"'
+bash 0 'gh --repo=acme/app api repos/acme/app/issues/1/comments -f body=x'
+bash 0 'gh -R acme/app api -X POST repos/acme/app/issues/1/labels -f labels[]=x'
+bash 0 'x=$(gh -R acme/app api repos/acme/app/pulls)'
+bash 0 'echo "$(gh -R acme/app api repos/acme/app/issues/$n/comments)"'
+bash 2 'gh -R acme/app api -X DELETE repos/acme/app/git/refs/heads/x'
+bash 2 'gh --repo acme/app api -X DELETE repos/acme/app/git/refs/heads/x'
+bash 2 'gh --repo=acme/app api -X DELETE repos/acme/app/git/refs/heads/x'
+bash 2 'gh --hostname github.com api -X PATCH repos/acme/app/branches/main/protection'
+bash 2 'gh --hostname=github.com api -X PATCH repos/acme/app/branches/main/protection'
+bash 2 'gh -R acme/app api -X DELETE repos/other/app/git/refs/heads/x'
+bash 2 'gh -R acme/app api -X DELETE orgs/acme/x'
+bash 2 'gh -R github.com/acme/app api -X DELETE orgs/acme/x'
+bash 2 'gh -R acme/app api repos/acme/app/contents/x -f content=y'
+bash 2 'x=$(gh -R acme/app api -X DELETE repos/acme/app/git/refs/heads/x)'
+bash 2 'gh -R $r api -X DELETE repos/acme/app/x'
+bash 2 'gh --repo=$r api -X DELETE repos/acme/app/x'
+bash 2 'gh --hostname $h api -X DELETE repos/acme/app/x'
+bash 2 'gh -R "$r" api repos/acme/app/pulls/1'
+bash 2 'gh -R acme/app --foo api repos/acme/app'
+bash 2 'gh --foo api -X DELETE repos/acme/app/x'
+bash 2 'gh -R acme/app --help api repos/acme/app'
+bash 2 'gh -R acme/app -X DELETE api repos/acme/app/x'
+bash 2 'gh -R -X api repos/acme/app/x'
+bash 2 'gh -R acme/app api; gh -R $r api repos/acme/app/pulls/1'
+bash 2 'echo "$(gh -R acme/app api repos/acme/app/pulls/1)"; echo "gh -R x api"'
+
+# `-R` names the repo the opt-in lookup asks about, besides the ones where the command runs and the endpoint names: either one
+# opted in applies the allowlist. Here only acme/app opted in, and the command runs in no repo.
+mkdir -p "$tmp/bin-one"
+printf '#!/bin/sh\ncase "$*" in\n*"-R acme/app"*) echo true ;;\n*) echo "HTTP 404: Not Found" >&2; exit 1 ;;\nesac\n' >"$tmp/bin-one/gh"
+chmod +x "$tmp/bin-one/gh"
+stub=$tmp/bin-one
+bash 2 'gh -R acme/app api -X DELETE orgs/free/x'
+bash 2 'gh --repo=acme/app api -X DELETE orgs/free/x'
+bash 2 'gh -R free/app api -X DELETE repos/acme/app/git/refs/heads/x'
+bash 2 'gh -R free/app -R acme/app api -X DELETE orgs/free/x'
+bash 0 'gh -R free/app api -X DELETE orgs/free/x'
+bash 0 'gh -R free/app api -X DELETE repos/free/app/git/refs/heads/x'
+bash 0 'gh -R acme/app api -X POST repos/acme/app/issues/1/comments -f body=x'
+unset stub
 
 # A command whose syntax tree runs no gh is no `gh api` call, whatever its text says: a heredoc body (written to a file
 # too, claude-ship #193) or a quoted argument is data (claude-ship #135). A real call still blocks, also next to such text.
