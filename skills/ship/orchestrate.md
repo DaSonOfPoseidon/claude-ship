@@ -56,8 +56,8 @@ background (`run_in_background`) and get notified instead of polling.
 
 ## Repo settings
 
-Read only `AGENTS.md` › `## PR loop`, if the repo has it. A missing setting takes its default. When neither
-`AGENTS.md` nor `CLAUDE.md` has the section (the hook says so), tell the user once that the loop runs on these
+Read only `AGENTS.md` › `## PR loop`, if the repo has it. A missing setting takes its default. When
+`AGENTS.md` has no such section (the hook says so), tell the user once that the loop runs on these
 defaults and offer to add the section from `templates/AGENTS.md`; don't add it unasked, since `merge: yes` is a
 per-repo opt-in.
 

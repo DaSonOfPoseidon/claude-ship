@@ -107,10 +107,11 @@ orchestrate=$(lookup CLAUDE_ORCHESTRATE) || exit 0
 mkdir -p "$marks" 2>/dev/null && : >"$mark" 2>/dev/null
 [ "$autonomous" = true ] && [ "$orchestrate" = true ] || exit 0
 
-# A repo with no `## PR loop` section runs the loop on its defaults; the hint says so, so Claude tells the user once.
+# The GitHub loop reads settings only from AGENTS.md (orchestrate.md > Repo settings). Without its `## PR loop` section
+# the loop runs on its defaults; the hint says so, so Claude tells the user once.
 defaults=
-if ! scan "$top/AGENTS.md" section && ! scan "$top/CLAUDE.md" section; then
-	defaults="This repo has no \`## PR loop\` section, so the loop runs on its defaults (merge: no, ready label "
+if ! scan "$top/AGENTS.md" section; then
+	defaults="This repo's AGENTS.md has no \`## PR loop\` section, so the loop runs on its defaults (merge: no, ready label "
 	defaults="$defaults\`status:ready\`, no skip or priority labels, handoff context 120000). Tell the user once "
 	defaults="$defaults and offer to add the section from \`templates/AGENTS.md\`; don't add it unasked."
 fi

@@ -228,9 +228,9 @@ hint yes "git repo, PR loop without a mode, variables on" plan l16 "$tmp/l-gitot
 hint local "git repo with the marker, variables on" plan l17 "$tmp/l-gitmode"
 note no "local loop output has no defaults notice"
 
-# Defaults notice (claude-ship #260): a git repo whose AGENTS.md and CLAUDE.md both lack a live `## PR loop`
-# section gets the notice with the GitHub hint; a live section in either file means no notice. Fences and
-# comments are literal, as for the mode line.
+# Defaults notice (claude-ship #260): a git repo whose AGENTS.md lacks a live `## PR loop` section gets the notice
+# with the GitHub hint, since the loop reads settings only from AGENTS.md (orchestrate.md > Repo settings); a
+# section in CLAUDE.md doesn't count. Fences and comments are literal, as for the mode line.
 for d in n-agents n-claude n-none n-fence n-comment n-other n-both n-crlf n-tpl n-tpl2 n-clauderef; do
 	mkdir -p "$tmp/$d"
 	git init -q "$tmp/$d"
@@ -250,7 +250,7 @@ sed -e '/^<!-- Optional/d' -e '/^-->$/d' -e 's/^     //' "$root/skills/ship/temp
 hint yes "notice: section in AGENTS.md" plan n1 "$tmp/n-agents"
 note no "a section in AGENTS.md means no notice"
 hint yes "notice: section only in CLAUDE.md" plan n2 "$tmp/n-claude"
-note no "a section only in CLAUDE.md means no notice"
+note yes "a section only in CLAUDE.md is never read by the loop, so the notice stays"
 hint yes "notice: AGENTS.md without the section" plan n3 "$tmp/n-none"
 note yes "an AGENTS.md without the section gets the notice"
 hint yes "notice: section inside a code fence" plan n4 "$tmp/n-fence"
@@ -261,6 +261,9 @@ hint yes "notice: headings that only look like it" plan n6 "$tmp/n-other"
 note yes "other headings are not the section"
 hint yes "notice: both files without the section" plan n7 "$tmp/n-both"
 note yes "both files without the section get the notice"
+printf '## PR loop\n- merge: yes\n' >"$tmp/n-both/CLAUDE.md"
+hint yes "notice: CLAUDE.md section, AGENTS.md without" plan n12 "$tmp/n-both"
+note yes "a CLAUDE.md section doesn't count when AGENTS.md has none"
 hint yes "notice: CRLF section" plan n8 "$tmp/n-crlf"
 note no "a CRLF section counts"
 hint yes "notice: CLAUDE.md that only imports AGENTS.md" plan n9 "$tmp/n-clauderef"
