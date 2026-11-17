@@ -233,7 +233,8 @@ Every reviewer run appends `{date, repo, head, stage, model, cost_usd, findings}
 To measure what a PR cost to build, run `~/.claude/skills/ship/token-report.sh <pr>...` from a checkout of the
 repo. It reads that repo's Claude Code transcripts, the cost log above and `gh`, and prints each PR's tokens and
 API-price cost by role (main session, then each subagent type, then the gate's reviewers) and model, plus the main
-session's peak context.
+session's peak context. `--since YYYY-MM-DD` adds the repo's PRs created on or after that date, and `--summary` ends
+with totals by role and model, the cost per PR and the costliest PRs.
 
 To see whether the gate pays for itself, run `~/.claude/skills/ship/gate-stats.sh <pr>...` (or `--since YYYY-MM-DD`)
 from a checkout: per PR and in total, how many Codex findings the gate caught or missed, how often it blocked or was

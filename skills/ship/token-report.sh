@@ -5,7 +5,9 @@
 # (~/.claude/projects/<slug>, or $CLAUDE_PROJECTS_DIR/<slug>, plus its worktrees' dirs), the gate's cost log (~/.claude/state/review-costs.jsonl,
 # or $CLAUDE_REVIEW_COSTS) and `gh`, keeps no state, and calls no model. How requests and gate runs are attributed
 # to PRs: docs/scripts.md.
-# Usage: token-report.sh <pr> [<pr>...]
+# Usage: token-report.sh [--summary] [--since YYYY-MM-DD] [<pr>...]
+#   --since selects the repo's PRs created on or after the date (after any PR numbers given); --summary adds
+#   totals by role and model, the cost per PR, the costliest PRs and the peak context after the per-PR tables.
 set -eu
 
 # USD per MTok (the claude-api skill's shared/models.md and model-migration.md, cached 2026-11-11). w5 and w1 are
@@ -24,29 +26,51 @@ prices='{
 	                      "big": {"i": 0.50, "o": 2.50,  "cr": 0.05, "w5": 0.625, "w1": 1.00}}
 }'
 
-# A missing or odd PR number exits 2 (usage), so a caller never reads it as a result.
+# A missing or odd argument exits 2 (usage), so a caller never reads it as a result.
 usage() {
-	echo "usage: token-report.sh <pr> [<pr>...]" >&2
+	echo "usage: token-report.sh [--summary] [--since YYYY-MM-DD] [<pr>...]  (at least one PR or --since)" >&2
 	exit 2
 }
-[ "$#" -gt 0 ] || usage
 # `asked` is the PR numbers, one per line: a PR given twice counts once (#166), in the order first given, and
-# leading zeros are dropped first (010 is 10), or the window and its requests would be counted twice.
+# leading zeros are dropped first (010 is 10), or the window and its requests would be counted twice. `--since`
+# adds the PRs it selects once the repo's PR list is read (below).
 asked=
-for pr in "$@"; do
-	case $pr in
-	'' | *[!0-9]*) usage ;;
-	esac
-	while :; do
-		case $pr in
-		0?*) pr=${pr#0} ;;
-		*) break ;;
+since=
+summary=
+while [ "$#" -gt 0 ]; do
+	case $1 in
+	--since)
+		[ -z "$since" ] && [ "$#" -ge 2 ] || usage
+		since=$2
+		case $since in
+		[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+		*) usage ;;
 		esac
-	done
-	asked="$asked $pr"
+		# The pattern fits "2026-13-45" too; jq's date parser doesn't.
+		jq -n -e --arg d "$since" '"\($d)T00:00:00Z" | fromdateiso8601 | . >= 0' >/dev/null 2>&1 || usage
+		shift 2
+		;;
+	--summary)
+		summary=1
+		shift
+		;;
+	'' | *[!0-9]*) usage ;;
+	*)
+		pr=$1
+		while :; do
+			case $pr in
+			0?*) pr=${pr#0} ;;
+			*) break ;;
+			esac
+		done
+		asked="$asked $pr"
+		shift
+		;;
+	esac
 done
+[ -n "$asked" ] || [ -n "$since" ] || usage
 # shellcheck disable=SC2086 # PR numbers: digits only
-asked=$(printf '%s\n' $asked | awk '!seen[$0]++')
+asked=$(printf '%s\n' $asked | awk 'NF && !seen[$0]++')
 
 # Claude Code names a project's transcript dir after its path with every non-alphanumeric turned into `-`.
 # The git common dir is the main checkout's, so this works from a worktree too.
@@ -115,11 +139,6 @@ window() {
 			start: ([.createdAt, (.commits[0].authoredDate // empty)] | map(.[0:19]) | min),
 			end: $e.end[0:19], status: $e.status, commits: [.commits[]?.oid | select(type == "string")]}' >>"$3" || exit 1
 }
-: >"$tmp/windows"
-# shellcheck disable=SC2086 # PR numbers: digits only
-for pr in $asked; do
-	window "$pr" true "$tmp/windows"
-done
 
 # Every PR of the repo, whoever wrote it, listed once (#130): they all compete for every request, so a PR's row
 # can't depend on which authors' PRs are asked for. When each PR ended is also where the work on its author's
@@ -133,8 +152,35 @@ printf '%s\n' "$list" | jq -c 'if type == "array" then map({number, author: (.au
 	echo "token-report.sh: gh pr list returned something other than a list" >&2
 	exit 1
 }
-# A full page may have cut the repo's older PRs short (the list is newest first): they can't compete.
 listed=$(jq 'length' "$tmp/list") || exit 1
+
+# --since (#249): the repo's PRs created on or after the date, oldest first, added after the PRs given. createdAt
+# is an ISO timestamp, so comparing it as text with the date's midnight orders it by time. A PR with no author
+# (a deleted account) can't be windowed, so it is left out with a warning rather than failing the whole run.
+if [ -n "$since" ]; then
+	jq -r --arg d "$since" '
+		[.[] | select((.number | type) == "number" and (.createdAt | type) == "string" and .createdAt >= "\($d)T00:00:00Z")]
+		| sort_by(.createdAt) | .[] | if .author == "" then "-\(.number)" else "\(.number)" end' "$tmp/list" >"$tmp/since" || exit 1
+	skipped=$(grep -c '^-' "$tmp/since") || :
+	[ "$skipped" = 0 ] || echo "token-report.sh: left out $skipped PR(s) with no author (their windows can't be found)" >&2
+	asked=$({
+		printf '%s\n' "$asked"
+		grep -v '^-' "$tmp/since" || :
+	} | awk 'NF && !seen[$0]++')
+	if [ -z "$asked" ]; then
+		echo "token-report.sh: no PRs created since $since" >&2
+		exit 0
+	fi
+fi
+
+: >"$tmp/windows"
+# shellcheck disable=SC2086 # PR numbers: digits only
+for pr in $asked; do
+	window "$pr" true "$tmp/windows"
+done
+
+# A full page may have cut the repo's older PRs short (the list is newest first): they can't compete.
+# (With --since, a selection that reaches the oldest listed PR is an error below, so no PR is silently missing.)
 if [ "$listed" -ge 200 ]; then
 	echo "token-report.sh: gh pr list returned the newest 200 PRs; older PRs don't compete for requests" >&2
 	# An asked PR that starts at or before the oldest listed one may have a previous PR the list cut off (or isn't
@@ -246,7 +292,8 @@ done <<EOF
 $dirs
 EOF
 
-# Report lines, tab separated: H header, N no usage, R row, T total, P peak, W model without a price.
+# Report lines, tab separated: H header, N no usage, R row, T total, P peak, W model without a price, M no main row.
+# R and T end with the cost in nano-dollars ("?" when unpriced), after the cost in cents.
 # Costs are integer nano-dollars (tokens x $/MTok x 1000), so rounding to the cent is exact.
 # Windows (#80): a PR's cost includes the main-session work that led to it, which mostly comes before its first
 # commit (planning, exploring). So a window's start widens from the PR's own start (start0) back to the later of
@@ -299,19 +346,30 @@ jq -r -s --slurpfile w "$tmp/windowsAll" --slurpfile g "$tmp/gate" --arg repo "$
 	  if ($mine | length) == 0 and ($gm | length) == 0 then "N" else
 		($mine | map(. + {role: (if .k == "main" then "main" else .role end)})
 			| group_by([.role != "main", .role, .model])[]
-			| "R\t\(.[0].role)\t\(.[0].model)\t\(length)\t\(sum(.i))\t\(sum(.o))\t\(sum(.cr))\t\(sum(.w5 + .w1))\t\(nano | money)"),
+			| "R\t\(.[0].role)\t\(.[0].model)\t\(length)\t\(sum(.i))\t\(sum(.o))\t\(sum(.cr))\t\(sum(.w5 + .w1))\t\(nano | money)\t\(nano // "?")"),
 		($gm | group_by([.stage, .model])[]
-			| "R\tgate \(.[0].stage)\t\(.[0].model)\t\(length)\t-\t-\t-\t-\t\(nano | money)"),
-		"T\t\(($mine | length) + ($gm | length))\t\($mine | sum(.i))\t\($mine | sum(.o))\t\($mine | sum(.cr))\t\($mine | sum(.w5 + .w1))\t\($mine + $gm | nano | money)",
+			| "R\tgate \(.[0].stage)\t\(.[0].model)\t\(length)\t-\t-\t-\t-\t\(nano | money)\t\(nano // "?")"),
+		"T\t\(($mine | length) + ($gm | length))\t\($mine | sum(.i))\t\($mine | sum(.o))\t\($mine | sum(.cr))\t\($mine | sum(.w5 + .w1))\t\($mine + $gm | nano | money)\t\($mine + $gm | nano // "?")",
 		(if ($mine | map(select(.k == "main")) | length) == 0 then "M" else empty end),
 		(if ($mine | length) > 0 then "P\t\($mine | map(select(.k == "main") | .i + .cr + .w5 + .w1) | max // 0)" else empty end),
 		($mine | map(select(.c == null) | .model) | unique[] | "W\t\(.)")
 	  end' "$tmp/records" >"$tmp/report"
 
-awk -F'\t' '
+# --summary (#249) sums the tables' own numbers: R and T lines carry the cost in nano-dollars as a last field ("?"
+# when unpriced), so the sums are exact, not sums of cents. A PR whose total is ? is left out of the per-PR figures
+# (and counted), and so is any ? row of the role and model table; a PR with no main row is left out of the peak
+# context (its 0 is no measurement).
+awk -F'\t' -v summary="$summary" '
 	function money(c) { return c == "?" ? "?" : sprintf("$%d.%02d", int(c / 100), c % 100) }
+	function cents(n) { return int((n + 5000000) / 10000000) }
+	function nmoney(n) { return money(cents(n)) }
+	function costlier(a, b) { return pcost[a] > pcost[b] || (pcost[a] == pcost[b] && ppr[a] + 0 < ppr[b] + 0) }
+	function bigger(a, b) { return gc[a] > gc[b] || (gc[a] == gc[b] && gk[a] < gk[b]) }
 	$1 == "H" {
 		pr = $2
+		title = $3
+		hasmain = 1
+		asked++
 		if (NR > 1) print ""
 		printf "PR #%s %s (%s → %s)\n", $2, $3, $4, $5
 		rows = 0
@@ -321,9 +379,80 @@ awk -F'\t' '
 		if (!rows++)
 			printf "%-18s %-20s %8s %12s %12s %12s %12s %10s\n", "role", "model", "requests", "input", "output", "cache read", "cache write", "cost"
 	}
-	$1 == "R" { printf "%-18s %-20s %8s %12s %12s %12s %12s %10s\n", $2, $3, $4, $5, $6, $7, $8, money($9) }
-	$1 == "T" { printf "%-18s %-20s %8s %12s %12s %12s %12s %10s\n", "total", "", $2, $3, $4, $5, $6, money($7) }
-	$1 == "M" { printf "token-report.sh: PR #%s has subagent or gate rows but no main-session row; its main session may have run in a worktree that is gone\n", pr > "/dev/stderr" }
-	$1 == "P" { printf "peak main context: %s tokens\n", $2 }
+	$1 == "R" {
+		printf "%-18s %-20s %8s %12s %12s %12s %12s %10s\n", $2, $3, $4, $5, $6, $7, $8, money($9)
+		if ($10 != "?") {
+			k = $2 "\t" $3
+			if (!(k in gi)) {
+				gi[k] = ++ng
+				gk[ng] = k
+				grole[ng] = $2
+				gmodel[ng] = $3
+			}
+			gc[gi[k]] += $10
+			gtotal += $10
+		}
+		if ($2 == "ship-implementer") {
+			implreq += $4
+			implcr += $7
+		}
+	}
+	$1 == "T" {
+		printf "%-18s %-20s %8s %12s %12s %12s %12s %10s\n", "total", "", $2, $3, $4, $5, $6, money($7)
+		usage++
+		if ($8 == "?") unpriced++
+		else {
+			pn++
+			pcost[pn] = $8 + 0
+			ppr[pn] = pr
+			ptitle[pn] = title
+			psum += $8
+		}
+	}
+	$1 == "M" {
+		hasmain = 0
+		printf "token-report.sh: PR #%s has subagent or gate rows but no main-session row; its main session may have run in a worktree that is gone\n", pr > "/dev/stderr"
+	}
+	$1 == "P" {
+		printf "peak main context: %s tokens\n", $2
+		if (hasmain) {
+			peakn++
+			peaksum += $2
+			if ($2 + 0 > peakmax) peakmax = $2 + 0
+		}
+	}
 	$1 == "W" && !seen[$2]++ { printf "token-report.sh: no price for model %s; its cost shows as ?\n", $2 > "/dev/stderr" }
+	END {
+		if (summary == "") exit
+		printf "\nSummary: usage found for %d of %d PRs\n", usage, asked
+		if (!usage) exit
+		if (ng) {
+			# Insertion sorts: the biggest first, ties by name (and, below, by PR number).
+			for (i = 1; i <= ng; i++) {
+				for (j = i; j > 1 && bigger(i, go[j - 1]); j--) go[j] = go[j - 1]
+				go[j] = i
+			}
+			printf "%-18s %-20s %10s %7s\n", "role", "model", "cost", "share"
+			for (i = 1; i <= ng; i++)
+				printf "%-18s %-20s %10s %6.1f%%\n", grole[go[i]], gmodel[go[i]], nmoney(gc[go[i]]), gtotal ? gc[go[i]] * 100 / gtotal : 0
+			printf "%-18s %-20s %10s %6.1f%%\n", "total", "", nmoney(gtotal), gtotal ? 100 : 0
+		}
+		if (unpriced) printf "left out of the cost sums: %d PR(s) with a ? cost\n", unpriced
+		if (!pn) print "cost per PR: no priced PR"
+		else {
+			for (i = 1; i <= pn; i++) {
+				for (j = i; j > 1 && costlier(i, ord[j - 1]); j--) ord[j] = ord[j - 1]
+				ord[j] = i
+			}
+			med = pn % 2 ? pcost[ord[int((pn + 1) / 2)]] : (pcost[ord[pn / 2]] + pcost[ord[pn / 2 + 1]]) / 2
+			printf "cost per PR: mean %s, median %s, max %s\n", nmoney(psum / pn), nmoney(med), nmoney(pcost[ord[1]])
+			print "costliest PRs:"
+			for (i = 1; i <= pn && i <= 5; i++)
+				printf "#%s %s %s\n", ppr[ord[i]], nmoney(pcost[ord[i]]), ptitle[ord[i]]
+		}
+		if (!peakn) print "peak main context: no main-session request"
+		else printf "peak main context: mean %d tokens, max %d tokens\n", int(peaksum / peakn + 0.5), peakmax
+		if (!implreq) print "implementer cache read: no implementer requests"
+		else printf "implementer cache read: mean %d tokens per request (%d requests)\n", int(implcr / implreq + 0.5), implreq
+	}
 ' "$tmp/report"
