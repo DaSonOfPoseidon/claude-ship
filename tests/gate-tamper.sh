@@ -223,6 +223,22 @@ expectc 2 "$h" 'rm .claude/hooks/x'
 expectc 2 /repo 'rm .git/review-gate/abc.pass'
 expectc 2 /etc 'rm claude-code/managed-settings.json'
 expectc 2 /etc/claude-code 'rm managed-settings.json'
+# One narrow `cd`: a statement that is just `cd LITERAL`, or one on the left of `&&`, sets where later relative words and
+# redirect targets resolve from, for the two targets the immutable flag does not cover: the gate's state and the settings
+# under ~/.claude (the cd's word has ~ and $HOME folded, and is relative to the cwd or to the cd before it).
+expect 2 'cd ~/.claude && rm settings.json'
+expect 2 'cd ~/.claude; echo x > settings.local.json'
+expect 2 'cd repo/.git && rm -r review-gate'
+expect 2 'cd repo/.git; touch review-gate/abc.pass'
+expect 2 'cd /repo/.git/review-gate && touch abc.pass'
+expect 2 'cd "$HOME/.claude" && rm settings.json'
+expect 2 'cd ${HOME}/.claude && tee settings.json </tmp/a'
+expect 2 'cd ~ && cd .claude && rm settings.json'
+expect 2 'cd ~; cd .claude; echo x >> settings.json'
+expect 2 'cd /tmp && cd ~/.claude && rm settings.json'
+expect 2 'cd ~/.claude && ls && rm settings.json'
+expect 2 'cd repo && cd .git && echo x > review-gate/abc.pass'
+expect 2 'cd ~/.claude && sed -i s/a/b/ settings.json'
 # Inside a protected directory the command's own name and its options are not paths, and a write elsewhere passes.
 expectc 0 "$h/.claude/hooks" 'ls'
 expectc 0 "$h/.claude/hooks" 'cat review-gate.sh'
@@ -440,6 +456,19 @@ expect 0 'dd if=/tmp/a of=/tmp/b'
 expect 0 'chmod u+x,go-w /tmp/f'
 expect 0 'sed -i s/a/b/ /tmp/f'
 expect 0 'truncate -s 10 /tmp/f'
+
+# The same cd rule passes elsewhere: a directory that is not protected, a cd that undoes the first, one it cannot read, and
+# reads.
+expect 0 'cd /tmp && rm settings.json'
+expect 0 'cd /tmp && rm review-gate'
+expect 0 'cd /tmp; echo x > settings.json'
+expect 0 'cd ~/.claude && cd /tmp && rm settings.json'
+expect 0 'cd $d && rm settings.json'
+expect 0 'cd ~nobody/.claude && rm settings.json'
+expect 0 'cd ~/.claude && ls settings.json'
+expect 0 'cd ~/.claude && cat settings.json'
+expect 0 'cd repo/.git && cat review-gate/abc.pass'
+expect 0 'cd repo/.git && rm config'
 
 # --- Out of scope: what the immutable flag holds, not the check ------------------------------------------------------
 # The check reads literal words. A path built at run time, a `cd`, an interpreter, a wrapper it doesn't unwrap, the tools
