@@ -220,7 +220,7 @@ trailing read-only filters (`tail`, `head`, `cat`, `grep`); a push in any other 
 script, `bash -c`) is left to the pre-push check, which refuses it unless HEAD's commit passed review.
 The push may pass no git global option except `-C <dir>`. In opted-in repos, `gh api` may make only the writes the ship skill uses
 (comments, replies, reviews, reactions, issues, labels, workflow runs and its own GraphQL mutations), plus
-issue dependency links ("blocked by"), which are issue metadata like labels; any other
+issue dependency links ("blocked by") and milestones (create, update), which are issue metadata like labels; any other
 write, such as commits, refs, PRs, statuses, checks or settings, blocks. It catches Claude's own slips but isn't a security boundary: it matches command text,
 and its state is protected by those patterns alone. Branch protection requiring the `codex-review` status is
 the server-side backstop. The design notes behind each check are in [`docs/gate.md`](docs/gate.md).

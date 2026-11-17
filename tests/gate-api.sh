@@ -80,6 +80,36 @@ bash 2 'gh api -X POST repos/acme/app/issues/169/dependencies/blocked_by/../../.
 bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by/5/extra'
 bash 2 'gh api -X DELETE repos/acme/app/issues/169/dependencies/blocked_by'
 
+# Milestones are project metadata the ship skill moves along: create and update pass, delete doesn't (claude-ship #135).
+bash 0 'gh api -X POST repos/acme/app/milestones -f title=v2'
+bash 0 'gh api -X PATCH repos/acme/app/milestones/6 -f state=closed'
+bash 2 'gh api -X DELETE repos/acme/app/milestones/6'
+bash 2 'gh api -X PATCH repos/acme/app/milestones/6/labels -f state=closed'
+bash 2 'gh api -X PATCH repos/acme/app/milestones/x -f state=closed'
+bash 2 'gh api -X PUT repos/acme/app/milestones/6 -f state=closed'
+
+# A `gh api` GET inside a substitution is a read the tree can show, even with a dynamic path, so it passes; a write, a dynamic
+# method or option, or an unmatched `gh api` in the text still blocks (claude-ship #135).
+bash 0 'for n in 1 2; do echo "#$n blocked by: $(gh api repos/acme/app/issues/$n/dependencies/blocked_by --jq "[.[].number] | join(\",\")")"; done'
+bash 0 'x=$(gh api repos/acme/app/pulls/1)'
+bash 0 'x=$(gh api repos/acme/app/pulls/1); y=`gh api repos/acme/app/pulls/2`; echo "$x$y"'
+bash 0 'echo "$(gh api -i -H "Accept: x" repos/acme/app/pulls/$n --jq ".title")"'
+bash 0 'echo "$(gh api --paginate "repos/acme/app/issues/$n/comments" -q ".[].id")"'
+bash 2 'echo "$(gh api -X DELETE repos/acme/app/issues/1/labels/x)"'
+bash 2 'echo "$(gh api -X$m repos/acme/app/git/refs)"'
+bash 2 'echo "$(gh api $flags repos/acme/app/git/refs)"'
+bash 2 'echo "$(gh api repos/acme/app/contents/x -f content=y)"'
+bash 2 'echo "$(gh api repos/acme/app/contents/x -fcontent=y)"'
+bash 2 'echo "$(gh api repos/acme/app/contents/x -iF content=y)"'
+bash 2 'echo "$(gh api repos/acme/app/contents/x --raw-field content=y)"'
+bash 2 'echo "$(gh api repos/acme/app/contents/x --method=PUT)"'
+bash 2 'echo "$(gh api repos/acme/app/contents/x --input body.json)"'
+bash 2 'echo "$(gh api repos/acme/app/git/refs$x -X POST)"'
+bash 2 'echo "$(gh api repos/acme/app/pulls/1)" "$(gh api -X DELETE repos/acme/app/git/refs/heads/x)"'
+bash 2 'echo "$(gh api repos/acme/app/pulls/1)"; echo "gh api"'
+bash 2 'echo "$(xargs gh api repos/acme/app/pulls/1)"'
+bash 2 'echo "$(sh -c "gh api -X DELETE repos/acme/app/git/refs/heads/x")"'
+
 # A command whose syntax tree runs no gh is no `gh api` call, whatever its text says: a heredoc body (written to a file
 # too, claude-ship #193) or a quoted argument is data (claude-ship #135). A real call still blocks, also next to such text.
 bash 0 'd=/tmp; cat > "$d/plan.md" <<'\''EOF'\''

@@ -135,7 +135,13 @@ shows `gh api` and its tree names a literal `gh` as a word of a command that may
 the words after an `echo` or `printf`, or a quoted `grep` pattern that only mention `gh api -X DELETE …` name no `gh`, so they are
 data and pass. A scanned call writes when its method isn't GET (gh's
 default once it has fields or an `--input`), and passes only if it is one of the writes the ship skill makes (REST allowlist
-below). A write that names `{owner}/{repo}` goes to whichever repo gh finds where it runs, so the opt-in lookup also asks the
+below). A call the text scan can't read, because it sits in a command substitution (`echo "$(gh api …)"`), still passes when
+the tree shows every `gh api` call the text names and each is a read: no `-X`, `--method`, `-f`, `-F`, `--field`, `--raw-field`
+or `--input` (also inside a short-flag cluster such as `-iF`), and every word that isn't literal starts with literal text that
+is no option, as a path with a variable does (`repos/o/r/issues/$n/…`), so `-X$m` and a bare `$flags` are not reads. A call
+with a wrapper the gate doesn't unwrap, or one `xargs` feeds, isn't a read; nor is a `gh api` the tree doesn't show (in a string
+it couldn't parse, or next to another `gh` command, as in `gh issue list; echo 'gh api'`): the text scan decides those, and
+blocks what it can't read. (`gh -R o/r api …` has a flag before `api` and is no `gh api` call for the gate, as before.) A write that names `{owner}/{repo}` goes to whichever repo gh finds where it runs, so the opt-in lookup also asks the
 directory of every `cd` the tree shows, whether or not the command is a push (a `cd` that is not one literal path blocks).
 `tests/gate-api.sh` and `tests/gate-push.sh` cover it.
 
@@ -309,7 +315,8 @@ opted-in repo the call blocks; if the opt-in can't be read, it blocks too.
 ## REST allowlist
 
 In an opted-in repo, `gh api` writes pass only if the ship skill makes them: comments, replies, reviews,
-reactions, issues, labels, issue dependency links (`blocked_by`), workflow dispatches, and its GraphQL
+reactions, issues, labels, issue dependency links (`blocked_by`), milestones (`POST milestones`, `PATCH milestones/N`; no
+delete), workflow dispatches, and its GraphQL
 mutations. Anything else (commits, refs, PRs, statuses, checks, settings, Actions variables like
 `CLAUDE_AUTONOMOUS`) could land code or change what guards it without a review, so it blocks.
 
