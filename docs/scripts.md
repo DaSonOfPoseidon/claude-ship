@@ -451,6 +451,12 @@ more (`tests/orchestrate-hint.sh` has a case per cell; claude-ship #159). The ho
 or quotes them (the hint holds just the directory, encoded by `jq`), and keeps the same mark, per session and
 workspace. Without the marker, a directory that isn't a git repo still gets nothing.
 
+The GitHub loop's hint adds a notice when `AGENTS.md` has no live `## PR loop` section, the only file the loop
+reads its settings from (the same scan, fences and comments literal, so the template's commented block counts as
+missing; a section only in `CLAUDE.md` doesn't count): the loop runs on its defaults, which Claude
+tells the user once, offering to add the section from `templates/AGENTS.md` and never adding it unasked, since
+`merge: yes` is a per-repo opt-in (claude-ship #260). The local loop's hint is unchanged.
+
 ## `hooks/explorer-bash.sh`
 
 A PreToolUse hook in `agents/ship-explorer.md`'s frontmatter (claude-ship #68). The explorer reads issue and PR

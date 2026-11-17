@@ -48,7 +48,9 @@ finding costs a full extra round, so care here is cheaper than speed.
    explorer with SendMessage ("send your final report") and don't answer without it. Then read only the lines its
    report points to. Direct reads stay allowed for the files you are about to edit and their tests, and you still
    read each of those in full before you edit it. Everything you read stays in your context and is re-read on every
-   later request, so keep exploration out of it.
+   later request, so keep exploration out of it. The exception is an answer marked `unsure:`: read the places it says
+   it checked yourself (beyond the files you edit, for that question only), or, if that doesn't settle it, say so in
+   the report.
 4. Mark your transcript, so the **Handoff check** can find it later: pick `implementer-` and twelve hex digits of
    your own (not one that is in your prompt), and run `echo <that marker>` as a Bash command of its own, with the
    marker written out in the command (not computed in it). Remember it for the Codex rounds. Skip this when the

@@ -26,25 +26,31 @@ marks="${TMPDIR:-/tmp}/claude-ship-hint"
 mark="$marks/$session-$(printf '%s' "$top" | cksum | cut -d' ' -f1)"
 [ -e "$mark" ] && exit 0
 
-# Succeeds when the file has `- mode: local` (backticks allowed) between the `## PR loop` heading and the next `## `
-# heading. The scan is a state table; each state treats the other's markers as literal text (claude-ship #159):
+# `scan <file> local` succeeds when the file has `- mode: local` (backticks allowed) between the `## PR loop` heading
+# and the next `## ` heading; `scan <file> section` succeeds when it has the `## PR loop` heading at all, outside
+# fences and comments. The scan is a state table; each state treats the other's markers as literal text (claude-ship #159):
 #
 #   state       | input line                                        | then
 #   normal      | fence opener (3+ ` or ~ at the start)             | in a fence; the rest of the line is literal
 #   normal      | `<!-- ... -->` complete, any number of times      | cut out of the line; the rest is read as normal
 #   normal      | `<!--` with no `-->` after it                     | the text before it is read; in a comment
 #   normal      | heading `## X`                                    | the section is live only if X is `PR loop`
-#   normal      | `- mode: local`, in a live section                | found
+#   normal      | `- mode: local`, in a live section                | found (`local`)
+#   normal      | heading `## PR loop`                              | found (`section`)
 #   in a fence  | a line of only the opener's character, as long    | normal
 #   in a fence  | anything else (`<!--`, `-->`, headings, modes)    | literal, skipped
 #   in a comment| a line holding `-->`                              | normal; the whole line is part of the comment
 #   in a comment| anything else (fences, headings, modes)           | literal, skipped
-has_local_mode() {
+scan() {
 	[ -f "$1" ] || return 1
-	[ "$(awk '
+	[ "$(awk -v want="$2" '
 		function check(l) {
-			if (l ~ /^ ? ? ?## /) { insec = (l ~ /^ ? ? ?## PR loop[ \t]*$/); return }
-			if (insec && l ~ /^[ \t]*-[ \t]+mode:[ \t]*`?local`?[ \t]*$/) { found = 1; exit }
+			if (l ~ /^ ? ? ?## /) {
+				insec = (l ~ /^ ? ? ?## PR loop[ \t]*$/)
+				if (insec && want == "section") { found = 1; exit }
+				return
+			}
+			if (insec && want == "local" && l ~ /^[ \t]*-[ \t]+mode:[ \t]*`?local`?[ \t]*$/) { found = 1; exit }
 		}
 		{
 			sub(/\r$/, "")
@@ -70,7 +76,7 @@ has_local_mode() {
 		}
 		END { print found ? "yes" : "no" }' "$1" 2>/dev/null)" = yes ]
 }
-if has_local_mode "$top/AGENTS.md" || has_local_mode "$top/CLAUDE.md"; then
+if scan "$top/AGENTS.md" local || scan "$top/CLAUDE.md" local; then
 	mkdir -p "$marks" 2>/dev/null && : >"$mark" 2>/dev/null
 	jq -nc --arg dir "$top" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: (
 		"Local orchestrated mode is on for " + $dir + " (## PR loop \u203a mode: local). If this prompt is an "
@@ -101,7 +107,17 @@ orchestrate=$(lookup CLAUDE_ORCHESTRATE) || exit 0
 mkdir -p "$marks" 2>/dev/null && : >"$mark" 2>/dev/null
 [ "$autonomous" = true ] && [ "$orchestrate" = true ] || exit 0
 
-jq -nc --arg repo "$slug" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: (
+# The GitHub loop reads settings only from AGENTS.md (orchestrate.md > Repo settings). Without its `## PR loop` section
+# the loop runs on its defaults; the hint says so, so Claude tells the user once.
+defaults=
+if ! scan "$top/AGENTS.md" section; then
+	defaults="This repo's AGENTS.md has no \`## PR loop\` section, so the loop runs on its defaults (merge: no, ready label "
+	defaults="$defaults\`status:ready\`, no skip or priority labels, handoff context 120000). Tell the user once "
+	defaults="$defaults and offer to add the section from \`templates/AGENTS.md\`; don't add it unasked."
+fi
+
+jq -nc --arg repo "$slug" --arg defaults "$defaults" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: (
 	"Orchestrated mode is on for " + $repo + " (CLAUDE_ORCHESTRATE). If this prompt is an objective to plan, "
 	+ "read ~/.claude/skills/ship/orchestrate.md now, explore with the ship-explorer agent instead of Explore, "
-	+ "and write the plan in its master-plan shape. Once the plan is approved, run the PR loop it describes.")}}'
+	+ "and write the plan in its master-plan shape. Once the plan is approved, run the PR loop it describes."
+	+ (if $defaults == "" then "" else " " + $defaults end))}}'

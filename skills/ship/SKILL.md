@@ -33,7 +33,8 @@ user asks for "the local loop".
 - **Missing or not `true`:** don't commit or push without asking the user. Mention that they can opt in
   with `! gh variable set CLAUDE_AUTONOMOUS --body true`. Stop here.
 - **`true`:** commit on your own (small, one logical step each, per the repo's conventions) and follow the
-  rest of this skill. Only the user changes the variable.
+  rest of this skill. Only the user changes the variable. In orchestrated mode, a repo with no `## PR loop` section
+  runs on defaults, which you tell the user once (`orchestrate.md` › Repo settings).
 
 ## 1. Bootstrap (once, when AGENTS.md has no `## Code Review Rules`)
 

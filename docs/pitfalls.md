@@ -275,3 +275,7 @@ review finds a new class.
   When a protection is a global layer, check its state where it lives (the config of every checkout, and the session's), for
   every command, instead of working out which repo a command means; a lookup that costs a network call goes behind the cheap
   local check (docs/gate.md › Pre-push check).
+- **A notice about a setting must read the file the loop reads.** The hook's "no `## PR loop` section, running on defaults"
+  notice first looked in `CLAUDE.md` too, so a section there silenced it although the GitHub loop reads settings only from
+  `AGENTS.md` (orchestrate.md › Repo settings) and so ran on defaults unannounced (claude-ship #260). Take the file list from
+  the code that consumes the setting, and test a section in each file that isn't read.

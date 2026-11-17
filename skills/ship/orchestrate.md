@@ -35,7 +35,7 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Work | Who | Model, effort |
 |---|---|---|
 | Choose and order the work, write plans, triage Codex, decide on merges | you | the session's (Opus) |
-| Answer the plan's questions about the code | `ship-explorer` agent | Haiku, medium |
+| Answer the plan's questions about the code, and the implementer's orientation questions | `ship-explorer` agent | Haiku, medium |
 | A question the explorer marked "unsure" | `general-purpose` agent with `model: sonnet` | Sonnet |
 | Implement a **normal** or **high-risk** unit, fix its gate and Codex findings | `ship-implementer` agent | Sonnet, high |
 | Implement a unit in **Local mode** (no git, PR, gate or Codex), fix its failed checks and verification | `ship-local-implementer` agent | Sonnet, high |
@@ -56,7 +56,10 @@ background (`run_in_background`) and get notified instead of polling.
 
 ## Repo settings
 
-Read only `AGENTS.md` › `## PR loop`, if the repo has it. A missing setting takes its default:
+Read only `AGENTS.md` › `## PR loop`, if the repo has it. A missing setting takes its default. When
+`AGENTS.md` has no such section (the hook says so), tell the user once that the loop runs on these
+defaults and offer to add the section from `templates/AGENTS.md`; don't add it unasked, since `merge: yes` is a
+per-repo opt-in.
 
 | Setting | Default |
 |---|---|
