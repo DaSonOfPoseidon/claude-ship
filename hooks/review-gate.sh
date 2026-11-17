@@ -234,12 +234,13 @@ def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 #   {k: "block", p, w}  a literal word p names a protected path and writes (w says how: the writing tool, or the redirect)
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
 #   {k: "gh"}           a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
+#   {k: "gapi", r}      a `gh api` call the tree shows; r is true when it is a read (below `def gapi`)
 #   {k: "deny", m}      a `push --no-verify`, a write of core.hooksPath (docs/gate.md › Pre-push check) or a `chattr`
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
 # kept as text, `$HOME` and `${HOME}` on their own the home directory); anything else is dynamic and is not read: a variable,
 # a substitution, a glob, `$'...'`. The output, for the loop below: the verdict (deny, block, pass, or bad when the input is
 # no tree) on the first line, then the message of a block or a deny; or, for pass, `gh` (a gh event) or `nogh` (none), then
-# the strings to parse again, one JSON string per line.
+# `ga N R` (N gapi events, R of them reads), then the strings to parse again, one JSON string per line.
 tamper_jq="$tree_defs$path_defs"'
 # $HOME and ${HOME} on their own, with nothing else done to them, are the home directory.
 def hm: .Type == "ParamExp" and .Param.Value? == "HOME" and ((keys - ["Type", "Dollar", "Rbrace", "Short", "Param", "Pos", "End"]) | length) == 0;
@@ -408,8 +409,27 @@ def ghev:
 	| eff($ws; false) as $effs
 	| if $effs == null then {k: "gh"}
 	else ($effs[] | select(((.w[0] | bn) | test("^(echo|printf)$") | not) and (.w | any(bn == "gh"))) | {k: "gh"}) end;
+# A `gh api` call as an event, {k: "gapi", r}, where r says the tree shows it as a read: no option that makes a write (`-X`,
+# `--method`, `-f`, `-F`, `--field`, `--raw-field`, `--input`, also inside a short-flag cluster as `-iF`), and every word it
+# does not read literally starts with literal text that is no option (a path `repos/o/r/issues/$n/...`), so `-X$m` and a bare
+# `$flags` are not a read. A call whose arguments xargs or find supply is not one either. Anything the tree does not show
+# as `gh api` (`gh -R o/r api`, a wrapper the gate does not unwrap) makes no event.
+def dynok: (.Parts[0]? // empty) as $p
+	| (if $p.Type == "Lit" then $p.Value elif $p.Type == "DblQuoted" and ($p.Dollar | not) then ($p.Parts[0]? | select(.Type == "Lit") | .Value) else null end)
+	| . != null and test("^[^-]");
+def rdok: all(.[];
+	if . == "\u0001" then false
+	elif . == "\u0002" then true
+	elif test("^--(method|field|raw-field|input)(=|$)") then false
+	elif test("^-[^-]*[fFX]") then false
+	else true end);
+def gapi:
+	([(.Args? // [])[] | wv // (if dynok then "\u0002" else "\u0001" end)]) as $ws
+	| eff($ws; false) as $effs
+	| if $effs == null then empty
+	else ($effs[] | select(((.w[0] | bn) == "gh") and .w[1] == "api") | {k: "gapi", r: ((.x | not) and (.w[2:] | rdok))}) end;
 # The events of one statement, its commands and redirects all through it, with $cd the directory a `cd` before it left.
-def evat($cd): [.. | objects | (if .Type == "CallExpr" then (calls($cd), ghev) else empty end), (if has("Redirs") then redirs($cd) else empty end)];
+def evat($cd): [.. | objects | (if .Type == "CallExpr" then (calls($cd), ghev, gapi) else empty end), (if has("Redirs") then redirs($cd) else empty end)];
 # The one `cd` the check follows, for the narrow targets only (the gate state and the settings, which the immutable flag does not
 # cover): a top-level statement that is just `cd LITERAL`, or such a `cd` on the left of `&&` (`cd a && cd b && rm x` is three
 # units, and `cd a; rm x` two statements), sets the directory that later relative words and redirect targets also resolve
@@ -444,12 +464,15 @@ else
 	| if $gd != null then "deny", $gd.m
 		elif $b != null then "block", "`\($b.p)` and writes with `\($b.w)`"
 		else "pass", (if any($ev[]; .k == "gh") then "gh" else "nogh" end),
+			"ga \([$ev[] | select(.k == "gapi")] | length) \([$ev[] | select(.k == "gapi" and .r)] | length)",
 			($ev[] | select(.k == "str") | {v: .v} | tojson) end
 end'
 # Walks the tree, then the strings it runs as shell (`sh -c`, `eval`) to a depth of 3, each parsed again. A string
 # that doesn't parse, or sits deeper, is not read by the tamper check; it counts as naming a `gh`, since the `gh api` scan
 # below can't tell (gh_seen: a `gh` is named anywhere; docs/gate.md › Command reading).
 gh_seen=0
+ga_n=0
+ga_r=0
 tamper_nl=$(printf '\n_')
 tamper_nl=${tamper_nl%_}
 pending=
@@ -472,6 +495,18 @@ while [ -n "$cur" ]; do
 		*) rest= ;;
 		esac
 		[ "$gg" != gh ] || gh_seen=1
+		ga=${rest%%"$tamper_nl"*}
+		case $rest in
+		*"$tamper_nl"*) rest=${rest#*"$tamper_nl"} ;;
+		*) rest= ;;
+		esac
+		case $ga in "ga "[0-9]*" "[0-9]*) ;; *) unreadable "command syntax tree" ;; esac
+		ga=${ga#ga }
+		ga_a=${ga% *}
+		ga_b=${ga#* }
+		case $ga_a$ga_b in *[!0-9]*) unreadable "command syntax tree" ;; esac
+		ga_n=$((ga_n + ga_a))
+		ga_r=$((ga_r + ga_b))
 		;;
 	esac
 	case $verdict in
@@ -970,7 +1005,7 @@ api_scan() (
 	slug=$(printf '%s' "$ep" | cut -d/ -f2-3)
 	rest=$(printf '%s' "$ep" | cut -d/ -f4- | sed 's#/*$##')
 	# The ship skill's writes (docs/gate.md › REST allowlist) pass; anything else is checked below.
-	printf '%s %s' "${method:-POST}" "$rest" | grep -Eq '^(POST (issues|issues/[0-9]+/(comments|labels|reactions|dependencies/blocked_by)|issues/comments/[0-9]+/reactions|pulls/[0-9]+/(comments|reviews)|pulls/[0-9]+/comments/[0-9]+/replies|pulls/comments/[0-9]+/reactions|labels|actions/workflows/[^/]+/dispatches)|PATCH (issues/[0-9]+|issues/comments/[0-9]+|labels/[^/]+)|DELETE issues/[0-9]+/dependencies/blocked_by/[0-9]+)$' && exit 0
+	printf '%s %s' "${method:-POST}" "$rest" | grep -Eq '^(POST (issues|issues/[0-9]+/(comments|labels|reactions|dependencies/blocked_by)|issues/comments/[0-9]+/reactions|pulls/[0-9]+/(comments|reviews)|pulls/[0-9]+/comments/[0-9]+/replies|pulls/comments/[0-9]+/reactions|labels|milestones|actions/workflows/[^/]+/dispatches)|PATCH (issues/[0-9]+|issues/comments/[0-9]+|labels/[^/]+|milestones/[0-9]+)|DELETE issues/[0-9]+/dependencies/blocked_by/[0-9]+)$' && exit 0
 	if ! printf '%s' "$slug" | grep -Eq '^([[:alnum:]_.-]+/[[:alnum:]_.-]+|\{owner\}/\{repo\})$'; then
 		echo "block names a repo the review gate can't read ($slug)"
 		exit 0
@@ -978,7 +1013,18 @@ api_scan() (
 	echo "repo $slug"
 )
 api_found=
-if [ "$gh_seen" = 1 ] && printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
+# Every `gh api` call is one the tree shows as a read: the text scan below can't read a call inside a substitution (`$(gh api
+# ...)` cuts its words), but the tree can, and a read writes nothing, so a dynamic path is fine. The tree must show every `gh api`
+# the text names (the larger of the raw and the word-split count), or one hides from it (`echo 'gh api'` next to a `gh issue
+# list`, a string it could not parse): then the scan below decides, and blocks what it can't read.
+api_reads=0
+if [ "$gh_seen" = 1 ] && [ "$ga_n" -gt 0 ] && [ "$ga_n" = "$ga_r" ]; then
+	raw_n=$(printf '%s\n' "$cmd" | grep -Eo "$gh_api" | wc -l)
+	words_n=$(printf '%s\n' "$words" | grep -Eo "$gh_api" | wc -l)
+	[ "$words_n" -le "$raw_n" ] || raw_n=$words_n
+	[ "$raw_n" -ne "$ga_n" ] || api_reads=1
+fi
+if [ "$gh_seen" = 1 ] && [ "$api_reads" = 0 ] && printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 	# One line per simple command, each `gh api` call scanned on its own. A segment ending in `$` was cut by an
 	# unquoted `$(`, which hides the rest of its words, like a backtick.
 	api_found=$(printf '%s\n' "$words" | sed -E 's/([<>])&/\1@RD@/g; s/&>/@RD@>/g' | tr ';&|()' '\n\n\n\n\n' |
@@ -1088,7 +1134,7 @@ if [ -n "$api_write" ]; then
 			exit 2
 		fi
 		if [ -n "$api_flag" ]; then
-			echo "Blocked: in $api_slug, \`gh api\` may make only the ship skill's writes (comments, replies, reviews, reactions, issues, labels, dependency links, workflow runs); others could bypass the pre-push review gate. Use \`git push\` and \`gh pr create\` for code." >&2
+			echo "Blocked: in $api_slug, \`gh api\` may make only the ship skill's writes (comments, replies, reviews, reactions, issues, labels, dependency links, milestones, workflow runs); others could bypass the pre-push review gate. Use \`git push\` and \`gh pr create\` for code." >&2
 			exit 2
 		fi
 	done

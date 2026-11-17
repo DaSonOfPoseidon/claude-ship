@@ -61,7 +61,7 @@ or anything CI already checks (shellcheck, actionlint).
 - What's reviewed is what's pushed: a push may send only HEAD, to origin, or one tag whose commit is on origin's
   default branch (the pre-push check asks the remote; no `--all`, `--tags`, other branches, other tags or other
   destinations), and GitHub MCP writes of code or PRs are blocked. `gh api` may make
-  only the writes the ship skill uses, plus issue metadata such as dependency links (an allowlist, REST and
+  only the writes the ship skill uses, plus issue metadata such as dependency links and milestones (an allowlist, REST and
   GraphQL); any other write, including statuses,
   checks and settings, blocks. A GitHub URL the gate can't read blocks too.
 - The gate catches Claude's own slips; it isn't a security boundary (see Gate scope). Its command checks read
