@@ -790,6 +790,10 @@ run --since abc 10
 check '--since with a non-date' 2 ''
 run --since 2026-13-45
 check '--since with an impossible date' 2 ''
+run --since 2026-02-30
+check '--since with a day the month lacks' 2 ''
+run --since 2027-02-29
+check '--since with a leap day in a common year' 2 ''
 run --since 2026-10-01 --since 2026-10-02
 check '--since twice' 2 ''
 run --since 2026-10-01 -x
