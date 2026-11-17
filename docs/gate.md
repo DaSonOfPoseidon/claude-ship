@@ -365,8 +365,8 @@ but not to turn hooks off (`disableAllHooks`).
   there and the directory can't be immutable, and a second line for the user's settings, where the registration may still be
   live.
 
-Because the flag holds the line, the Bash check doesn't try to follow a path through a `cd`, a variable or an interpreter.
-That used to be its job, and every spelling it missed was the next finding (#187 and the issues after it: #195, #196,
+Because the flag holds the line, the Bash check doesn't try to follow a path through a variable or an interpreter, and it
+follows a `cd` only for the two targets the flag doesn't cover (below). That used to be its job, and every spelling it missed was the next finding (#187 and the issues after it: #195, #196,
 #198 to #203); those false blocks and parser gaps went with the code that had them.
 
 For Bash, writing gate state or the installed gate would bypass the review; reading its reports is fine. The check
@@ -391,8 +391,14 @@ because Claude Code reads that one, whatever `CLAUDE_SHIP_MANAGED_DIR` says to t
 
 A word names a protected path after `~`, `$HOME` and `${HOME}` are expanded and the path is folded: `//`, `/./`, a trailing
 `/.` and `seg/..` go (a `..` above `/` stays at `/`), lexically, with no filesystem access, so **symlinks are out of scope**.
-A relative word is made absolute from the hook input's `cwd` (the `$PWD` of the gate without one) and from nothing else: no
-`cd` is followed. The command word and a wrapper before it are not file names, so a command named `rm` in a protected
+A relative word is made absolute from the hook input's `cwd` (the `$PWD` of the gate without one). One narrow `cd` rule adds a
+second base, for the targets the immutable flag doesn't cover (`.git/review-gate` and `~/.claude/settings*`): a top-level
+statement that is just `cd LITERAL`, or a `cd LITERAL` on the left of `&&` (`cd a && cd b && rm x`, or `cd a; rm x`), sets
+the directory the later relative words and redirect targets are also resolved from, and only those two targets are looked
+for there. LITERAL is folded like any word (`~`, `$HOME`, `${HOME}`) and is relative to the `cd` before it, or to the `cwd`.
+No candidate sets, no variables, no `env -C`: a `cd` with an option (`cd -P x`, `cd -`), a dynamic word or no operand
+leaves the directory unknown, and relative words then resolve from the `cwd` alone. A `cd` that ends a chain that runs
+something else (`x && cd y`), one in a subshell, a function or a nested string (`sh -c`) is not followed. The command word and a wrapper before it are not file names, so a command named `rm` in a protected
 working directory doesn't count; for an option only its `=VALUE` is a path (`dd of=…`, `--target-directory=…`).
 
 The command blocks when:
@@ -421,6 +427,8 @@ What blocks and what passes, with a protected `~/.claude/hooks`:
 |---|---|
 | `rm ~/.claude/hooks/x`, `cp x $HOME/.claude/hooks/x`, `rm ~/.claude/./hooks/../hooks/x`, `rm /root/.claude//hooks/x` (the home directory written out) | blocked |
 | `rm -rf .git/review-gate`, `: > .git/review-gate/abc.pass`, `echo x > /etc/claude-code/managed-settings.json` | blocked |
+| `cd ~/.claude && rm settings.json`, `cd ~/.claude; echo x > settings.local.json`, `cd repo/.git && rm -r review-gate` (from the directory above `repo`) | blocked (the `cd` rule) |
+| `cd /tmp && rm settings.json`, `cd ~/.claude && cd /tmp && rm settings.json`, `cd $d && rm settings.json`, `cd ~/.claude && cat settings.json` | passes |
 | `sed -i s/a/b/ ~/.claude/hooks/x`, `perl -pi -e … ~/.claude/hooks/x`, `tar xf a.tar -C ~/.claude/hooks`, `tee`, `dd of=…` | blocked |
 | `sudo tee ~/.claude/settings.json`, `find ~/.claude/hooks -delete`, `sh -c 'rm ~/.claude/hooks/x'`, `~/.claude/skills/ship/token-report.sh 12 >~/.claude/hooks/o` | blocked |
 | `cat`, `grep`, `rg`, `diff`, `less`, `ls`, `lsattr`, `sha256sum`, `sed -n p` of a protected file; `grep curl ~/.claude/hooks/x` | passes |
@@ -433,8 +441,9 @@ What blocks and what passes, with a protected `~/.claude/hooks`:
 
 - a word with an expansion (`rm "$p"/x` after `p=~/.claude/hooks`, `rm ~/.claude/hooks/*`, `of=~/.claude/hooks/$f`, a
   command substitution, `$'...'`);
-- a `cd` (`cd ~/.claude/hooks && rm review-gate.sh`), `pushd`, `env -C`, `sudo -D`, `git -C`: nothing tracks the working
-  directory the command makes;
+- a `cd` to anything the flag covers (`cd ~/.claude/hooks && rm review-gate.sh`: the `cd` rule above follows a `cd` for
+  `.git/review-gate` and `~/.claude/settings*` only), `pushd`, `env -C`, `sudo -D`, `git -C`, and a `cd` the rule doesn't follow
+  (in a subshell, after `||`, to a dynamic word): nothing else tracks the working directory the command makes;
 - an interpreter or what it reads (`python`, `node`, `ruby`, `php`, `awk`'s `system`, a shell run without `-c`, `source`, a
   script on stdin or piped into `sh`), and a string nested deeper than 3;
 - a wrapper the gate doesn't unwrap (`flock`, `watch`, `ionice`, `busybox`, `su -c`, `ssh host '…'`, an unknown wrapper
@@ -458,7 +467,7 @@ word (`grep -n chattr install.sh`, `echo chattr`, a file called `chattr.md`), pa
 affected: the gate sees `./install.sh`, not what runs inside it.
 
 **Immutable install** (#189). The literal check above stops what Claude plausibly types; it doesn't stop a command written
-to get past it, and it follows no path through a `cd`, a variable or an interpreter. So `install.sh` also takes the files
+to get past it, and it follows no path through a variable or an interpreter, and a `cd` only for the two targets above. So `install.sh` also takes the files
 out of reach of any command Claude runs, without relying on how the command is spelled:
 
 - **Managed settings.** It copies `settings/claude-ship.json` to
