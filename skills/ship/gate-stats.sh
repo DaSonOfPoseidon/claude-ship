@@ -26,8 +26,9 @@ if [ "${1:-}" = --since ]; then
 	[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
 	*) usage ;;
 	esac
-	# The pattern fits "2026-13-45" too; jq's date parser doesn't.
-	jq -n -e --arg d "$since" '"\($d)T00:00:00Z" | fromdateiso8601 | . >= 0' >/dev/null 2>&1 || usage
+	# The pattern fits "2026-13-45" and "2026-02-30" too: jq's date parser rejects the first and rolls the second
+	# over to March, so the date must round-trip.
+	jq -n -e --arg d "$since" '"\($d)T00:00:00Z" | fromdateiso8601 | todate[0:10] == $d' >/dev/null 2>&1 || usage
 else
 	[ "$#" -gt 0 ] || usage
 	for pr in "$@"; do

@@ -303,6 +303,25 @@ costs money, and must not stop a round. Tests: `tests/agent-context.sh`.
 ## `skills/ship/token-report.sh`
 
 Reads only this repo's transcripts, the gate's cost log and `gh`, keeps no state and calls no model.
+`token-report.sh [--summary] [--since YYYY-MM-DD] [<pr>...]`: at least one PR number or `--since`; a bad or
+repeated `--since`, an unknown option or `--summary` alone exits 2.
+
+**`--since`** (#249) adds the repo's PRs created on or after the date (the date's midnight UTC, compared with
+`createdAt` as text), whoever wrote them, oldest first, after any PR numbers given; a PR both given and selected
+counts once. They come from the one `gh pr list` (newest 200) that also finds the competing PRs, so a full page warns
+as before, and a selection reaching the oldest listed PR is the same error as an asked PR there (its previous PR
+can't be found). A selected PR with no author can't be windowed: it is left out with a warning (an explicitly asked
+one is still an error). A selection of no PR prints a note on stderr and exits 0.
+
+**`--summary`** prints, after the per-PR tables, from the same rows (costs summed in nano-dollars, not as the
+printed cents): the number of PRs with usage out of those asked; the cost by role and model across the PRs, biggest
+first, with each one's share of the spend (the gate's `gate <stage>` rows are roles too); the mean, median and
+max cost per PR and the five costliest PRs (ties: the lower PR number first); the mean and max peak main context;
+and the implementer's (`ship-implementer`) mean cache read per request. A PR with no usage isn't in any figure. A `?`
+cost is excluded from the sums: a `?` row from the role and model table, and a PR whose total is `?` from the
+per-PR figures, with a count of those PRs (`left out of the cost sums`); its tokens still count for the peak. A PR
+with no main row (the stderr warning below) is left out of the peak figures, since its 0 isn't a measurement.
+Tests: `tests/token-report.sh`.
 
 **Attribution.** A main-session request belongs to the PR whose window holds its timestamp. A PR's own window
 runs from the earlier of its creation and its first commit, to the merge, else to the close of a PR closed

@@ -552,6 +552,14 @@ pauthor 98 alice
 run 98
 check 'asked PR older than a full list' 1 ''
 grep -q 'PR #98' "$tmp/err" || { echo 'FAIL: no message naming the PR older than the full list'; cat "$tmp/err"; fail=1; }
+# --since picks from the same list: a date inside it selects only the PRs after it (the full page still warns).
+run --since 2026-10-01
+check '--since in a full pr list' 0 'PR #100 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 1250000 0 0 0 $5.00
+total 2 1250000 0 0 0 $5.00
+peak main context: 1000000 tokens'
+grep -q 'newest 200' "$tmp/err" || { echo 'FAIL: no warning for the full pr list (--since)'; cat "$tmp/err"; fail=1; }
 
 # PRs that start after every asked window can't hold one of its requests, so they aren't read (#129), even when
 # the asked PR has no earlier PR to bound the other side. Alice's PR 200 (10:00..12:00) is her first; her next
@@ -623,6 +631,7 @@ check 'gh pr list returns an object' 1 ''
 grep -q 'gh pr list' "$tmp/err" || { echo 'FAIL: no message for the odd pr list'; cat "$tmp/err"; fail=1; }
 
 # A PR without an author (a deleted account) can't be matched against the list: an error, not "no earlier PRs".
+echo '[]' >"$GH_DIR/list.json"
 printf '%s\n' '{"title":"ghost","author":null,"state":"MERGED","createdAt":"2026-10-01T10:00:00Z","mergedAt":"2026-10-01T12:00:00Z","closedAt":"2026-10-01T12:00:00Z","commits":[]}' >"$GH_DIR/pr-68.json"
 run 68
 check 'pr without an author' 1 ''
@@ -771,6 +780,192 @@ main claude-opus-5-5 1 250000 0 0 0 $1.00
 total 1 250000 0 0 0 $1.00
 peak main context: 250000 tokens'
 [ ! -s "$tmp/err" ] || { echo 'FAIL: unexpected stderr (transcripts only in a worktree dir)'; cat "$tmp/err"; fail=1; }
+
+# --- --since and --summary (#249).
+# Bad arguments exit 2: a missing or repeated --since, a date that is not one, --summary alone.
+fresh
+run --since
+check '--since without a date' 2 ''
+run --since abc 10
+check '--since with a non-date' 2 ''
+run --since 2026-13-45
+check '--since with an impossible date' 2 ''
+run --since 2026-02-30
+check '--since with a day the month lacks' 2 ''
+run --since 2027-02-29
+check '--since with a leap day in a common year' 2 ''
+run --since 2026-10-01 --since 2026-10-02
+check '--since twice' 2 ''
+run --since 2026-10-01 -x
+check 'an unknown option' 2 ''
+run --summary
+check '--summary alone' 2 ''
+grep -q '^usage:.*--since YYYY-MM-DD' "$tmp/err" || { echo 'FAIL: usage does not mention --since'; fail=1; }
+
+# --since selects the repo's PRs (whoever wrote them) created on or after the date, oldest first, after any PR
+# numbers given; a PR both given and selected is reported once.
+fresh
+for n in 30 31 32 33; do
+	pr "$n" "p$n" "2026-10-0$((n - 29))T10:00:00Z" "2026-10-0$((n - 29))T12:00:00Z"
+done
+plist '30|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z' '31|2026-10-02T10:00:00Z|2026-10-02T12:00:00Z' \
+	'32|2026-10-03T10:00:00Z|2026-10-03T12:00:00Z' '33|2026-10-04T10:00:00Z|2026-10-04T12:00:00Z||other'
+run --since 2026-10-02
+check '--since selection' 0 'PR #31 p31 (2026-10-02T10:00:00 → 2026-10-02T12:00:00)
+no usage found
+
+PR #32 p32 (2026-10-03T10:00:00 → 2026-10-03T12:00:00)
+no usage found
+
+PR #33 p33 (2026-10-04T10:00:00 → 2026-10-04T12:00:00)
+no usage found'
+run 33 --since 2026-10-03 33
+check '--since with PR numbers' 0 'PR #33 p33 (2026-10-04T10:00:00 → 2026-10-04T12:00:00)
+no usage found
+
+PR #32 p32 (2026-10-03T10:00:00 → 2026-10-03T12:00:00)
+no usage found'
+# The date's own midnight counts; a PR created the second before does not.
+plist '30|2026-10-01T23:59:59Z|2026-10-01T12:00:00Z' '31|2026-10-02T00:00:00Z|2026-10-02T12:00:00Z'
+run --since 2026-10-02
+check '--since at midnight' 0 'PR #31 p31 (2026-10-02T10:00:00 → 2026-10-02T12:00:00)
+no usage found'
+# Nothing selected: a note, no output, exit 0.
+run --since 2026-11-01
+check '--since with no PR' 0 ''
+grep -q '^token-report.sh: no PRs created since 2026-11-01' "$tmp/err" || { echo 'FAIL: no note for an empty --since'; cat "$tmp/err"; fail=1; }
+# A PR with no author can't be windowed: left out of the selection with a warning, not an error.
+plist '31|2026-10-02T10:00:00Z|2026-10-02T12:00:00Z' '32|2026-10-03T10:00:00Z|2026-10-03T12:00:00Z||none'
+run --since 2026-10-02
+check '--since with a PR with no author' 0 'PR #31 p31 (2026-10-02T10:00:00 → 2026-10-02T12:00:00)
+no usage found'
+grep -q '^token-report.sh: left out 1 PR(s) with no author' "$tmp/err" || { echo 'FAIL: no warning for a PR with no author'; cat "$tmp/err"; fail=1; }
+
+# --summary: totals by role and model, the cost per PR, the costliest PRs, the main session's peak context and the
+# implementer's cache read per request.
+fresh
+pr 20 'feat: a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 21 'feat: b' 2026-10-02T10:00:00Z 2026-10-02T12:00:00Z
+line "$D/s20.jsonl" m1 2026-10-01T10:30:00.000Z claude-opus-5-5 250000 0 0 0
+A=$D/s20/subagents/agent-i.jsonl
+line "$A" a1 2026-10-01T11:00:00.000Z claude-sonnet-5-5 1000000 0 0 0
+line "$A" a2 2026-10-01T11:10:00.000Z claude-sonnet-5-5 0 0 500000 0
+meta "$A" '{"agentType":"ship-implementer"}'
+line "$D/s21.jsonl" m2 2026-10-02T10:30:00.000Z claude-opus-5-5 500000 0 0 0
+A=$D/s21/subagents/agent-i.jsonl
+line "$A" b1 2026-10-02T11:00:00.000Z claude-sonnet-5-5 0 0 100000 0
+meta "$A" '{"agentType":"ship-implementer"}'
+plist '20|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z' '21|2026-10-02T10:00:00Z|2026-10-02T12:00:00Z'
+run 20 21
+check 'no summary without the flag' 0 'PR #20 feat: a (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+ship-implementer claude-sonnet-5-5 2 1000000 0 500000 0 $2.10
+total 3 1250000 0 500000 0 $3.10
+peak main context: 250000 tokens
+
+PR #21 feat: b (2026-10-02T10:00:00 → 2026-10-02T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+ship-implementer claude-sonnet-5-5 1 0 0 100000 0 $0.02
+total 2 500000 0 100000 0 $2.02
+peak main context: 500000 tokens'
+cp "$tmp/out" "$tmp/out.nosum"
+run --summary 20 21
+check '--summary' 0 "$(cat "$tmp/out.nosum")
+
+Summary: usage found for 2 of 2 PRs
+role model cost share
+main claude-opus-5-5 \$3.00 58.6%
+ship-implementer claude-sonnet-5-5 \$2.12 41.4%
+total \$5.12 100.0%
+cost per PR: mean \$2.56, median \$2.56, max \$3.10
+costliest PRs:
+#20 \$3.10 feat: a
+#21 \$2.02 feat: b
+peak main context: mean 375000 tokens, max 500000 tokens
+implementer cache read: mean 200000 tokens per request (3 requests)"
+[ ! -s "$tmp/err" ] || { echo 'FAIL: unexpected stderr (--summary)'; cat "$tmp/err"; fail=1; }
+# The flags combine: --since picks the same two PRs, and with a PR number the PR is not counted twice.
+cp "$tmp/out" "$tmp/out.sum"
+run --since 2026-10-01 --summary
+check '--since --summary' 0 "$(cat "$tmp/out.sum")"
+run --summary --since 2026-10-02 20
+check '--summary with --since and a PR number' 0 "$(cat "$tmp/out.sum")"
+
+# Five costliest only: seven PRs, the two cheapest are not listed (a tie goes to the lower number).
+fresh
+for n in 40 41 42 43 44 45 46; do
+	d=$((n - 39))
+	pr "$n" "p$n" "2026-10-0${d}T10:00:00Z" "2026-10-0${d}T12:00:00Z"
+	# 250000 input tokens on Opus are $1.00; PRs 43 and 44 cost the same.
+	case $n in 43 | 44) u=4 ;; 45) u=5 ;; 46) u=6 ;; *) u=$((n - 39)) ;; esac
+	line "$D/s$n.jsonl" "r$n" "2026-10-0${d}T10:30:00.000Z" claude-opus-5-5 $((u * 250000)) 0 0 0
+done
+run --summary 40 41 42 43 44 45 46
+sed -n '/^costliest/,/^peak/p' "$tmp/out" >"$tmp/top"
+[ "$(cat "$tmp/top")" = 'costliest PRs:
+#46 $6.00 p46
+#45 $5.00 p45
+#43 $4.00 p43
+#44 $4.00 p44
+#42 $3.00 p42
+peak main context: mean 892857 tokens, max 1500000 tokens' ] || { echo 'FAIL: top 5 costliest'; cat "$tmp/top"; fail=1; }
+grep -q '^cost per PR: mean \$3.57, median \$4.00, max \$6.00$' "$tmp/out" || { echo 'FAIL: mean/median of 7 PRs'; cat "$tmp/out"; fail=1; }
+
+# An unpriced row (a model with no price) makes its PR's cost ?: the PR is left out of the cost sums, and its row
+# of the role table with it, with a count of the PRs affected. Its tokens still count for the peak context.
+fresh
+pr 20 'feat: a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 22 'feat: c' 2026-10-03T10:00:00Z 2026-10-03T12:00:00Z
+line "$D/s20.jsonl" m1 2026-10-01T10:30:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s22.jsonl" m3 2026-10-03T10:30:00.000Z claude-mystery-1 100000 0 0 0
+plist '20|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z' '22|2026-10-03T10:00:00Z|2026-10-03T12:00:00Z'
+run --summary 20 22
+check '--summary with an unpriced row' 0 'PR #20 feat: a (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens
+
+PR #22 feat: c (2026-10-03T10:00:00 → 2026-10-03T12:00:00)
+role model requests input output cache read cache write cost
+main claude-mystery-1 1 100000 0 0 0 ?
+total 1 100000 0 0 0 ?
+peak main context: 100000 tokens
+
+Summary: usage found for 2 of 2 PRs
+role model cost share
+main claude-opus-5-5 $1.00 100.0%
+total $1.00 100.0%
+left out of the cost sums: 1 PR(s) with a ? cost
+cost per PR: mean $1.00, median $1.00, max $1.00
+costliest PRs:
+#20 $1.00 feat: a
+peak main context: mean 175000 tokens, max 250000 tokens
+implementer cache read: no implementer requests'
+grep -q '^token-report.sh: no price for model claude-mystery-1' "$tmp/err" || { echo 'FAIL: no price warning (--summary)'; cat "$tmp/err"; fail=1; }
+
+# Only unpriced PRs, or no usage at all: the summary says so instead of printing zeros.
+run --summary 22
+check '--summary, every PR unpriced' 0 'PR #22 feat: c (2026-10-03T10:00:00 → 2026-10-03T12:00:00)
+role model requests input output cache read cache write cost
+main claude-mystery-1 1 100000 0 0 0 ?
+total 1 100000 0 0 0 ?
+peak main context: 100000 tokens
+
+Summary: usage found for 1 of 1 PRs
+left out of the cost sums: 1 PR(s) with a ? cost
+cost per PR: no priced PR
+peak main context: mean 100000 tokens, max 100000 tokens
+implementer cache read: no implementer requests'
+fresh
+pr 23 'feat: d' 2026-10-04T10:00:00Z 2026-10-04T12:00:00Z
+run --summary 23
+check '--summary, no usage' 0 'PR #23 feat: d (2026-10-04T10:00:00 → 2026-10-04T12:00:00)
+no usage found
+
+Summary: usage found for 0 of 1 PRs'
 
 # --- both new scripts are committed executable (a hook or the skill runs them as commands).
 for f in skills/ship/token-report.sh tests/token-report.sh; do
