@@ -436,7 +436,8 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
   the repo has no map and the issue is filed with the base labels. Any other failed read (a 5xx, the rate limit,
   no network) prints `p3-issue: can't read p3-labels for <slug>: …`, exits 1 and files nothing, since an issue
   filed without its area and status labels never reaches the PR loop's queue (claude-ship #179). The status is
-  the response's own status line (`gh api -i`), not a match on the error text.
+  the response's own status line (`gh api -i`), not a match on the error text, and a 200 counts only if `gh`
+  exited 0 as well (a body cut short leaves the headers and part of the map).
 - **Never lost to its labels.** If filing fails, it retries without the milestone, then without labels.
 
 ## `hooks/orchestrate-hint.sh`

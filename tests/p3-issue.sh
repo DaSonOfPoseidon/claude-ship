@@ -27,6 +27,10 @@ case "\$1 \$2" in
 		printf 'HTTP/2.0 500 Internal Server Error\\r\\nContent-Type: application/json\\r\\n\\r\\n{"message":"Server Error"}\\n'
 		exit 1
 	fi
+	if [ "\${MAP_STATUS:-}" = cut ]; then
+		printf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/vnd.github.raw\\r\\n\\r\\n* area:co'
+		exit 1
+	fi
 	if [ ! -f "$tmp/map" ]; then
 		printf 'HTTP/2.0 404 Not Found\\r\\nContent-Type: application/json\\r\\n\\r\\n{"message":"Not Found"}\\n'
 		exit 1
@@ -229,22 +233,25 @@ mv "$tmp/map" "$tmp/map.off"
 expect docs/a.md review:p3,milestone:later ''
 mv "$tmp/map.off" "$tmp/map"
 
-# A failed read (not a missing file) files nothing: it exits 1, says why and never runs `issue create`.
-rm -f "$tmp/args"
+# A failed read (not a missing file) files nothing: it exits 1, says why and never runs `issue create`. That holds
+# for a 500 and for a 200 cut short, whose headers and part of the map arrive before gh exits 1.
 jq -n '{file: "docs/a.md", title: "t", body: "b"}' >"$tmp/finding.json"
-if (cd "$repo" && MAP_STATUS=500 PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json") >"$tmp/out" 2>"$tmp/err"; then
-	echo "FAIL: a failed read of the label map still filed the issue"
-	fail=1
-fi
-grep -q "can't read p3-labels for acme/app" "$tmp/err" || {
-	echo "FAIL: the failed read wasn't reported"
-	sed 's/^/  /' "$tmp/err"
-	fail=1
-}
-[ -e "$tmp/args" ] && {
-	echo "FAIL: a failed read of the label map still ran issue create"
-	fail=1
-}
+for ms in 500 cut; do
+	rm -f "$tmp/args"
+	if (cd "$repo" && MAP_STATUS=$ms PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json") >"$tmp/out" 2>"$tmp/err"; then
+		echo "FAIL: a failed read ($ms) of the label map still filed the issue"
+		fail=1
+	fi
+	grep -q "can't read p3-labels for acme/app" "$tmp/err" || {
+		echo "FAIL: the failed read ($ms) wasn't reported"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	}
+	[ -e "$tmp/args" ] && {
+		echo "FAIL: a failed read ($ms) of the label map still ran issue create"
+		fail=1
+	}
+done
 
 # Milestones only with CLAUDE_P3_MILESTONE=auto: the PR's, else the fixed issue's (#3), else none.
 PR_MS=X MS_3=Y expect src/x.c review:p3,milestone:later,status:ready ''

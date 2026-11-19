@@ -38,18 +38,21 @@ fi
 # The label map of <slug>'s default branch, read from GitHub: the cwd's origin can be another repository, and a
 # branch can't change how its own findings are filed. A 404 means the repo has no map. Any other outcome without
 # the file stops here, before anything is filed, since an issue filed without its labels may never reach the loop
-# (claude-ship #215, #179). The status is the response's own status line (-i), not a match on the error text, and
-# gh's exit status is not read: a 200 body is what is wanted.
-resp=$(gh api -i "repos/$slug/contents/.github/claude-ship/p3-labels" -H 'Accept: application/vnd.github.raw' 2>/dev/null)
+# (claude-ship #215, #179). The status is the response's own status line (-i), not a match on the error text. A 200
+# counts only if gh exited 0 too: a connection dropped mid-body leaves the 200 headers and part of the map on stdout
+# and exits 1.
+ok=
+resp=$(gh api -i "repos/$slug/contents/.github/claude-ship/p3-labels" -H 'Accept: application/vnd.github.raw' 2>/dev/null) && ok=ok
 resp=$(printf '%s\n' "$resp" | tr -d '\r')
 status=$(printf '%s\n' "$resp" | sed -n '1s/^HTTP\/[0-9.]* \([0-9][0-9]*\).*/\1/p')
 map=
-case $status in
-200) map=$(printf '%s\n' "$resp" | sed '1,/^$/d') ;;
+case $ok$status in
+ok200) map=$(printf '%s\n' "$resp" | sed '1,/^$/d') ;;
 404) ;;
 *)
 	# The status line and the error body's message, or that there was no response.
 	why=$(printf '%s\n' "$resp" | sed -n '1p;s/.*"message": *"\([^"]*\)".*/\1/p' | paste -sd' ' -)
+	[ "$status" = 200 ] && why="$why (the response was cut short)"
 	echo "p3-issue: can't read p3-labels for $slug: ${why:-no response}" >&2
 	exit 1
 	;;
