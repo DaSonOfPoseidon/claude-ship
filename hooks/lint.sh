@@ -95,8 +95,11 @@ if [ "$mode" = hook ]; then
 	esac
 	[ -f "$hfp" ] || exit 0
 	# The new text: content (Write), new_string (Edit) or each edits[].new_string (MultiEdit, read defensively), and the
-	# old text the same way; a field of another type is skipped.
-	jq -r '[.tool_input | objects | (.content, .new_string, (.edits[]? | objects | .new_string))] | map(select(type == "string")) | join("\n")' "$t/in" >"$t/new" 2>/dev/null || die "can't read its input as JSON"
+	# old text the same way; a field of another type is skipped. An edit may change only part of a line, so each new text
+	# becomes records that say how a file line may contain it: S (a one-line text: anywhere in the line), F (the first line
+	# of several: the line's end), M (a middle line: the whole line) and L (the last line: the line's start).
+	jq -r 'def recs: split("\n") as $a | if ($a | length) == 1 then "S" + $a[0] else ("F" + $a[0]), ($a[1:-1][] | "M" + .), ("L" + $a[-1]) end;
+		[.tool_input | objects | (.content, .new_string, (.edits[]? | objects | .new_string))] | map(select(type == "string")) | .[] | recs' "$t/in" >"$t/new" 2>/dev/null || die "can't read its input as JSON"
 	jq -r '[.tool_input | objects | (.old_string, (.edits[]? | objects | .old_string))] | map(select(type == "string")) | join("\n")' "$t/in" >"$t/old" 2>/dev/null || die "can't read its input as JSON"
 	hcwdp=$(cd "$hcwd" 2>/dev/null && pwd -P) || hcwdp=
 	hbase=$(basename "$hfp")
@@ -126,11 +129,12 @@ if [ "$mode" != rules ]; then
 			--ignore-submodules=all --src-prefix=a/ --dst-prefix=b/ "$@"
 	}
 	if [ "$mode" = hook ]; then
-		# The candidate lines are the file's lines that the new text contains. In a repo they are the ones the diff against HEAD
-		# adds (so an earlier, uncommitted edit's lines are not reported again, unless this edit repeats them). A file git
-		# doesn't track yet (and doesn't ignore) or a repo with no commit is whole; so is a file outside git, where an edit
-		# keeps only the new_string lines that old_string lacks.
+		# The candidate lines are the file's lines that the new text contains (all of a line, or the part an edit changed). In
+		# a repo they are the ones the diff against HEAD adds (so an earlier, uncommitted edit's lines are not reported again,
+		# unless this edit repeats them). A file git doesn't track yet (and doesn't ignore) or a repo with no commit is whole;
+		# so is a file outside git, where an edit keeps only the new_string lines that old_string lacks.
 		hmode=whole
+		hnogit=
 		if [ -n "$in_git" ]; then
 			hrel=$(git rev-parse --show-prefix) || die "git failed"
 			hrel=$hrel$hbase
@@ -146,9 +150,8 @@ if [ "$mode" != rules ]; then
 			"$hcwdp"/*) hrel=${hdirp#"$hcwdp"/}/$hbase ;;
 			*) hrel=${hdirp#/}/$hbase ;;
 			esac
-			# An empty pattern file selects every line; the status 1 (no line left) is fine.
-			grep -vxF -f "$t/old" "$t/new" >"$t/set"
-			[ $? -le 1 ] || die "grep failed"
+			cp "$t/new" "$t/set" || die "can't write a temp file"
+			hnogit=1
 		fi
 		if [ "$hmode" = added ]; then
 			gitd HEAD -- "$hbase" >"$t/raw" || die "git diff failed"
@@ -157,7 +160,16 @@ if [ "$mode" != rules ]; then
 		fi
 		cat >"$t/hook.awk" <<'EOF'
 # Writes a diff of only the wanted lines: the added lines of a -U0 diff (HOOK_MODE=added), else the lines of the file,
-# whose text is in the set. One hunk per line, so the line numbers are the file's own.
+# that contain a record of the set (see the jq above). Outside git (HOOK_NOGIT=1) a record whose text is a line of
+# old_string is dropped. One hunk per line, so the line numbers are the file's own.
+function wanted(text,   i, n) {
+	if (text in whole) return 1
+	for (i = 1; i <= ns; i++) if (index(text, subs[i]) > 0) return 1
+	n = length(text)
+	for (i = 1; i <= nf; i++) if (n >= length(firsts[i]) && substr(text, n - length(firsts[i]) + 1) == firsts[i]) return 1
+	for (i = 1; i <= nl; i++) if (substr(text, 1, length(lasts[i])) == lasts[i]) return 1
+	return 0
+}
 function emit(n, text) {
 	if (!hdr) {
 		print "diff --git a/" rel " b/" rel
@@ -171,13 +183,25 @@ BEGIN {
 	rel = ENVIRON["HOOK_REL"]
 	diffmode = (ENVIRON["HOOK_MODE"] == "added")
 	setf = ENVIRON["HOOK_SET"]
+	oldf = ENVIRON["HOOK_OLD"]
+	nogit = (ENVIRON["HOOK_NOGIT"] == "1")
+}
+FILENAME == oldf {
+	oldl[$0] = 1
+	next
 }
 FILENAME == setf {
-	want[$0] = 1
+	k = substr($0, 1, 1)
+	v = substr($0, 2)
+	if (v == "" || (nogit && (v in oldl))) next
+	if (k == "S") subs[++ns] = v
+	else if (k == "F") firsts[++nf] = v
+	else if (k == "M") whole[v] = 1
+	else if (k == "L") lasts[++nl] = v
 	next
 }
 !diffmode {
-	if ($0 != "" && ($0 in want)) emit(FNR, $0)
+	if ($0 != "" && wanted($0)) emit(FNR, $0)
 	next
 }
 {
@@ -185,7 +209,7 @@ FILENAME == setf {
 		c = substr($0, 1, 1)
 		if (c == "+") {
 			rn--
-			if (length($0) > 1 && (substr($0, 2) in want)) emit(ln, substr($0, 2))
+			if (length($0) > 1 && wanted(substr($0, 2))) emit(ln, substr($0, 2))
 			ln++
 			next
 		}
@@ -213,7 +237,7 @@ FILENAME == setf {
 	}
 }
 EOF
-		HOOK_REL=$hrel HOOK_MODE=$hmode HOOK_SET=$t/set awk -f "$t/hook.awk" "$t/set" "$t/raw" >"$t/diff" || die "awk failed"
+		HOOK_REL=$hrel HOOK_MODE=$hmode HOOK_SET=$t/set HOOK_OLD=$t/old HOOK_NOGIT=$hnogit awk -f "$t/hook.awk" "$t/old" "$t/set" "$t/raw" >"$t/diff" || die "awk failed"
 	elif [ "$mode" = staged ]; then
 		if git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1; then
 			base=HEAD

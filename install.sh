@@ -133,11 +133,15 @@ if [ ! -e "$lint_cfg" ] && [ ! -L "$lint_cfg" ]; then
 	if cat >"$lint_cfg" <<'LINTCFG'; then
 # claude-ship hygiene lint: this install's rules. They apply after the built-in defaults (hooks/lint-rules) and before a
 # repository's .github/claude-ship/lint, and a later line wins. install.sh creates this file once and never changes it.
-# Examples (remove the leading "# " to use one):
-#   * off                           turn the whole lint off
-#   debug-leftover off scripts/*    one rule off for some paths
-#   narration error                 make a warning an error
-#   skip generated/*                never lint these paths
+# Examples: remove the leading "# " from an indented line to use it (nothing may follow a directive on its line).
+# Turn the whole lint off:
+#   * off
+# Turn one rule off for some paths:
+#   debug-leftover off scripts/*
+# Make a warning an error:
+#   narration error
+# Never lint these paths:
+#   skip generated/*
 # The grammar is in hooks/lint-rules and README.md, Hygiene lint.
 LINTCFG
 		printf '%s\n' "$lint_cfg" >>"$tmp/new-dirs"

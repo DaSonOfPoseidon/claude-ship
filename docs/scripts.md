@@ -642,9 +642,11 @@ built-in defaults and the grammar reference. The design choices:
   defensively because MultiEdit's shape isn't in Claude Code's docs), changes into the file's directory (so the file's
   repository gives the project layer, not the session's), and builds a synthetic diff of only the candidate lines, one
   hunk per line, which the same awk program lints as it lints any diff. In a repo the candidates are the added lines of
-  `git diff -U0 HEAD -- <file>` whose text is in the new text: the diff keeps earlier uncommitted edits' lines out, the
+  `git diff -U0 HEAD -- <file>` that contain the new text: the diff keeps earlier uncommitted edits' lines out, the
   text filter keeps lines this edit didn't write out (an edit elsewhere in the file), and a `new_string` that repeats an
-  earlier line reports it again, on purpose. Untracked files (not gitignored: an ignored file is never committed, so it
+  earlier line reports it again, on purpose. An edit may change only part of a line, so a one-line `new_string` matches
+  a line that contains it, and a several-line one matches by its first line (the end of a line), middle lines (whole
+  lines) and last line (the start of a line); the whole line is then linted. Untracked files (not gitignored: an ignored file is never committed, so it
   isn't linted), a repo with no commit and files outside git are linted whole; outside git an edit keeps only the
   `new_string` lines that `old_string` lacks. awk writes errors and warnings to two files, and the shell turns them into
   `{"decision":"block","reason":"<errors>\nFix these now: …"}` (warnings ride along in `hookSpecificOutput.additionalContext`)

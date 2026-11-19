@@ -180,6 +180,12 @@ lint_file="$tmp/dest/claude-ship/lint"
 	echo "FAIL: install.sh didn't create $lint_file with a commented header"
 	fail=1
 }
+# Each example line in the header is exactly a directive once its "# " is removed: no trailing explanation (the grammar takes
+# only whole-line comments, so "* off   turn it off" would not parse), and at least one example is there.
+grep -q '^#   [^ ]' "$lint_file" && ! grep -q '^#   [^ ].*  [^ ]' "$lint_file" || {
+	echo "FAIL: the lint file's example lines carry trailing text (or there are none)"
+	fail=1
+}
 ! grep -qxF -- "$lint_file" "$STUB_STATE/flagged" || {
 	echo "FAIL: the lint file was flagged immutable"
 	fail=1

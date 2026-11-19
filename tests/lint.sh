@@ -1202,6 +1202,27 @@ hook "$(hjson Edit "$repo/t.js" "$repo" "$(printf 'b;\n%s' "$dbg")" 'b;')"
 want hook-edit-repeat 0
 hdec hook-edit-repeat block
 hreason hook-edit-repeat 't.js:3: debug-leftover (error)'
+# An edit that changes only part of a line: the line's new text contains new_string, so it is a candidate (the P1 of #288).
+git -C "$repo" checkout -q -- t.js
+printf 'p; q;\nr; s;\n' >"$repo/t.js"
+git -C "$repo" add -A
+commit
+printf 'p; q; %s\nr; s;\n' "$dbg" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" "q; $dbg" 'q;')"
+want hook-partial-line 0
+hdec hook-partial-line block
+hreason hook-partial-line 't.js:1: debug-leftover (error)'
+# A multi-line new_string that starts and ends mid-line: its first line is the end of a line, its last the start of one.
+printf 'p; z;\n%s s;\n' "$dbg" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" "$(printf 'z;\n%s' "$dbg")" "$(printf 'q;\nr;')")"
+want hook-partial-multi 0
+hdec hook-partial-multi block
+hreason hook-partial-multi 't.js:2: debug-leftover (error)'
+# A partial edit does not drag in an unrelated earlier line that merely lacks the new text.
+printf 'p; z;\nr; s; %s\n' "$dbg" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" 'z;' 'q;')"
+want hook-partial-other 0
+silent hook-partial-other
 # A warning is context for the next step, not a block; a clean edit prints nothing.
 git -C "$repo" checkout -q -- t.js
 printf 'a;\nb;\n%s\nc;\n' "$nar" >"$repo/t.js"
@@ -1289,6 +1310,13 @@ hook "$(hjson Edit "$tmp/outside/sub/o.js" "$tmp/outside" "$(printf 'x;\n%s' "$d
 want hook-outside-new 0
 hdec hook-outside-new block
 hreason hook-outside-new 'sub/o.js:2: debug-leftover (error)'
+# Outside git, a partial-line edit counts too.
+printf 'x; %s\n' "$dbg" >"$tmp/outside/sub/o.js"
+hookdir=$tmp/outside
+hook "$(hjson Edit "$tmp/outside/sub/o.js" "$tmp/outside" "$dbg" '')"
+want hook-outside-partial 0
+hdec hook-outside-partial block
+hreason hook-outside-partial 'sub/o.js:1: debug-leftover (error)'
 unset hookdir
 # It always exits 0: bad input, a missing file, no path and a lint that cannot run are a note (or nothing), never a
 # failing exit.
