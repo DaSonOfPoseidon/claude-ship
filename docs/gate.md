@@ -122,8 +122,8 @@ not look at the chain, and the hook refuses the push if the new commit has no re
 for real). `gh pr create` starts no review either: the PR covers a HEAD the hook already stopped from being pushed unreviewed.
 
 The pre-push check is the layer that binds the cases the gate lets by. What the gate still reads in *every* command is the
-tamper check, the waiver and variable checks, the denials that keep the hook on (`push --no-verify`, a write of
-`core.hooksPath`) and whether the hook is on in the session's repo (all in Pre-push check › The gate keeps it on), all before
+tamper check, the waiver and variable checks, the denials that keep the hooks on (`push --no-verify`, `commit --no-verify`
+and `commit -n`, a write of `core.hooksPath`) and whether the hook is on in the session's repo (all in Pre-push check › The gate keeps it on), all before
 the trigger above.
 
 **Quoting.** A canonical push, or a command with a `gh api` call, whose quoting the scanner can't read (it already holds a
@@ -228,8 +228,9 @@ for the gate, not a second reviewer: it only reads the state the gate writes (an
 hook and refuses the commit on an error-level hit (README › Hygiene lint). It uses the detection below, unchanged: one function
 serves both hooks. It is a hygiene check, not part of the review, so a hit that is wrong goes to the user (`! git commit
 --no-verify`, or an exclude in the default branch's `.github/claude-ship/lint` or `~/.claude/claude-ship/lint`), and Claude
-must not skip the check itself (`--no-verify`; the gate's denial of it for commits is a separate change, #269). A lint that is missing or can't run refuses (fail closed); offline, the
-project rules come from the local refs instead of GitHub, with a note. The user's own commits are untouched. Design:
+must not skip the check itself: the gate denies Claude's `git commit --no-verify` and `-n` in every repo (Pre-push check › The
+gate keeps it on). A lint that is missing or can't run refuses (fail closed); offline, the project rules come from the local
+refs instead of GitHub, with a note. The user's own commits are untouched. Design:
 [`scripts.md`](scripts.md#hooksgit-hooksh-and-hooksgate-commonsh).
 
 **Whose pushes.** The check applies to Claude's pushes only, so the user's own pushes are untouched. A push is Claude's when
@@ -281,9 +282,14 @@ so after its own check (and only if that passes). One stub exists for each hook 
 (`git help hooks`) except `push-to-checkout`, `proc-receive` and `fsmonitor-watchman`, whose presence alone changes what
 git does. The stubs `exec sh '<dest>/hooks/git-hook.sh' <name> "$@"`.
 
-**The gate keeps it on.** `push --no-verify` and a write of `core.hooksPath` (`git config` in any form but a read,
-`-c core.hooksPath=…`, `--config-env=core.hooksPath=…`, the key in any case) are denied wherever the gate sees them, read
-from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped).
+**The gate keeps it on.** `push --no-verify`, `commit --no-verify`, `commit -n` and a write of `core.hooksPath` (`git config` in
+any form but a read, `-c core.hooksPath=…`, `--config-env=core.hooksPath=…`, the key in any case) are denied wherever the
+gate sees them, read from the syntax tree like the tamper checks (so `sh -c` and `sudo` are unwrapped). A commit's `--no-verify`
+would skip the pre-commit hygiene lint (and the repo's own pre-commit hooks), so it is denied in every repo, opted in or not; the
+message says how the user waives it (`! git commit --no-verify`). For `commit`, `-n` counts alone or in a short bundle (`-nm`,
+`-anm`) when `n` comes before a letter that takes a value (`m F C c t u S`); the word after a bare `-m`, `-F`, `-C`, `-c` or `-t`
+(or a long option that takes a value, such as `--message`) and the words after `--` are not read. An abbreviated long option
+(`--no-ver`) is out of scope (AGENTS.md › Gate scope).
 
 On top of that, every Bash command is checked for the hook being on, with no reading of the command's text: a push the gate
 does not start a review for is left to the hook, and a repo's own `core.hooksPath` (husky and the like, often set by an install
@@ -377,7 +383,8 @@ a `cd` moves to and a `git -C` one: the call may run before or after either.
 ## Tamper protection
 
 The installed gate, its prompts and lib (`hooks/`), the ship skill and agents, the gate's state (`.git/review-gate/`),
-the settings that register it, the managed settings directory (`/etc/claude-code`, where `install.sh` puts the gate's
+the install's lint config (`~/.claude/claude-ship/`: weakening it would switch the pre-commit lint off for Claude's own
+commits), the settings that register it, the managed settings directory (`/etc/claude-code`, where `install.sh` puts the gate's
 drop-in) and shfmt (`~/.claude/bin/`, which the gate reads every Bash command with, so replacing it would blind the
 gate) are the user's to change; claude-ship's source changes through reviewed PRs. `Write`,
 `Edit`, `MultiEdit` and `NotebookEdit` calls on those paths block. A project's own `.claude/settings` may change,
@@ -394,7 +401,7 @@ but not to turn hooks off (`disableAllHooks`).
   live.
 
 Because the flag holds the line, the Bash check doesn't try to follow a path through a variable or an interpreter, and it
-follows a `cd` only for the two targets the flag doesn't cover (below). That used to be its job, and every spelling it missed was the next finding (#187 and the issues after it: #195, #196,
+follows a `cd` only for the targets the flag doesn't cover (below). That used to be its job, and every spelling it missed was the next finding (#187 and the issues after it: #195, #196,
 #198 to #203); those false blocks and parser gaps went with the code that had them.
 
 For Bash, writing gate state or the installed gate would bypass the review; reading its reports is fine. The check
@@ -413,16 +420,17 @@ A word is *literal* when all its parts are plain text or quoted text without exp
 resolved, a leading `~` stays text, `$HOME` and `${HOME}` alone are the home directory); a variable, a substitution,
 a glob, a brace list or `$'...'` makes it *dynamic*, and a dynamic word is not read. The protected paths are the home
 directory, then `.claude/(hooks|git-hooks|skills/ship|bin)` (the directory itself or anything in it),
-`.claude/settings*` and `.claude/agents/ship-*`, plus `.git/review-gate` in any repo and the managed settings directory
+`.claude/claude-ship` (the same), `.claude/settings*` and `.claude/agents/ship-*`, plus `.git/review-gate` in any repo and the managed settings directory
 `/etc/claude-code` (the whole directory: a policy file added there could override the gate's registration; it is a fixed path
 because Claude Code reads that one, whatever `CLAUDE_SHIP_MANAGED_DIR` says to the installer).
 
 A word names a protected path after `~`, `$HOME` and `${HOME}` are expanded and the path is folded: `//`, `/./`, a trailing
 `/.` and `seg/..` go (a `..` above `/` stays at `/`), lexically, with no filesystem access, so **symlinks are out of scope**.
 A relative word is made absolute from the hook input's `cwd` (the `$PWD` of the gate without one). One narrow `cd` rule adds a
-second base, for the targets the immutable flag doesn't cover (`.git/review-gate` and `~/.claude/settings*`): a top-level
+second base, for the targets the immutable flag doesn't cover (`.git/review-gate`, `~/.claude/settings*` and
+`~/.claude/claude-ship/`, which the user and `install.sh` write): a top-level
 statement that is just `cd LITERAL`, or a `cd LITERAL` on the left of `&&` (`cd a && cd b && rm x`, or `cd a; rm x`), sets
-the directory the later relative words and redirect targets are also resolved from, and only those two targets are looked
+the directory the later relative words and redirect targets are also resolved from, and only those targets are looked
 for there. LITERAL is folded like any word (`~`, `$HOME`, `${HOME}`) and is relative to the `cd` before it, or to the `cwd`.
 No candidate sets, no variables, no `env -C`: a `cd` with an option (`cd -P x`, `cd -`), a dynamic word or no operand
 leaves the directory unknown, and relative words then resolve from the `cwd` alone. A `cd` that ends a chain that runs
@@ -495,7 +503,7 @@ word (`grep -n chattr install.sh`, `echo chattr`, a file called `chattr.md`), pa
 affected: the gate sees `./install.sh`, not what runs inside it.
 
 **Immutable install** (#189). The literal check above stops what Claude plausibly types; it doesn't stop a command written
-to get past it, and it follows no path through a variable or an interpreter, and a `cd` only for the two targets above. So `install.sh` also takes the files
+to get past it, and it follows no path through a variable or an interpreter, and a `cd` only for the targets above. So `install.sh` also takes the files
 out of reach of any command Claude runs, without relying on how the command is spelled:
 
 - **Managed settings.** It copies `settings/claude-ship.json` to

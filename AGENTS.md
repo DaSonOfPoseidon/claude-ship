@@ -25,8 +25,8 @@ Codex's PR review and the pre-push review gate both follow this section. Rate ev
   - a link, copy or rename onto a protected file;
   - a setting changed only to skip a check (`HOME`, `GIT_CONFIG_*`, `-c` keys that turn hooks off).
 
-  Checks that block a literal form today stay (a `cp`, `mv` or `ln` that names a protected path; `push --no-verify`
-  and a `core.hooksPath` write, which would skip the pre-push check); what is out of scope is a finding that a variant of
+  Checks that block a literal form today stay (a `cp`, `mv` or `ln` that names a protected path; `push --no-verify`,
+  `commit --no-verify` and `commit -n`, and a `core.hooksPath` write, which would skip the pre-push or pre-commit check); what is out of scope is a finding that a variant of
   these classes gets past them or past the pre-push check (`docs/gate.md` › Pre-push check).
 
   Branch protection doesn't read command text: a way past it that a plausible command takes is in scope.
@@ -46,8 +46,8 @@ or anything CI already checks (shellcheck, actionlint).
 ### Project invariants
 
 - The gate fails closed: when it can't tell (GitHub unreachable, reviewer error, unreadable output), it blocks.
-- Claude's commits pass the hygiene lint (pre-commit stub); only the user skips it (`! git commit --no-verify`). Until the
-  gate denies Claude's own `git commit --no-verify` (the next change of #269), that rule is not enforced for commits.
+- Claude's commits pass the hygiene lint (pre-commit stub); only the user skips it (`! git commit --no-verify`). The gate
+  denies Claude's own `git commit --no-verify` and `-n` in every repo.
 - A branch can't weaken its own review: the rules come from the default branch's `AGENTS.md` when it has them,
   and so do the review checklist (`CONTRIBUTING.md` › Reviews) and `docs/pitfalls.md`.
 - Reviewers only read: Read, Grep and Glob are their only tools (`--tools`), with no shell (even
@@ -71,7 +71,7 @@ or anything CI already checks (shellcheck, actionlint).
   backstop for merges. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch
   skips it.
 - Only the user changes the opt-in variables, waives a review, lifts the immutable flag on the installed files
-  (`! sudo chattr -i <path>`), or edits the installed gate, its state or the settings that register it. `install.sh`
+  (`! sudo chattr -i <path>`), or edits the installed gate, its state, the lint config (`~/.claude/claude-ship/`) or the settings that register it. `install.sh`
   deploys only `origin/main`; it lifts the flag itself while it reinstalls and sets it again.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,
   `cut`, `tr`, `head`, `tail`, `cp`, `printf`, …), plus `git`, `gh`, `jq`, and the widely supported extras already
