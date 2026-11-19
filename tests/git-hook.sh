@@ -27,6 +27,23 @@ done
 # gh: `variable get` answers by $GH_MODE (true, false, notfound or error) and logs the repo it was asked about.
 cat >"$tmp/bin/gh" <<'EOF'
 #!/bin/sh
+# `api -i repos/<slug>/contents/.github/claude-ship/lint`: the project's lint file, by $LINT_API: 200 (the body is
+# $LINT_FILE), 404, or anything else, which fails with no output.
+if [ "$1" = api ]; then
+	echo "$*" >>"$GH_LOG"
+	case ${LINT_API:-} in
+	200)
+		printf 'HTTP/2.0 200 OK\r\nContent-Type: application/vnd.github.raw\r\n\r\n'
+		cat "$LINT_FILE"
+		;;
+	404)
+		printf 'HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n\r\n{"message":"Not Found"}\n'
+		exit 1
+		;;
+	*) exit 1 ;;
+	esac
+	exit 0
+fi
 [ "$1 $2" = "variable get" ] || exit 2
 echo "$*" >>"$GH_LOG"
 case $GH_MODE in
@@ -620,6 +637,263 @@ git -C "$repo" commit -q --allow-empty -m nohook || {
 	echo "FAIL: a commit with no pre-commit failed"
 	fail=1
 }
+# --- pre-commit: the hygiene lint of Claude's commits ---
+# Claude's commit with an error-level hit is refused before the repo's own pre-commit runs; warnings print and the commit
+# goes on; the user's commits are never linted. The trigger text is built in pieces, so this file passes its own lint.
+mkdir -p "$tmp/home/.claude/claude-ship"
+lintapi=
+# gcommit <dir> <git commit args>...: a commit in a directory as $who, with the test's HOME (so the real
+# ~/.claude/claude-ship/lint is never read) and gh answering the project-file read by $lintapi; status in $rc, output in
+# $tmp/out.
+gcommit() {
+	d=$1
+	shift
+	case $who in
+	claude) e="env CLAUDE_CODE_CHILD_SESSION=1 FAKE_ANCESTRY=none" ;;
+	ancestor) e="env -u CLAUDE_CODE_CHILD_SESSION FAKE_ANCESTRY=claude" ;;
+	*) e="env -u CLAUDE_CODE_CHILD_SESSION FAKE_ANCESTRY=none" ;;
+	esac
+	# shellcheck disable=SC2086 # $e is a fixed command with words to split
+	(cd "$d" && unset CLAUDE_HOME && HOME=$tmp/home GH_MODE=$mode LINT_API=$lintapi LINT_FILE=$tmp/lintfile PATH=$tmp/bin:$PATH $e git commit -q "$@" 2>&1) >"$tmp/out"
+	rc=$?
+}
+# want_commit <label> <committed: yes or no>: the status, and for a refusal its message.
+want_commit() {
+	if [ "$2" = yes ]; then
+		if [ "$rc" != 0 ]; then
+			echo "FAIL (refused, want committed): $1"
+			sed 's/^/  /' "$tmp/out"
+			fail=1
+		fi
+	elif [ "$rc" = 0 ]; then
+		echo "FAIL (committed, want refused): $1"
+		fail=1
+	elif ! grep -q 'claude-ship: commit refused' "$tmp/out"; then
+		echo "FAIL (no refusal message): $1"
+		sed 's/^/  /' "$tmp/out"
+		fail=1
+	fi
+}
+# out_has / out_lacks <label> <text>: the last command's output.
+out_has() {
+	grep -qF -- "$2" "$tmp/out" || {
+		echo "FAIL ($1): output lacks '$2'"
+		sed 's/^/  /' "$tmp/out"
+		fail=1
+	}
+}
+out_lacks() {
+	if grep -qF -- "$2" "$tmp/out"; then
+		echo "FAIL ($1): output has '$2'"
+		sed 's/^/  /' "$tmp/out"
+		fail=1
+	fi
+}
+# Files with something to find.
+dbg='debug''ger;'
+narr='// Ad''ded a line'
+# own_pc: the repo's own pre-commit, which records that it ran.
+own_pc() {
+	mkdir -p "$repo/.git/hooks"
+	printf '#!/bin/sh\n: >"%s/own.ran"\n' "$tmp" >"$repo/.git/hooks/pre-commit"
+	chmod +x "$repo/.git/hooks/pre-commit"
+	rm -f "$tmp/own.ran"
+}
+ran() {
+	[ -e "$tmp/own.ran" ]
+}
+stage() { # stage <file> <line>
+	printf '%s\n' "$2" >"$repo/$1"
+	git -C "$repo" add "$1"
+}
+
+# An error-level hit refuses Claude's commit, lists the hit and the way out, and the repo's own pre-commit doesn't run.
+mkrepo
+own_pc
+stage a.js "$dbg"
+who=claude
+gcommit "$repo" -m x
+want_commit "claude: a debugger statement" no
+out_has "claude: a debugger statement" 'a.js:1: debug-leftover (error)'
+out_has "claude: a debugger statement" '! git commit --no-verify'
+out_has "claude: a debugger statement" '.github/claude-ship/lint'
+ran && {
+	echo "FAIL: the repo's own pre-commit ran after a refusal"
+	fail=1
+}
+[ "$(git -C "$repo" rev-list --count HEAD)" = 1 ] || {
+	echo "FAIL: the refused commit was made"
+	fail=1
+}
+# A process named claude among the ancestors counts the same.
+who=ancestor
+gcommit "$repo" -m x
+want_commit "ancestor: a debugger statement" no
+# The user's commit isn't linted, and the repo's own hook runs.
+who=user
+gcommit "$repo" -m x
+want_commit "user: a debugger statement" yes
+ran || {
+	echo "FAIL: the repo's own pre-commit didn't run for the user"
+	fail=1
+}
+# Claude's clean commit runs the repo's own pre-commit after the lint; a failing one still fails it.
+who=claude
+rm -f "$tmp/own.ran"
+stage b.js 'ok();'
+gcommit "$repo" -m y
+want_commit "claude: a clean commit" yes
+ran || {
+	echo "FAIL: the repo's own pre-commit didn't run after a clean lint"
+	fail=1
+}
+printf '#!/bin/sh\nexit 1\n' >"$repo/.git/hooks/pre-commit"
+stage c.js 'ok();'
+gcommit "$repo" -m z
+[ "$rc" != 0 ] || {
+	echo "FAIL: a failing own pre-commit didn't fail Claude's commit"
+	fail=1
+}
+
+# Warnings only: the commit goes on and the warning is in its output.
+mkrepo
+own_pc
+stage b.js "$narr"
+who=claude
+gcommit "$repo" -m x
+want_commit "claude: a warning" yes
+out_has "claude: a warning" 'b.js:1: narration (warn)'
+ran || {
+	echo "FAIL: the repo's own pre-commit didn't run after a warning"
+	fail=1
+}
+
+# The install file tunes the lint: debug-leftover off lets the commit through.
+mkrepo
+stage a.js "$dbg"
+printf 'debug-leftover off\n' >"$tmp/home/.claude/claude-ship/lint"
+gcommit "$repo" -m x
+want_commit "claude: install file turns the rule off" yes
+rm -f "$tmp/home/.claude/claude-ship/lint"
+# The project file on origin's default branch tunes it too, and GitHub's answer is the one that counts: here a 200 says
+# narration is an error, and a 404 says there's no project file.
+mkrepo
+stage b.js "$narr"
+printf 'narration error\n' >"$tmp/lintfile"
+lintapi=200
+gcommit "$repo" -m x
+want_commit "claude: project file makes a warning an error" no
+out_has "claude: project file makes a warning an error" 'b.js:1: narration (error)'
+lintapi=404
+gcommit "$repo" -m x
+want_commit "claude: no project file" yes
+lintapi=
+
+# `git commit -a` (the hook sees a temporary index), a path argument, and the first commit in an empty repo.
+mkrepo
+who=user
+stage a.js 'ok();'
+gcommit "$repo" -m base
+who=claude
+printf 'ok();\n%s\n' "$dbg" >"$repo/a.js"
+gcommit "$repo" -a -m x
+want_commit "claude: commit -a" no
+out_has "claude: commit -a" 'a.js:2: debug-leftover (error)'
+gcommit "$repo" -m x a.js
+want_commit "claude: commit <path>" no
+printf 'ok();\nmore();\n' >"$repo/a.js"
+gcommit "$repo" -a -m x
+want_commit "claude: commit -a, clean" yes
+n=$((n + 1))
+repo=$tmp/work$n
+git init -q "$repo"
+stage a.js "$dbg"
+gcommit "$repo" -m x
+want_commit "claude: first commit" no
+out_has "claude: first commit" 'a.js:1: debug-leftover (error)'
+stage a.js 'ok();'
+gcommit "$repo" -m x
+want_commit "claude: clean first commit" yes
+
+# A merge, cherry-pick or revert in progress: the other side's code isn't Claude's, so only conflict markers count. Each
+# setup leaves c.txt conflicted and a debugger statement staged (v.js) that came from the other side.
+inprogress() { # inprogress <merge|cherry-pick|revert>: a repo $repo in that state
+	mkrepo
+	who=user
+	case $1 in
+	revert)
+		stage c.txt 1
+		gcommit "$repo" -m base
+		stage v.js "$dbg"
+		stage c.txt 2
+		gcommit "$repo" -m one
+		git -C "$repo" rm -q v.js
+		stage c.txt 3
+		gcommit "$repo" -m two
+		stage c.txt 4
+		gcommit "$repo" -m three
+		git -C "$repo" revert --no-edit HEAD~1 >/dev/null 2>&1
+		;;
+	*)
+		git -C "$repo" switch -q -c side
+		stage v.js "$dbg"
+		stage c.txt side
+		gcommit "$repo" -m side
+		git -C "$repo" switch -q main
+		stage c.txt main
+		gcommit "$repo" -m main
+		if [ "$1" = merge ]; then
+			git -C "$repo" merge --no-commit side >/dev/null 2>&1
+		else
+			git -C "$repo" cherry-pick side >/dev/null 2>&1
+		fi
+		;;
+	esac
+	who=claude
+}
+for op in merge cherry-pick revert; do
+	inprogress $op
+	git -C "$repo" add c.txt
+	if ! grep -q '^<<<<<<< ' "$repo/c.txt"; then
+		echo "FAIL ($op): the setup left no conflict marker in c.txt"
+		fail=1
+	fi
+	gcommit "$repo" -m x
+	want_commit "claude: $op with a conflict marker" no
+	out_has "claude: $op with a conflict marker" 'c.txt:1: conflict-marker (error)'
+	out_lacks "claude: $op with a conflict marker" 'v.js'
+	printf 'resolved\n' >"$repo/c.txt"
+	git -C "$repo" add c.txt
+	gcommit "$repo" -m x
+	want_commit "claude: $op resolved, bringing in a debugger statement" yes
+done
+
+# The lint missing next to git-hook.sh refuses with the install hint, as does one that can't run (exit 2); the user's
+# commits are untouched. The copy of git-hook.sh gets its own stub directory.
+mkdir -p "$tmp/nolinter" "$tmp/stubs2"
+cp "$root/hooks/git-hook.sh" "$root/hooks/gate-common.sh" "$tmp/nolinter/"
+printf '#!/bin/sh\nexec sh '\''%s/git-hook.sh'\'' pre-commit "$@"\n' "$tmp/nolinter" >"$tmp/stubs2/pre-commit"
+chmod +x "$tmp/stubs2/pre-commit"
+mkrepo
+git config --global core.hooksPath "$tmp/stubs2"
+stage a.js 'ok();'
+who=claude
+gcommit "$repo" -m x
+want_commit "claude: lint.sh missing" no
+out_has "claude: lint.sh missing" "lint.sh is missing"
+out_has "claude: lint.sh missing" "install.sh"
+who=user
+gcommit "$repo" -m x
+want_commit "user: lint.sh missing" yes
+printf '#!/bin/sh\necho "lint: boom" >&2\nexit 2\n' >"$tmp/nolinter/lint.sh"
+stage b.js 'ok();'
+who=claude
+gcommit "$repo" -m x
+want_commit "claude: lint.sh exit 2" no
+out_has "claude: lint.sh exit 2" 'lint: boom'
+out_has "claude: lint.sh exit 2" "couldn't run (exit 2)"
+git config --global core.hooksPath "$tmp/stubs"
+
 # --- the gate and the hook together ---
 # The gate reviews only a canonical push, so it lets `git commit … && git push` through; the hook is what refuses that push
 # when the new commit has no review (docs/gate.md › Command reading). A plain push after a pass then succeeds.

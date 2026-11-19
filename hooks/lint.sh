@@ -1,9 +1,11 @@
 #!/bin/sh
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
-# Hygiene lint for added lines: `lint.sh staged`, `lint.sh diff <range>` or `lint.sh rules <path>`. Only lines a diff
-# adds are checked (git diff -U0 of the index against HEAD, or of a range such as origin/main...HEAD), so code that is
-# already there never fails. Each hit prints as `path:line: rule (error|warn): what to do instead`, the line, and a
+# Hygiene lint for added lines: `lint.sh staged [--only <rule>] [--remote]`, `lint.sh diff <range>` or `lint.sh rules
+# <path>`. Only lines a diff adds are checked (git diff -U0 of the index against HEAD, or of a range such as
+# origin/main...HEAD), so code that is already there never fails. `--only` reports one rule and ignores the others.
+# `--remote` reads the project file from GitHub's default branch first, falling back to the local refs below with a note
+# on stderr (the git hook stubs pass it for Claude's commits). Each hit prints as `path:line: rule (error|warn): what to do instead`, the line, and a
 # summary. Exit 0: clean or warnings only. 1: an error-level hit. 2: couldn't lint (usage, git or awk failed), which
 # callers treat as a refusal. `rules` prints the effective level of every rule for a path and the config line that set it.
 # Config layers, a later one winning line by line: hooks/lint-rules (next to this script), the install's
@@ -15,7 +17,7 @@ LC_ALL=C
 export LC_ALL
 
 usage() {
-	echo "usage: lint.sh staged | diff <range> | rules <path>" >&2
+	echo "usage: lint.sh staged [--only <rule>] [--remote] | diff <range> | rules <path>" >&2
 	exit 2
 }
 die() {
@@ -24,8 +26,29 @@ die() {
 }
 
 mode=${1:-}
+only=
+remote=
 case $mode in
-staged) [ $# -eq 1 ] || usage ;;
+staged)
+	shift
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--only)
+			[ $# -ge 2 ] || usage
+			only=$2
+			shift 2
+			case $only in
+			'' | *[!A-Za-z0-9_.-]*) usage ;;
+			esac
+			;;
+		--remote)
+			remote=1
+			shift
+			;;
+		*) usage ;;
+		esac
+	done
+	;;
 diff)
 	[ $# -eq 2 ] || usage
 	case $2 in
@@ -88,23 +111,99 @@ if [ -n "${CLAUDE_HOME:-}${HOME:-}" ] && [ -e "$ch/claude-ship/lint" ]; then
 	LINT_L2=$ch/claude-ship/lint
 	addlayer 2 "$LINT_L2"
 fi
+# --remote: the project's file as GitHub serves it for the default branch (no ?ref), read the way hooks/p3-issue.sh reads
+# its label map. Local refs are state the agent controls (`git remote set-head`, `update-ref`), so a branch could point
+# the local read at itself. Sets remote_got when GitHub answered (a 200 whose body is in $t/proj, or a 404: no project
+# layer); otherwise returns 1 with remote_why and the caller falls back to the local refs. A hygiene lint must not
+# block commits offline, and the pre-push gate is still the boundary.
+remote_got=
+remote_why=
+remote_layer() {
+	command -v gh >/dev/null 2>&1 || {
+		remote_why="gh is not installed"
+		return 1
+	}
+	[ -r "$here/gate-common.sh" ] || {
+		remote_why="$here/gate-common.sh is missing"
+		return 1
+	}
+	# shellcheck source=gate-common.sh
+	. "$here/gate-common.sh"
+	# The origin URL as configured, else with insteadOf applied, read as the pre-push check reads a destination.
+	rslug=
+	for ru in "$(git config --get remote.origin.url 2>/dev/null)" "$(git remote get-url origin 2>/dev/null)"; do
+		[ -n "$ru" ] || continue
+		rs=$(printf '%s\n' "$ru" | github_slugs)
+		case $rs in
+		'') ;;
+		'?'*) remote_why="can't read the GitHub repo in the remote URL ${rs#?}" ;;
+		*)
+			rslug=$rs
+			break
+			;;
+		esac
+	done
+	if [ -z "$rslug" ]; then
+		[ -n "$remote_why" ] || remote_why="origin is not a GitHub repository"
+		return 1
+	fi
+	case $rslug in
+	*[!A-Za-z0-9._/-]*)
+		remote_why="can't use the repository name $rslug"
+		return 1
+		;;
+	esac
+	# The status is the response's own status line (-i), not a match on error text. A 200 counts only if gh exited 0 too:
+	# a connection dropped mid-body leaves the 200 headers and part of the file on stdout and exits 1.
+	rok=
+	if command -v timeout >/dev/null 2>&1; then
+		resp=$(timeout 20 gh api -i "repos/$rslug/contents/.github/claude-ship/lint" -H 'Accept: application/vnd.github.raw' 2>/dev/null </dev/null) && rok=ok
+	else
+		resp=$(gh api -i "repos/$rslug/contents/.github/claude-ship/lint" -H 'Accept: application/vnd.github.raw' 2>/dev/null </dev/null) && rok=ok
+	fi
+	resp=$(printf '%s\n' "$resp" | tr -d '\r')
+	rstatus=$(printf '%s\n' "$resp" | sed -n '1s/^HTTP\/[0-9.]* \([0-9][0-9]*\).*/\1/p')
+	case $rok$rstatus in
+	ok200)
+		printf '%s\n' "$resp" | sed '1,/^$/d' >"$t/proj" || die "can't save the project file"
+		LINT_L3=github:$rslug:.github/claude-ship/lint
+		addlayer 3 "$t/proj"
+		remote_got=1
+		return 0
+		;;
+	404)
+		remote_got=1
+		return 0
+		;;
+	esac
+	remote_why=$(printf '%s\n' "$resp" | sed -n '1p;s/.*"message": *"\([^"]*\)".*/\1/p' | paste -sd' ' -)
+	[ "$rstatus" = 200 ] && remote_why="$remote_why (the response was cut short)"
+	[ -n "$remote_why" ] || remote_why="no response from gh"
+	return 1
+}
+
 # The project's file comes from the default branch, found without the network: origin/HEAD, then origin/main, then
 # origin/master, then HEAD (a repo with no remote, or none fetched). Not the checkout, so the branch can't change it.
 if [ -n "$in_git" ]; then
-	ref=
-	sym=$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null) || sym=
-	for r in $sym refs/remotes/origin/main refs/remotes/origin/master HEAD; do
-		if git rev-parse --verify -q "$r^{commit}" >/dev/null 2>&1; then
-			ref=$r
-			break
-		fi
-	done
-	if [ -n "$ref" ]; then
-		listed=$(git ls-tree --full-tree --name-only "$ref" -- .github/claude-ship/lint) || die "can't read $ref"
-		if [ -n "$listed" ]; then
-			git show "$ref:.github/claude-ship/lint" >"$t/proj" || die "can't read .github/claude-ship/lint on $ref"
-			LINT_L3=${ref#refs/remotes/}:.github/claude-ship/lint
-			addlayer 3 "$t/proj"
+	[ -z "$remote" ] || remote_layer || :
+	if [ -z "$remote_got" ]; then
+		ref=
+		sym=$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null) || sym=
+		for r in $sym refs/remotes/origin/main refs/remotes/origin/master HEAD; do
+			if git rev-parse --verify -q "$r^{commit}" >/dev/null 2>&1; then
+				ref=$r
+				break
+			fi
+		done
+		shown=${ref#refs/remotes/}
+		[ -z "$remote" ] || echo "lint: project rules read from ${shown:-no ref}, not GitHub: $remote_why" >&2
+		if [ -n "$ref" ]; then
+			listed=$(git ls-tree --full-tree --name-only "$ref" -- .github/claude-ship/lint) || die "can't read $ref"
+			if [ -n "$listed" ]; then
+				git show "$ref:.github/claude-ship/lint" >"$t/proj" || die "can't read .github/claude-ship/lint on $ref"
+				LINT_L3=${ref#refs/remotes/}:.github/claude-ship/lint
+				addlayer 3 "$t/proj"
+			fi
 		fi
 	fi
 fi
@@ -506,6 +605,7 @@ function clip(text) {
 	return substr(text, 1, 120)
 }
 function hit(rule, level, msg, text) {
+	if (only != "" && rule != only) return
 	if (rule in here) return
 	here[rule] = 1
 	printf "%s:%d: %s (%s): %s\n    %s\n", path, ln, rule, level, msg, clip(text)
@@ -633,6 +733,7 @@ BEGIN {
 	cfgf = ENVIRON["LINT_CFG"]
 	d1 = ENVIRON["LINT_D1"]
 	m = ENVIRON["LINT_MODE"]
+	only = ENVIRON["LINT_ONLY"]
 	bom = "\357\273\277"
 	ninv = split("\342\200\213 \342\200\214 \342\200\215 \342\200\216 \342\200\217 \342\200\252 \342\200\253 \342\200\254 \342\200\255 \342\200\256 \342\201\240 \342\201\241 \342\201\242 \342\201\243 \342\201\244 \342\201\246 \342\201\247 \342\201\250 \342\201\251 \357\273\277", inv, " ")
 	n = split("sh bash py rb pl r yaml yml toml conf", hashx, " ")
@@ -674,7 +775,8 @@ LINT_CFG=$t/cfg
 LINT_D1=$t/diff
 LINT_STATUS=$t/status
 LINT_MODE=$mode
-export LINT_CFG LINT_D1 LINT_STATUS LINT_MODE
+LINT_ONLY=$only
+export LINT_CFG LINT_D1 LINT_STATUS LINT_MODE LINT_ONLY
 if [ "$mode" = rules ]; then
 	LINT_PATH=$2
 	export LINT_PATH

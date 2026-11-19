@@ -3,10 +3,12 @@
 #
 # What every git hook stub in ~/.claude/git-hooks runs: `git-hook.sh <hook name> [git's arguments]`. install.sh sets
 # core.hooksPath to that directory, which stops git from running a repo's own .git/hooks, so every hook here first chains
-# to the repo's own hook of that name (same arguments, same stdin), and pre-push also checks Claude's pushes: a commit
-# with no `.pass` or `.waived` in the review state is refused, whatever started the push (a plain push, a script,
-# `gh pr create`, a compound command); a tag is refused unless its commit is on the remote's default branch. The user's own
-# pushes are untouched. Design notes: docs/gate.md › Pre-push check.
+# to the repo's own hook of that name (same arguments, same stdin). Two hooks also check Claude's own work: pre-push
+# refuses a commit with no `.pass` or `.waived` in the review state, whatever started the push (a plain push, a script,
+# `gh pr create`, a compound command), and a tag unless its commit is on the remote's default branch; pre-commit runs
+# the hygiene lint (lint.sh staged) first and refuses the commit on an error-level hit, or when the lint can't run (the
+# repo's own pre-commit runs after a clean lint). The user's own pushes and commits are untouched. Design notes:
+# docs/gate.md › Pre-push check.
 set -u
 
 name=${1:-}
@@ -23,7 +25,70 @@ own_hook() {
 	[ -x "$common/hooks/$name" ] && [ -f "$common/hooks/$name" ]
 }
 
+# Is this Claude's push or commit? The variable Claude Code sets for the processes it starts (the npm install runs as
+# `node`, so the process name alone would miss it), or a process named `claude` among the ancestors (covers `sudo` and
+# `env -i`). Walks at most 64 steps up and stops at PID 1. Without `ps` the answer is no: the user's own are never checked.
+# One detection for every hook that checks Claude's work.
+claude_ancestor() {
+	pid=$$
+	steps=0
+	while [ "$steps" -lt 64 ]; do
+		steps=$((steps + 1))
+		pid=$(ps -o ppid= -p "$pid" 2>/dev/null) || return 1
+		pid=$(printf '%s' "$pid" | tr -d '[:space:]')
+		case $pid in
+		'' | *[!0-9]*) return 1 ;;
+		esac
+		[ "$pid" -gt 1 ] || return 1
+		comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+		comm=${comm##*/}
+		[ "$comm" != claude ] || return 0
+	done
+	return 1
+}
+is_claude() {
+	[ "${CLAUDE_CODE_CHILD_SESSION:-}" = 1 ] || claude_ancestor
+}
+
+# Claude's commit: the hygiene lint of the staged lines (README › Hygiene lint). An error-level hit refuses the commit and
+# prints the hits; warnings print and the commit goes on. Fail closed: a lint that is missing or can't run (exit 2) refuses,
+# as a missing gate-common.sh does for a push. Offline, the lint reads the project's rules from the local refs instead
+# (lint.sh --remote) and says so: being offline mustn't block a commit.
+# During a merge, cherry-pick or revert the index holds the other side's code, which isn't Claude's, so only the conflict
+# markers (which are) are checked.
+refuse_commit() {
+	echo "claude-ship: commit refused: $1" >&2
+	exit 1
+}
+lint_commit() {
+	lint_dir=$(cd "$(dirname "$0")" && pwd)
+	[ -r "$lint_dir/lint.sh" ] || refuse_commit "$lint_dir/lint.sh is missing, so the hygiene lint can't run. Ask the user to run claude-ship's install.sh."
+	lint_only=
+	for lint_f in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+		lint_p=$(git rev-parse --git-path "$lint_f" 2>/dev/null) || continue
+		if [ -e "$lint_p" ]; then
+			lint_only=1
+			break
+		fi
+	done
+	if [ -n "$lint_only" ]; then
+		lint_out=$(sh "$lint_dir/lint.sh" staged --only conflict-marker --remote 2>&1 </dev/null)
+	else
+		lint_out=$(sh "$lint_dir/lint.sh" staged --remote 2>&1 </dev/null)
+	fi
+	lint_st=$?
+	[ -z "$lint_out" ] || printf '%s\n' "$lint_out" >&2
+	case $lint_st in
+	0) return 0 ;;
+	1) refuse_commit "the staged lines have lint errors (listed above). Fix them and commit again. If a hit is wrong, ask the user to commit with \`! git commit --no-verify\`, or to add an exclude for it to the default branch's .github/claude-ship/lint or to ~/.claude/claude-ship/lint (README › Hygiene lint). Don't skip this check yourself (\`--no-verify\`, \`core.hooksPath\`)." ;;
+	*) refuse_commit "the hygiene lint couldn't run (exit $lint_st), so it can't tell whether the staged lines are clean. Fix what it reports above and commit again, or ask the user to run claude-ship's install.sh. Don't skip this check yourself (\`--no-verify\`, \`core.hooksPath\`)." ;;
+	esac
+}
+
 if [ "$name" != pre-push ]; then
+	if [ "$name" = pre-commit ] && is_claude; then
+		lint_commit
+	fi
 	if own_hook; then
 		exec "$common/hooks/$name" "$@"
 	fi
@@ -42,27 +107,6 @@ trap 'rm -f "$saved"' EXIT
 # A lines list that couldn't be saved in full (a full disk, a file size limit) is not an empty list.
 cat >"$saved" || refuse "couldn't save the ref lines to check them."
 
-# Is this Claude's push? The variable Claude Code sets for the processes it starts (the npm install runs as `node`, so the
-# process name alone would miss it), or a process named `claude` among the ancestors (covers `sudo` and `env -i`).
-# Walks at most 64 steps up and stops at PID 1. Without `ps` the answer is no: the user's pushes are never checked.
-claude_ancestor() {
-	pid=$$
-	steps=0
-	while [ "$steps" -lt 64 ]; do
-		steps=$((steps + 1))
-		pid=$(ps -o ppid= -p "$pid" 2>/dev/null) || return 1
-		pid=$(printf '%s' "$pid" | tr -d '[:space:]')
-		case $pid in
-		'' | *[!0-9]*) return 1 ;;
-		esac
-		[ "$pid" -gt 1 ] || return 1
-		comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
-		comm=${comm##*/}
-		[ "$comm" != claude ] || return 0
-	done
-	return 1
-}
-
 # Runs the repo's own pre-push the way git would have, with the arguments and the saved stdin; exits with its status.
 run_own() {
 	if own_hook; then
@@ -72,7 +116,7 @@ run_own() {
 	exit 0
 }
 
-if [ "${CLAUDE_CODE_CHILD_SESSION:-}" != 1 ] && ! claude_ancestor; then
+if ! is_claude; then
 	run_own "$@"
 fi
 

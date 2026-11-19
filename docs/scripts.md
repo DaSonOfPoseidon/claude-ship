@@ -573,10 +573,18 @@ directory in a trap.
 
 `git-hook.sh <hook name> [git's arguments]` is what each stub in `~/.claude/git-hooks` runs. It chains to the repo's
 own hook of that name (`install.sh` sets `core.hooksPath`, which stops git from running `.git/hooks`), and `pre-push`
-checks Claude's pushes first; the design is in [`gate.md`](gate.md#pre-push-check). It exits 1 to refuse (git then
-aborts the push; 2 is a usage error, no hook name). It saves git's stdin to a temp file so
+checks Claude's pushes first; the design is in [`gate.md`](gate.md#pre-push-check). `pre-commit` runs `lint.sh staged
+--remote` on Claude's commits first and chains to the repo's own hook only after a clean lint. Who counts as Claude is one
+function (`is_claude`: `CLAUDE_CODE_CHILD_SESSION=1` or a `claude` ancestor), shared by both hooks. An error-level hit
+(exit 1) refuses the commit with the hits, the way out and `claude-ship: commit refused:`; warnings print and the commit
+goes on. It fails closed: `lint.sh` missing, or any exit but 0 and 1 (2 is "couldn't lint"), refuses with the install
+hint. During a merge, cherry-pick or revert (`MERGE_HEAD`, `CHERRY_PICK_HEAD` or `REVERT_HEAD` exists) it passes
+`--only conflict-marker`, since the index then holds the other side's code, which isn't Claude's. `git commit -a` and
+`git commit <path>` work because the lint diffs the index git gives the hook (`GIT_INDEX_FILE`). It exits 1 to refuse
+(git then aborts the push or commit; 2 is a usage error, no hook name). It saves git's stdin to a temp file so
 the repo's own `pre-push` gets the same lines, and removes it on exit. `tests/git-hook.sh` runs it through real pushes
-to bare repos, with a stub `gh` and a stub `ps` for the process tree.
+to bare repos (and Claude's commits, in real repos with the stub `gh` answering the project-file read), with a stub `gh`
+and a stub `ps` for the process tree.
 
 `gate-common.sh` holds the two helpers the gate and the hook share, `autonomous` and `github_slugs`. It is sourced,
 never run. `autonomous` fails when `gh` is missing: the shell's `gh: not found` would otherwise match the "not found"
@@ -599,6 +607,18 @@ built-in defaults and the grammar reference. The design choices:
   nothing until it is merged. The refs are local (no network call), so a stale fetch lints with the old file; the
   last fallback, `HEAD`, only applies to a repo with no remote branch. Outside git there is no project layer, and
   `rules` still works.
+- **`staged --remote` reads the project file from GitHub.** Local refs are state the agent controls (`git remote set-head`
+  or `update-ref` can point the read at the branch itself; docs/pitfalls.md › Local refs), so the pre-commit stub asks
+  GitHub: the slug comes from `remote.origin.url` as configured (else with `insteadOf` applied), read by `github_slugs`, and
+  the file from `gh api -i repos/<slug>/contents/.github/claude-ship/lint` with the raw media type and no `?ref`, so GitHub
+  serves the default branch (as `hooks/p3-issue.sh` reads its label map). The status is the response's own status line, and
+  a 200 counts only if `gh` exited 0 too. A 200 is the project layer, a 404 means there is none; anything else (no `gh`,
+  offline, a non-GitHub origin, a 5xx, a body cut short, a 20 s timeout) falls back to the local ref order with one note on
+  stderr, `lint: project rules read from <ref>, not GitHub: <why>`. A hygiene lint must not block commits offline, and the
+  pre-push gate is still the boundary. Limits: `origin`'s URL is itself config the agent can change, which is outside the
+  gate's scope (AGENTS.md › Gate scope).
+- **`staged --only <rule>`** reports one rule and ignores the rest, in the hits, the summary and the exit status. The
+  merge case of the pre-commit stub uses it for `conflict-marker`.
 - **Bad lines are skipped, git and awk failures are not.** A config typo prints a warning and the rest still applies,
   because one bad line shouldn't lock every repo. A failed `git diff`, an unreadable layer file or an awk crash exits 2,
   so the callers (Claude's commit check) refuse rather than pass unlinted code. Each ban's EREs are checked with
