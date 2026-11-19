@@ -637,6 +637,21 @@ built-in defaults and the grammar reference. The design choices:
 - **Comment text is approximate.** The leader comes from the extension (`#`, `//` plus `/*` block lines, `--`); a line is
   a comment if it starts with the leader or has the leader after whitespace, which a string literal can fool. It is
   enough for rules like "no TODO without an issue", and a rule that needs more can match the whole line.
+- **`hook` is the PostToolUse entry point, and never fails.** It reads the tool call from stdin with `jq`
+  (`tool_input.file_path`, resolved against `cwd`; the new text is `content`, `new_string` or each `edits[].new_string`, read
+  defensively because MultiEdit's shape isn't in Claude Code's docs), changes into the file's directory (so the file's
+  repository gives the project layer, not the session's), and builds a synthetic diff of only the candidate lines, one
+  hunk per line, which the same awk program lints as it lints any diff. In a repo the candidates are the added lines of
+  `git diff -U0 HEAD -- <file>` whose text is in the new text: the diff keeps earlier uncommitted edits' lines out, the
+  text filter keeps lines this edit didn't write out (an edit elsewhere in the file), and a `new_string` that repeats an
+  earlier line reports it again, on purpose. Untracked files (not gitignored: an ignored file is never committed, so it
+  isn't linted), a repo with no commit and files outside git are linted whole; outside git an edit keeps only the
+  `new_string` lines that `old_string` lacks. awk writes errors and warnings to two files, and the shell turns them into
+  `{"decision":"block","reason":"<errors>\nFix these now: …"}` (warnings ride along in `hookSpecificOutput.additionalContext`)
+  or `additionalContext` alone; a clean edit prints nothing. Every failure (no `jq`, bad JSON, a missing layer file, git or awk
+  failing) becomes an `additionalContext` note and exit 0, because PostToolUse can't undo the write and a hook that exits
+  non-zero would only be noise. The `settings/claude-ship.json` entry has no `onFailure` for the same reason. Reviewer
+  sessions have no Write, Edit or MultiEdit (`--tools Read,Grep,Glob`), so the hook never fires there.
 
 ## `install.sh`
 
@@ -655,7 +670,12 @@ More than one gives a warning that the gate is registered N times, then the usua
 differs, named 1st, 2nd, and so on; "The gate is registered" prints only for exactly one hook with no warnings. The orchestrate hint hook is
 optional: a missing one only prints an info line. So does a missing `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}`
 (only the string `"0"` counts): the PR loop needs it, because under fork mode a subagent's Agent call returns at
-once (#160).
+once (#160). The same goes for the lint's `PostToolUse` entry (`lint.sh hook`) when the drop-in isn't used: an info line
+gives the README's snippet if `settings.json` has no hook running `lint.sh hook`.
+
+It creates `$dest/claude-ship/lint` (the install's lint rules) with a commented header when it is missing, and never
+overwrites it, follows a symlink there or sets the immutable flag on it: it is the user's file. As root under `sudo` the
+`claude-ship/` directory and the file it creates go to `SUDO_USER`.
 
 After deploying, it also checks that every hook path named in a deployed ship agent's frontmatter exists and is
 executable (`~/.claude/` read as the target directory). A missing one prints `install: <agent> names <path>, which
@@ -672,7 +692,8 @@ the gate compares the value with `${CLAUDE_HOME:-$HOME/.claude}/git-hooks` as te
 It also registers the gate in managed settings and locks what it installs (docs/gate.md › Tamper protection). In
 order: shfmt (below), then `settings/claude-ship.json` from main's archive is validated with `jq` (a template that isn't one
 JSON value holding the gate's `PreToolUse` hook with `timeout` and `onFailure: "block"` exits 1, nothing installed;
-without `jq` too), then every installed path that has the immutable flag is lifted with `chattr -i`, recursively for
+an optional `PostToolUse` (the lint's edit hook) is allowed beside it, with a string `command` and a numeric `timeout` and
+no `onFailure` requirement, and no other event; without `jq` too), then every installed path that has the immutable flag is lifted with `chattr -i`, recursively for
 `skills/ship` and `git-hooks` (an `lsattr` check that a flag is still there stops the install with nothing changed), then the
 files are deployed, then the template is copied to `$CLAUDE_SHIP_MANAGED_DIR/managed-settings.d/claude-ship.json` (default
 `/etc/claude-code`; skipped with a note when that can't be written, i.e. not root) through a temp file and a `mv`, then the

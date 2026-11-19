@@ -586,6 +586,9 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   the commit list and the diff before it writes the prompt, and blocks when any of them can't be read: an ignored
   failure would read as "no PR", "no threads" or an empty diff, and the review would skip what it was meant to
   check (#106). A branch with no PR, or a PR with no unresolved threads, is reviewed as before.
+- Reviewer sessions never run the hygiene lint's edit hook (the managed `PostToolUse` entry for `lint.sh hook`): its
+  matcher is `Write|Edit|MultiEdit`, and the reviewers have only Read, Grep and Glob (`--tools`), so "Reviewers only read"
+  holds and the hook can't write or fire there.
 - Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`.
 - The reviewer's prompts, schemas, run and verdict rules are in `hooks/review-lib.sh`, which the gate sources and
   `tests/evals/run.sh` uses too, so the evals measure what the gate sends (see Changing prompts or models). It is

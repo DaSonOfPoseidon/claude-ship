@@ -12,7 +12,8 @@
 # reinstall; only the user lifts it otherwise. The gate's hook entry may also live in ~/.claude/settings.json (see README.md): after
 # deploying, this script reads that file (never writes it) and warns about a missing or outdated entry (the drop-in
 # counts as a registration), and says when the PR loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
-# frontmatter was not deployed or is not executable (#122).
+# frontmatter was not deployed or is not executable (#122). It creates the install's hygiene-lint file,
+# ${CLAUDE_HOME:-$HOME/.claude}/claude-ship/lint, with a commented header when it is missing, and never overwrites it.
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
@@ -91,10 +92,14 @@ if ! command -v jq >/dev/null 2>&1; then
 	echo "install: jq not found (the gate needs it, and it validates settings/claude-ship.json); nothing was installed." >&2
 	exit 1
 fi
-# -s: exactly one JSON value (an empty file makes jq run nothing and still succeed).
-if ! jq -es 'length == 1 and (.[0] | (.hooks | keys) == ["PreToolUse"] and (.hooks.PreToolUse | type == "array" and length > 0) and all(.hooks.PreToolUse[];
+# -s: exactly one JSON value (an empty file makes jq run nothing and still succeed). PreToolUse (the gate, which must fail
+# closed) is required; PostToolUse (the hygiene lint, which never blocks) is optional, with a shape of its own.
+if ! jq -es 'length == 1 and (.[0] | ((.hooks | keys) == ["PreToolUse"] or (.hooks | keys) == ["PostToolUse", "PreToolUse"])
+	and (.hooks.PreToolUse | type == "array" and length > 0) and all(.hooks.PreToolUse[];
 	(.matcher | type == "string") and (.hooks | type == "array" and length > 0) and all(.hooks[]; .type == "command" and (.command | type == "string")
-		and (.timeout | type == "number") and .onFailure == "block")))' "$tmp/settings/claude-ship.json" >/dev/null 2>&1; then
+		and (.timeout | type == "number") and .onFailure == "block"))
+	and ((.hooks.PostToolUse // []) | type == "array" and all(.[]; (.matcher | type == "string") and (.hooks | type == "array" and length > 0)
+		and all(.hooks[]; .type == "command" and (.command | type == "string") and (.timeout | type == "number")))))' "$tmp/settings/claude-ship.json" >/dev/null 2>&1; then
 	echo "install: settings/claude-ship.json on origin/main isn't a valid managed-settings drop-in (a bug there); nothing was installed." >&2
 	exit 1
 fi
@@ -117,10 +122,30 @@ fi
 # The directories this run creates for the user's own files (agents/ and skills/ hold their own agents and skills): as root
 # under sudo they would be root's, so they go to the sudo user. hooks/, bin/ and git-hooks/ are locked and stay root's.
 : >"$tmp/new-dirs"
-for d in "$dest" "$dest/agents" "$dest/skills"; do
+for d in "$dest" "$dest/agents" "$dest/skills" "$dest/claude-ship"; do
 	if [ ! -d "$d" ]; then printf '%s\n' "$d" >>"$tmp/new-dirs"; fi
 done
-mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills" "$dest/bin"
+mkdir -p "$dest/agents" "$dest/hooks" "$dest/skills" "$dest/bin" "$dest/claude-ship"
+# This install's hygiene-lint file (README.md › Hygiene lint): the user's own, so it is created once with a commented header,
+# never overwritten and never flagged immutable; the sudo user owns it like the directories above.
+lint_cfg=$dest/claude-ship/lint
+if [ ! -e "$lint_cfg" ] && [ ! -L "$lint_cfg" ]; then
+	if cat >"$lint_cfg" <<'LINTCFG'; then
+# claude-ship hygiene lint: this install's rules. They apply after the built-in defaults (hooks/lint-rules) and before a
+# repository's .github/claude-ship/lint, and a later line wins. install.sh creates this file once and never changes it.
+# Examples (remove the leading "# " to use one):
+#   * off                           turn the whole lint off
+#   debug-leftover off scripts/*    one rule off for some paths
+#   narration error                 make a warning an error
+#   skip generated/*                never lint these paths
+# The grammar is in hooks/lint-rules and README.md, Hygiene lint.
+LINTCFG
+		printf '%s\n' "$lint_cfg" >>"$tmp/new-dirs"
+		echo "Created $lint_cfg (this install's lint rules; it is yours, install.sh leaves it alone)."
+	else
+		echo "install: couldn't create $lint_cfg; the lint still works with its defaults." >&2
+	fi
+fi
 if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" = 0 ]; then
 	while IFS= read -r d; do chown "$SUDO_USER" "$d" || :; done <"$tmp/new-dirs"
 fi
@@ -230,6 +255,7 @@ check_settings() {
 	fi
 	snippet=$(snippet_of PreToolUse)
 	hint=$(snippet_of UserPromptSubmit)
+	lint_hook=$(snippet_of PostToolUse)
 	want() { printf '%s' "$snippet" | jq -er "$1"; }
 	if ! want_matcher=$(want '.hooks.PreToolUse[0].matcher | strings') ||
 		! want_timeout=$(want '.hooks.PreToolUse[0].hooks[0].timeout | numbers') ||
@@ -244,6 +270,12 @@ check_settings() {
 		if ! jqs -e 'any(.hooks.UserPromptSubmit[]?.hooks[]?; type == "object" and (.command | tostring | test("orchestrate-hint[.]sh$")))' "$settings" >/dev/null 2>&1; then
 			echo "install: info: orchestrated mode's hint hook isn't registered (optional). To use it, add:"
 			printf '%s\n' "$hint"
+		fi
+		# The hygiene lint's edit hook (hooks/lint.sh hook) is in the managed drop-in; without one, user settings need it. It
+		# never blocks, so this stays information.
+		if [ -z "$managed_ok" ] && [ -n "$lint_hook" ] && ! jqs -e 'any(.hooks.PostToolUse[]?.hooks[]?; type == "object" and (.command | tostring | test("lint[.]sh hook$")))' "$settings" >/dev/null 2>&1; then
+			echo "install: info: the hygiene lint's edit hook (PostToolUse) isn't registered in $settings (optional; the pre-commit check works without it). To use it, add:"
+			printf '%s\n' "$lint_hook"
 		fi
 		# Under Claude Code's fork mode a subagent's Agent call returns at once, so the PR loop's implementer never
 		# gets ship-codex's report (claude-ship #160). Only the string "0" counts as set.

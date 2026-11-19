@@ -173,6 +173,17 @@ grep -qi 'warning' "$tmp/out" && {
 	sed 's/^/  /' "$tmp/out"
 	fail=1
 }
+# The install's lint file is created with a commented header and no rules (nothing in it but comments), and it is not
+# flagged immutable: it is the user's own file.
+lint_file="$tmp/dest/claude-ship/lint"
+[ -f "$lint_file" ] && grep -q '^# claude-ship hygiene lint' "$lint_file" && ! grep -qv '^#' "$lint_file" || {
+	echo "FAIL: install.sh didn't create $lint_file with a commented header"
+	fail=1
+}
+! grep -qxF -- "$lint_file" "$STUB_STATE/flagged" || {
+	echo "FAIL: the lint file was flagged immutable"
+	fail=1
+}
 # What's deployed is main's, not the checkout's.
 grep -q "Deployed claude-ship $(git -C "$tmp/src" rev-parse --short HEAD)" "$tmp/out" || {
 	echo "FAIL: didn't deploy main's commit"
@@ -286,6 +297,27 @@ gate_with '.hooks.PreToolUse[0].matcher = "Bash" | .hooks.PreToolUse[0].hooks[0]
 run_case all-wrong
 expect all-wrong 0 3
 has all-wrong "$expected_matcher"
+
+# The lint's edit hook (PostToolUse) is optional information: without it in the settings (and no drop-in), the output gives
+# the snippet; with it, nothing. Neither changes the exit status or counts as a warning.
+lint_snippet=$(snippet_of PostToolUse)
+printf '%s' "$lint_snippet" | jq -e '.hooks.PostToolUse[0].hooks[0].command | test("lint[.]sh hook$")' >/dev/null 2>&1 || {
+	echo "FAIL: README.md has no PostToolUse snippet for lint.sh hook"
+	fail=1
+}
+gate_with '.'
+run_case lint-hook-missing
+expect lint-hook-missing 0 0
+has lint-hook-missing "PostToolUse"
+has lint-hook-missing '"command": "~/.claude/hooks/lint.sh hook"'
+gate_with --argjson l "$(printf '%s' "$lint_snippet" | jq -c .)" '.hooks.PostToolUse = $l.hooks.PostToolUse'
+run_case lint-hook-present
+expect lint-hook-present 0 0
+lacks lint-hook-present "PostToolUse"
+gate_with --argjson l "$(printf '%s' "$lint_snippet" | jq -c .)" '.hooks.PostToolUse = ($l.hooks.PostToolUse | .[0].hooks[0].command = "~/.claude/hooks/other.sh")'
+run_case lint-hook-other
+expect lint-hook-other 0 0
+has lint-hook-other "PostToolUse"
 
 # The command written with the absolute path counts as registered.
 gate_with --arg c "$tmp/case-abs-command/hooks/review-gate.sh" '.hooks.PreToolUse[0].hooks[0].command = $c'
@@ -580,6 +612,7 @@ expect drop-in-only 0 0
 has drop-in-only "managed settings drop-in"
 has drop-in-only "$tmp/managed-drop-in-only/managed-settings.d/claude-ship.json"
 has drop-in-only '"Enterprise managed settings (drop-ins)"'
+lacks drop-in-only "PostToolUse"
 lacks drop-in-only "the gate isn't registered"
 cmp -s "$dropin_want" "$tmp/managed-drop-in-only/managed-settings.d/claude-ship.json" || {
 	echo "FAIL: drop-in-only: the drop-in isn't a byte-for-byte copy of settings/claude-ship.json"
@@ -658,7 +691,12 @@ bad_main t-no-onfailure "$(jq -c 'del(.hooks.PreToolUse[0].hooks[0].onFailure)' 
 bad_main t-no-hooks '{}'
 bad_main t-empty ''
 bad_main t-command-type "$(jq -c '.hooks.PreToolUse[0].hooks[0].command = 7' "$dropin_want")"
-for t in t-not-json t-no-onfailure t-no-hooks t-empty t-command-type; do
+# The lint's PostToolUse entry has a shape of its own (a string command, a numeric timeout), and no other event is allowed.
+bad_main t-post-command-type "$(jq -c '.hooks.PostToolUse[0].hooks[0].command = 7' "$dropin_want")"
+bad_main t-post-timeout "$(jq -c '.hooks.PostToolUse[0].hooks[0].timeout = "30"' "$dropin_want")"
+bad_main t-post-matcher "$(jq -c 'del(.hooks.PostToolUse[0].matcher)' "$dropin_want")"
+bad_main t-other-event "$(jq -c '.hooks.Stop = .hooks.PostToolUse' "$dropin_want")"
+for t in t-not-json t-no-onfailure t-no-hooks t-empty t-command-type t-post-command-type t-post-timeout t-post-matcher t-other-event; do
 	install_sh=$tmp/checkout-$t/install.sh
 	CLAUDE_SHIP_MANAGED_DIR=$tmp/managed-$t
 	run_case "$t"
@@ -676,6 +714,30 @@ for t in t-not-json t-no-onfailure t-no-hooks t-empty t-command-type; do
 	}
 done
 unset seed nodeploy install_sh
+# A template with the gate alone (the shape before the lint hook) is still a valid drop-in: PostToolUse is optional.
+bad_main t-pre-only "$(jq -c 'del(.hooks.PostToolUse)' "$dropin_want")"
+install_sh=$tmp/checkout-t-pre-only/install.sh
+CLAUDE_SHIP_MANAGED_DIR=$tmp/managed-t-pre-only
+run_case t-pre-only
+CLAUDE_SHIP_MANAGED_DIR=$blocked
+unset install_sh
+expect t-pre-only 0 0
+[ -f "$tmp/managed-t-pre-only/managed-settings.d/claude-ship.json" ] || {
+	echo "FAIL: t-pre-only: the drop-in wasn't installed"
+	fail=1
+}
+# The install's lint file is created once: a second install leaves what the user wrote there alone.
+mkdir -p "$tmp/lint-seed/claude-ship"
+printf '* off\n' >"$tmp/lint-seed/claude-ship/lint"
+seed=$tmp/lint-seed
+run_case lint-kept
+unset seed
+expect lint-kept 0
+[ "$(cat "$tmp/case-lint-kept/claude-ship/lint")" = '* off' ] || {
+	echo "FAIL: lint-kept: the install overwrote the user's lint file"
+	fail=1
+}
+lacks lint-kept "Created"
 
 # Without jq the registration can't be read, so the check fails (the gate needs jq too).
 nojq="$tmp/nojq-bin"
@@ -870,14 +932,14 @@ export SUDO_USER FAKE_UID
 flag_install chown "$fd7" "$tmp/flags-managed7"
 unset SUDO_USER FAKE_UID
 expect chown 0 0
-for d in "$fd7" "$fd7/agents" "$fd7/skills"; do
+for d in "$fd7" "$fd7/agents" "$fd7/skills" "$fd7/claude-ship" "$fd7/claude-ship/lint"; do
 	grep -qxF -- "someone $d" "$STUB_STATE/chown.log" || {
 		echo "FAIL: chown: $d wasn't given to the sudo user"
 		fail=1
 	}
 done
-[ "$(wc -l <"$STUB_STATE/chown.log")" -eq 3 ] || {
-	echo "FAIL: chown: more than the three new directories were chowned"
+[ "$(wc -l <"$STUB_STATE/chown.log")" -eq 5 ] || {
+	echo "FAIL: chown: more than the new directories and the lint file were chowned"
 	sed 's/^/  /' "$STUB_STATE/chown.log"
 	fail=1
 }

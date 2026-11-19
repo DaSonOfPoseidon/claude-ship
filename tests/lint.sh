@@ -1127,6 +1127,190 @@ want tune-all 0
 lacks tune-all 'd.py:1:'
 lacks tune-all 'e.js:'
 
+# --- hook mode: PostToolUse JSON on stdin, only the lines this edit added ---
+# hook <json>: runs `lint.sh hook` in $hookdir (default: the repo) with the JSON on stdin. The trigger lines are built in
+# pieces, so this file passes its own lint.
+dbg="d""ebugger;"
+nar="// Add""ed a thing"
+# hjson <tool> <file> <cwd> <new> [old]: the tool call as Claude Code sends it.
+hjson() {
+	case $1 in
+	Write) jq -cn --arg f "$2" --arg c "$3" --arg n "$4" '{tool_name: "Write", cwd: $c, tool_input: {file_path: $f, content: $n}}' ;;
+	Edit) jq -cn --arg f "$2" --arg c "$3" --arg n "$4" --arg o "${5-}" '{tool_name: "Edit", cwd: $c, tool_input: {file_path: $f, old_string: $o, new_string: $n}}' ;;
+	esac
+}
+hook() {
+	printf '%s' "$1" | (cd "${hookdir:-$repo}" && sh "${script:-$lint_sh}" hook) >"$tmp/out" 2>"$tmp/err"
+	rc=$?
+}
+# hdec <name> <want>: the .decision of the output (the word none when there is none). hctx / hreason: the
+# additionalContext / reason has the text. silent: nothing on stdout.
+hdec() {
+	got=$(jq -r '.decision // "none"' "$tmp/out" 2>/dev/null)
+	[ "$got" = "$2" ] || {
+		echo "FAIL ($1): decision '$got' (want $2)"
+		sed 's/^/  out: /' "$tmp/out"
+		fail=1
+	}
+}
+hctx() {
+	jq -r '(.hookSpecificOutput.additionalContext // "")' "$tmp/out" | grep -qF -- "$2" || {
+		echo "FAIL ($1): additionalContext lacks '$2'"
+		sed 's/^/  out: /' "$tmp/out"
+		fail=1
+	}
+}
+hreason() {
+	jq -r '(.reason // "")' "$tmp/out" | grep -qF -- "$2" || {
+		echo "FAIL ($1): reason lacks '$2'"
+		sed 's/^/  out: /' "$tmp/out"
+		fail=1
+	}
+}
+silent() {
+	[ ! -s "$tmp/out" ] || {
+		echo "FAIL ($1): printed output"
+		sed 's/^/  out: /' "$tmp/out"
+		fail=1
+	}
+}
+
+# A new untracked file (Write), an error: the turn gets a block with the hits and the reminder.
+fixture
+printf 'x;\n%s\n' "$dbg" >"$repo/new.js"
+hook "$(hjson Write "$repo/new.js" "$repo" "$(printf 'x;\n%s\n' "$dbg")")"
+want hook-write-new 0
+hdec hook-write-new block
+hreason hook-write-new 'new.js:2: debug-leftover (error)'
+hreason hook-write-new 'Fix these now: the pre-commit check refuses a commit that adds them.'
+# A tracked file: an Edit that adds an error is reported, with the line number in the file.
+printf 'a;\nb;\nc;\n' >"$repo/t.js"
+git -C "$repo" add -A
+commit
+printf 'a;\nb;\n%s\nc;\n' "$dbg" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" "$(printf 'b;\n%s' "$dbg")" 'b;')"
+want hook-edit-error 0
+hdec hook-edit-error block
+hreason hook-edit-error 't.js:3: debug-leftover (error)'
+# Earlier uncommitted lines are not re-reported by an edit elsewhere in the file ...
+printf 'a;\nb;\n%s\nc2;\n' "$dbg" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" 'c2;' 'c;')"
+want hook-edit-elsewhere 0
+silent hook-edit-elsewhere
+# ... but a new_string that repeats that line reports it again (the line is in the new text).
+hook "$(hjson Edit "$repo/t.js" "$repo" "$(printf 'b;\n%s' "$dbg")" 'b;')"
+want hook-edit-repeat 0
+hdec hook-edit-repeat block
+hreason hook-edit-repeat 't.js:3: debug-leftover (error)'
+# A warning is context for the next step, not a block; a clean edit prints nothing.
+git -C "$repo" checkout -q -- t.js
+printf 'a;\nb;\n%s\nc;\n' "$nar" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" "$(printf 'b;\n%s' "$nar")" 'b;')"
+want hook-warn 0
+hdec hook-warn none
+hctx hook-warn 't.js:3: narration (warn)'
+printf 'a;\nb;\nd;\nc;\n' >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" 'd;' '')"
+want hook-clean 0
+silent hook-clean
+# An error and a warning together: one block, the warning rides along as context.
+printf 'a;\nb;\n%s\n%s\nc;\n' "$dbg" "$nar" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" "$(printf '%s\n%s' "$dbg" "$nar")" 'x')"
+want hook-both 0
+hdec hook-both block
+hreason hook-both 't.js:3: debug-leftover (error)'
+hctx hook-both 't.js:4: narration (warn)'
+# A relative file_path is resolved against cwd; the hook may run from anywhere.
+hookdir=$tmp/outside
+hook "$(hjson Edit t.js "$repo" "$dbg" '')"
+want hook-relative 0
+hdec hook-relative block
+hreason hook-relative 't.js:3: debug-leftover (error)'
+# The project layer is the file's repo, not the session's directory.
+set_default_project "debug-leftover warn *.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" "$dbg" '')"
+want hook-project 0
+hdec hook-project none
+hctx hook-project 't.js:3: debug-leftover (warn)'
+unset hookdir
+# MultiEdit: every edit's new_string counts.
+fixture
+printf 'a;\nb;\n' >"$repo/m.js"
+git -C "$repo" add -A
+commit
+printf 'a2;\nb2;\n%s\n%s\n' "$dbg" "$nar" >"$repo/m.js"
+hook "$(jq -cn --arg f "$repo/m.js" --arg c "$repo" --arg x "$dbg" --arg y "$nar" '{tool_name: "MultiEdit", cwd: $c, tool_input: {file_path: $f, edits: [{old_string: "a", new_string: $x}, {old_string: "b", new_string: $y}]}}')"
+want hook-multi 0
+hdec hook-multi block
+hreason hook-multi 'm.js:3: debug-leftover (error)'
+hctx hook-multi 'm.js:4: narration (warn)'
+# A file under skip, and a lint turned off: nothing.
+printf '%s\n' "$dbg" >"$repo/x.min.js"
+hook "$(hjson Write "$repo/x.min.js" "$repo" "$dbg")"
+want hook-skip 0
+silent hook-skip
+install "* off"
+hook "$(hjson Write "$repo/m.js" "$repo" "$(printf 'a2;\nb2;\n%s\n' "$dbg")")"
+want hook-off 0
+silent hook-off
+rm -f "$HOME/.claude/claude-ship/lint"
+# A gitignored file is never committed, so it is not linted.
+printf 'ignored.js\n' >"$repo/.gitignore"
+printf '%s\n' "$dbg" >"$repo/ignored.js"
+hook "$(hjson Write "$repo/ignored.js" "$repo" "$dbg")"
+want hook-ignored 0
+silent hook-ignored
+# A repo with no commit yet: the whole file is new.
+rm -rf "$tmp/empty"
+git init -q -b main "$tmp/empty"
+printf 'x;\n%s\n' "$dbg" >"$tmp/empty/e.js"
+hookdir=$tmp/empty
+hook "$(hjson Write "$tmp/empty/e.js" "$tmp/empty" "$(printf 'x;\n%s\n' "$dbg")")"
+want hook-no-head 0
+hreason hook-no-head 'e.js:2: debug-leftover (error)'
+unset hookdir
+# Outside git: a Write is linted whole, an Edit only for the lines of new_string that old_string lacks.
+mkdir -p "$tmp/outside/sub"
+printf 'x;\n%s\ny;\n%s\n' "$dbg" "$dbg" >"$tmp/outside/sub/o.js"
+hookdir=$tmp/outside
+hook "$(hjson Write "$tmp/outside/sub/o.js" "$tmp/outside" "$(printf 'x;\n%s\ny;\n%s\n' "$dbg" "$dbg")")"
+want hook-outside-write 0
+hdec hook-outside-write block
+hreason hook-outside-write 'sub/o.js:2: debug-leftover (error)'
+hreason hook-outside-write 'sub/o.js:4: debug-leftover (error)'
+hook "$(hjson Edit "$tmp/outside/sub/o.js" "$tmp/outside" "$(printf 'y;\n%s' "$dbg")" "$(printf 'y;\n%s' "$dbg")")"
+want hook-outside-same 0
+silent hook-outside-same
+hook "$(hjson Edit "$tmp/outside/sub/o.js" "$tmp/outside" 'x;' 'z;')"
+want hook-outside-edit 0
+silent hook-outside-edit
+printf 'x;\n%s\ny;\n' "$dbg" >"$tmp/outside/sub/o.js"
+hook "$(hjson Edit "$tmp/outside/sub/o.js" "$tmp/outside" "$(printf 'x;\n%s' "$dbg")" 'x;')"
+want hook-outside-new 0
+hdec hook-outside-new block
+hreason hook-outside-new 'sub/o.js:2: debug-leftover (error)'
+unset hookdir
+# It always exits 0: bad input, a missing file, no path and a lint that cannot run are a note (or nothing), never a
+# failing exit.
+hook 'not json {'
+want hook-bad-json 0
+hdec hook-bad-json none
+hctx hook-bad-json 'lint hook:'
+hook '{"tool_name":"Write","cwd":"/","tool_input":{}}'
+want hook-no-path 0
+silent hook-no-path
+hook "$(hjson Write "$tmp/outside/gone.js" "$tmp/outside" "$dbg")"
+want hook-no-file 0
+silent hook-no-file
+mkdir -p "$tmp/h2"
+cp "$lint_sh" "$tmp/h2/lint.sh"
+script=$tmp/h2/lint.sh
+hook "$(hjson Write "$tmp/outside/sub/o.js" "$tmp/outside" "$dbg")"
+want hook-no-rules 0
+hdec hook-no-rules none
+hctx hook-no-rules 'lint hook:'
+unset script
+
 # --- portability: the same checks under the other awks that are installed ---
 portable() {
 	name=$1
@@ -1155,6 +1339,12 @@ ban br error * 'a(' -- x"
 	lacks "awk-$name" 'i.txt:2:'
 	ehas "awk-$name" 'invalid regular expression'
 	has "awk-$name" 'lint: 4 error(s), 0 warning(s)'
+	# hook mode runs two awk programs of its own (the candidate lines, then the hits).
+	printf 'x;\n%s\n' "$dbg" >"$repo/h.js"
+	PATH=$tmp/awk-$name:$PATH hook "$(hjson Write "$repo/h.js" "$repo" "$(printf 'x;\n%s\n' "$dbg")")"
+	want "awk-$name-hook" 0
+	hdec "awk-$name-hook" block
+	hreason "awk-$name-hook" 'h.js:2: debug-leftover (error)'
 }
 for a in mawk gawk; do
 	command -v $a >/dev/null 2>&1 && portable $a $a
