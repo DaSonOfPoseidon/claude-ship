@@ -47,10 +47,10 @@ skip *.lock package-lock.json *.min.js *.min.css vendor/* node_modules/* *.svg
 # POSIX ERE has no \b, so a word boundary is written (^|[^[:alnum:]_]) before and ([^[:alnum:]_]|$) after.
 
 # debug-leftover: a debugger or breakpoint left in code. Lines that are only a comment don't count.
-ban debug-leftover error *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])debugger([^[:alnum:]_$]|$)' unless '^[[:space:]]*(//|/\*|\*([[:space:]]|/|$))' -- Remove the debugger statement; use a test or a log the code keeps.
+ban debug-leftover error *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])debugger[[:space:]]*([^[:alnum:]_$:"''[:space:]]|$)' unless '^[[:space:]]*(//|\*([[:space:]]|$)|\*/[[:space:]]*$|/\*([^*]|\*+[^*/])*(\**|\*+/[[:space:]]*)$)' -- Remove the debugger statement; use a test or a log the code keeps.
 ban debug-leftover error *.py '(^|[^[:alnum:]_.])breakpoint\(\)|(^|[^[:alnum:]_])i?pdb\.set_trace\(|(^|[^[:alnum:]_])import[[:space:]]+i?pdb([^[:alnum:]_]|$)' unless '^[[:space:]]*#' -- Remove the debugger call; use a test or a log the code keeps.
 ban debug-leftover error *.rb '(^|[^[:alnum:]_])binding\.(pry|irb)([^[:alnum:]_]|$)|(^|[^[:alnum:]_.])byebug([^[:alnum:]_]|$)' unless '^[[:space:]]*#' -- Remove the debugger call; use a test or a log the code keeps.
-ban debug-leftover error *.rs '(^|[^[:alnum:]_])dbg!\(' unless '^[[:space:]]*(//|/\*|\*([[:space:]]|/|$))' -- Remove the dbg! call; use a test or a log the code keeps.
+ban debug-leftover error *.rs '(^|[^[:alnum:]_])dbg!\(' unless '^[[:space:]]*(//|\*([[:space:]]|$)|\*/[[:space:]]*$|/\*([^*]|\*+[^*/])*(\**|\*+/[[:space:]]*)$)' -- Remove the dbg! call; use a test or a log the code keeps.
 
 # placeholder: a comment that stands in for code the agent didn't write.
 ban placeholder error * comment '\.\.\.[[:space:]]*([Tt]he )?[Rr]est of (the )?code|[Rr]est of (the )?code[[:space:]]*\.\.\.' -- Write the code the placeholder stands for, or delete the comment; don't leave a stub for someone else to fill in.

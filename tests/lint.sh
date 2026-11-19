@@ -663,10 +663,10 @@ x_st=set_'trace'
 x_pry=binding.p'ry'
 x_bye=bye'bug'
 x_dbm=d'bg!'
-put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\nlet %s$enabled = 1;\nlet $%s = 2;\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
+put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\nlet %s$enabled = 1;\nlet $%s = 2;\nconst o = { %s: false };\nf({ %s: e });\n/* n */ %s;\n/* n %s */\n */ %s;\nok({ %s });\nif (x) %s\nlet q = { "%s": 1 };\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
 put d.py '%s()\nmy_%s()\npdb.%s()\nimport pdb\nimport ipdb\nimport pdbx\nx.%s()\n# %s()\nipdb.%s()\n' "$x_bp" "$x_bp" "$x_st" "$x_bp" "$x_bp" "$x_st"
 put d.rb '%s\n%s\nmy%s\n# %s\n' "$x_pry" "$x_bye" "$x_bye" "$x_bye"
-put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n*out = %s(x);\n * %s(x)\n' "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm"
+put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n*out = %s(x);\n * %s(x)\n/* n */ %s(x);\n/* n %s(x) */\n' "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm"
 put d.md 'use %s; or %s()\n' "$x_dbg" "$x_bp"
 put d.sh '%s\n' "$x_dbg"
 lint staged
@@ -677,6 +677,14 @@ lacks debug 'd.js:3:'
 has debug 'd.js:4: debug-leftover (error)'
 lacks debug 'd.js:5:'
 lacks debug 'd.js:6:'
+lacks debug 'd.js:7:'
+lacks debug 'd.js:8:'
+has debug 'd.js:9: debug-leftover (error)'
+lacks debug 'd.js:10:'
+has debug 'd.js:11: debug-leftover (error)'
+has debug 'd.js:12: debug-leftover (error)'
+has debug 'd.js:13: debug-leftover (error)'
+lacks debug 'd.js:14:'
 has debug 'd.py:1: debug-leftover (error): Remove the debugger call;'
 lacks debug 'd.py:2:'
 has debug 'd.py:3: debug-leftover (error)'
@@ -695,9 +703,11 @@ lacks debug 'd.rs:2:'
 lacks debug 'd.rs:3:'
 has debug 'd.rs:4: debug-leftover (error)'
 lacks debug 'd.rs:5:'
+has debug 'd.rs:6: debug-leftover (error)'
+lacks debug 'd.rs:7:'
 lacks debug 'd.md:'
 lacks debug 'd.sh:'
-has debug 'lint: 11 error(s), 0 warning(s)'
+has debug 'lint: 16 error(s), 0 warning(s)'
 
 # placeholder: error, in comments only (any language with comments; markdown has none).
 fixture
