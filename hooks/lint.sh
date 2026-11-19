@@ -49,11 +49,12 @@ fi
 
 # --- the diff (staged and diff modes) ---
 # The options pin the output's shape whatever the user's git config says: fixed a/ b/ prefixes, repo-relative paths,
-# no textconv or external diff, no rename detection, no submodule lines, quoted paths only where git must.
+# no textconv or external diff, no rename detection, no submodule lines, no context between hunks (diff.interHunkContext),
+# quoted paths only where git must. Type changes (T) are kept: a symlink that becomes a file adds that file's lines.
 if [ "$mode" != rules ]; then
 	gitd() {
 		git -c core.quotePath=false -c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.relative=false \
-			diff -U0 --no-color --no-ext-diff --no-textconv --no-renames --diff-filter=ACMR \
+			diff -U0 --inter-hunk-context=0 --no-color --no-ext-diff --no-textconv --no-renames --diff-filter=ACMRT \
 			--ignore-submodules=all --src-prefix=a/ --dst-prefix=b/ "$@"
 	}
 	if [ "$mode" = staged ]; then
@@ -128,7 +129,7 @@ function esc(c) {
 	if (c != "" && index("\\.+(){}|^$[]", c) > 0) return "\\" c
 	return c
 }
-function glob2re(g,   i, n, c, out, j, d, neg) {
+function glob2re(g,   i, n, c, out, j, d, neg, k) {
 	n = length(g)
 	out = "^"
 	for (i = 1; i <= n; i++) {
@@ -144,7 +145,18 @@ function glob2re(g,   i, n, c, out, j, d, neg) {
 			}
 			d = j
 			if (substr(g, d, 1) == "]") d++
-			while (d <= n && substr(g, d, 1) != "]") d++
+			# A [:class:] (also [.x.] and [=x=]) inside the brackets has its own ]: skip past it.
+			while (d <= n && substr(g, d, 1) != "]") {
+				c = substr(g, d, 2)
+				if (c == "[:" || c == "[." || c == "[=") {
+					k = index(substr(g, d + 2), substr(c, 2, 1) "]")
+					if (k > 0) {
+						d += k + 3
+						continue
+					}
+				}
+				d++
+			}
 			if (d > n) out = out "\\["
 			else {
 				out = out "[" neg substr(g, j, d - j) "]"

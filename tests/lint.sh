@@ -150,6 +150,40 @@ has hit '  BAN new'
 has hit 'lint: 1 error(s), 0 warning(s)'
 lacks hit 'old.txt'
 
+# diff.interHunkContext can make -U0 print context lines between nearby changes: added lines after them are still found.
+fixture
+install "$BAN"
+printf 'a\nb\nc\nd\ne\n' >"$repo/ih.txt"
+git -C "$repo" add -A
+commit
+git -C "$repo" push -q origin feat:main
+git -C "$repo" fetch -q origin
+printf 'A\nb\nc\nd\nBAN e\n' >"$repo/ih.txt"
+git -C "$repo" add -A
+git -C "$repo" config diff.interHunkContext 10
+lint staged
+want inter-hunk 1
+has inter-hunk 'ih.txt:5: t (error): remove BAN'
+
+# A type change (a symlink replaced by a regular file) is linted: the new file's lines are added lines.
+fixture
+install "$BAN"
+ln -s README.md "$repo/link.txt"
+git -C "$repo" add -A
+commit
+git -C "$repo" push -q origin feat:main
+git -C "$repo" fetch -q origin
+rm "$repo/link.txt"
+printf 'ok\nBAN here\n' >"$repo/link.txt"
+git -C "$repo" add -A
+lint staged
+want type-change 1
+has type-change 'link.txt:2: t (error): remove BAN'
+git -C "$repo" commit -q -m c
+lint diff origin/main...HEAD
+want type-change-range 1
+has type-change-range 'link.txt:2: t (error): remove BAN'
+
 # Line numbers across several hunks, and a hunk header without ",d" (a one-line change).
 fixture
 install "$BAN"
@@ -331,6 +365,23 @@ want multi-glob 1
 has multi-glob 'src/a.txt:1: t (error)'
 has multi-glob 'docs/a.txt:1: t (warn)'
 lacks multi-glob 'tests/a.txt'
+
+# A POSIX character class in a bracket expression keeps its inner ]: the glob is valid, not a crash.
+fixture
+install "ban d error file[[:digit:]].txt 'BAN' -- m
+ban e error file[![:digit:]].txt 'BAN' -- m
+skip skipped[[:alpha:]]x"
+put file1.txt 'BAN\n'
+put fileA.txt 'BAN\n'
+put skippedQx 'BAN\n'
+lint staged
+want posix-class 1
+has posix-class 'file1.txt:1: d (error)'
+lacks posix-class 'file1.txt:1: e'
+has posix-class 'fileA.txt:1: e (error)'
+lacks posix-class 'fileA.txt:1: d'
+lacks posix-class 'skippedQx'
+elacks posix-class 'invalid regular expression'
 
 # comment: matches the comment text only, by extension.
 fixture

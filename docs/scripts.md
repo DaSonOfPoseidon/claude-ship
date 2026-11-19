@@ -587,9 +587,9 @@ The hygiene linter for added lines (README › Hygiene lint). POSIX `sh` plus on
 no GNU awk features (`tests/lint.sh` runs one scenario under gawk, mawk and busybox awk). `hooks/lint-rules` holds the
 built-in defaults and the grammar reference. The design choices:
 
-- **Added lines only.** The input is `git diff -U0 --diff-filter=ACMR --no-renames`, with the options that fix its
-  shape whatever the user's git config says (`a/` `b/` prefixes, no textconv, external diff, relative paths or
-  submodule lines). Line numbers come from the `@@ … +c,d @@` headers, and the counts decide where a hunk ends, so an
+- **Added lines only.** The input is `git diff -U0 --inter-hunk-context=0 --diff-filter=ACMRT --no-renames`, with the options that fix its
+  shape whatever the user's git config says (`a/` `b/` prefixes, no textconv, external diff, relative paths, context
+  between hunks or submodule lines). Line numbers come from the `@@ … +c,d @@` headers, and the counts decide where a hunk ends, so an
   added line that reads `+++ b/x` or `@@` is content. Existing code never fails a commit, so a rule can be adopted
   without a cleanup; renames count as adds (`--no-renames`), so a moved file is linted whole. Binary files have no
   hunks, and deleted files are filtered out.
