@@ -229,8 +229,8 @@ the server-side backstop. The design notes behind each check are in [`docs/gate.
 
 `hooks/lint.sh` checks the lines a diff adds for the slips agents leave behind (conflict markers, invisible
 characters, and the rules you write), with a message that says what to do instead. It checks only added lines, so
-existing code never fails. This is the engine: the commands below work today, and the hooks that run it as Claude edits
-and commits come in later changes.
+existing code never fails. This is the engine and its default rules: the commands below work today, and the hooks that
+run it as Claude edits and commits come in later changes.
 
 ```sh
 ~/.claude/hooks/lint.sh staged                    # the index against HEAD (against the empty tree before the first commit)
@@ -274,6 +274,23 @@ skip <glob> ...
   bidi-control characters, and a byte order mark anywhere but the start of the file).
 
 There are no inline disable comments: an exception is a path glob in a config file.
+
+**Default rules.** `hooks/lint-rules` ships these (`~/.claude/hooks/lint.sh rules <path>` shows what applies to a path).
+Each hit's message says what to do instead.
+
+| Rule | Level | Flags |
+|---|---|---|
+| `conflict-marker` | error | `<<<<<<< `, `>>>>>>> ` and `||||||| ` at the start of a line (coded rule, see above) |
+| `invisible-char` | error | zero-width, bidi-control and mid-file byte-order-mark characters (coded rule) |
+| `debug-leftover` | error | js/ts `debugger`; py `breakpoint()`, `pdb.set_trace(`, `import pdb`/`ipdb`; rb `binding.pry`, `binding.irb`, `byebug`; rs `dbg!(`. A line that is only a comment isn't flagged, and neither is a hit in a trailing comment (`breakpoint()  # note` is still a hit) or inside a quoted string. Approximate: the linter counts the quotes before the hit (double quotes only in rs), so an escaped quote or mixed quoting can miscount, a line with a quoted mention and a real statement is exempt, and a comment leader inside a string before a real hit (`"a # b"; breakpoint()`) hides it |
+| `placeholder` | error | comments such as `... rest of the code`, `existing code here`/`unchanged`, `TODO implement`, `your code here`, `implementation goes here` |
+| `narration` | warn | comments that start with `Added`, `Changed`, `Updated`, `Modified`, `Removed`, `Fixed`, `Moved`, `Renamed`, `Replaced`, `Refactored` or `New:`, or say `as requested` / `per your request` |
+| `new-suppression` | warn | `noqa`, `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, `type: ignore`, `pyright: ignore`, `shellcheck disable`, `nolint`, `rubocop:disable`, `#[allow(`, `@SuppressWarnings`, `NOSONAR`, `istanbul ignore`, `pragma: no cover`. Off for `*.md`, `*.mdx`, `*.txt`, `*.rst` and `*.adoc` |
+| `skipped-test` | warn | js/ts `.skip(`, `.only(`, `.skip.each(`, `.only.each(` (also as a tagged template) on a test declaration (`it`, `test`, `describe`, `context`, `suite`, `specify`, with modifiers like `test.concurrent.only(`; `cursor.skip(n)` is fine), `xit(`, `xdescribe(`, `fit(`, `fdescribe(`; py `@pytest.mark.skip`, `@unittest.skip`; go `t.Skip(`; rs `#[ignore]`; java/kt `@Disabled`. Conditional skips (`it.skipIf(`, `@pytest.mark.skipif`, `@unittest.skipIf`) are deliberate and aren't flagged. Code files only, so prose that mentions `.only(` is fine |
+| `todo-no-issue` | warn | `TODO`, `FIXME`, `XXX` or `HACK` in a comment with no `#123`, tracker key (`PROJ-123`) or link |
+| `new-comment` | off | every added comment except a shebang: turn it on with `new-comment warn` (or `error`) for a no-comments policy |
+
+Tune any of them in your own file, for example `new-suppression off tests/*`, `skipped-test error` or `* off`.
 
 ## Costs
 
