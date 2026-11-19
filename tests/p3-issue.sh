@@ -1,6 +1,7 @@
 #!/bin/sh
-# Tests how p3-issue.sh labels a finding's issue: by the default branch's per-file label map, a fallback type
-# label, only labels the repo has, and an opt-in milestone from the branch's PR or fixed issues (claude-ship #54).
+# Tests how p3-issue.sh labels a finding's issue: by the per-file label map of the slug's default branch (read from
+# GitHub, never from the checkout), a fallback type label, only labels the repo has, and an opt-in milestone from the
+# branch's PR or fixed issues (claude-ship #54).
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/tests/lib/gitenv.sh"
@@ -9,8 +10,10 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 # Its repos push to a local bare repo: nothing of the machine's git config (core.hooksPath above all) applies.
 isolate_git "$tmp"
-# The fake gh reads repo variables from V_<name>, labels from $tmp/labels, the PR's milestone from PR_MS and
-# issue N's from MS_<N>. `issue create` logs one argument per line to $tmp/args and fails on a milestone
+# The fake gh reads repo variables from V_<name>, labels from $tmp/labels, the slug's label map (what the contents
+# API serves) from $tmp/map, the PR's milestone from PR_MS and issue N's from MS_<N>. The map read answers 404 when
+# $tmp/map is missing and 500 when MAP_STATUS=500, in the shape of `gh api -i` (status line, headers, a blank line,
+# the body) and with a failing exit for any status but 200. `issue create` logs one argument per line to $tmp/args and fails on a milestone
 # named `closed` or the label `area:typo`, which the repo doesn't have.
 cat >"$tmp/bin/gh" <<EOF
 #!/bin/sh
@@ -18,6 +21,18 @@ case "\$1 \$2" in
 "variable get") eval "[ -n \"\\\${V_\$3+x}\" ] && echo \"\\\$V_\$3\"" ;;
 "repo view") echo main ;;
 "label list") cat "$tmp/labels" ;;
+"api -i")
+	case " \$* " in *" repos/acme/app/contents/.github/claude-ship/p3-labels "*) ;; *) exit 1 ;; esac
+	if [ "\${MAP_STATUS:-}" = 500 ]; then
+		printf 'HTTP/2.0 500 Internal Server Error\\r\\nContent-Type: application/json\\r\\n\\r\\n{"message":"Server Error"}\\n'
+		exit 1
+	fi
+	if [ ! -f "$tmp/map" ]; then
+		printf 'HTTP/2.0 404 Not Found\\r\\nContent-Type: application/json\\r\\n\\r\\n{"message":"Not Found"}\\n'
+		exit 1
+	fi
+	printf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/vnd.github.raw\\r\\n\\r\\n'
+	cat "$tmp/map" ;;
 "pr list") echo "\${PR_MS:-}" ;;
 "pr view")
 	# gh pr view <pr> -R slug --json milestone|commits --jq ...: PRV_MS is the PR's milestone, PRV_COMMITS its
@@ -35,7 +50,7 @@ case "\$1 \$2" in
 *) exit 1 ;;
 esac
 EOF
-# origin's URL stays GitHub's, so the fake git fetches from a local bare repo.
+# origin's URL stays GitHub's, so the fake git fetches from a local bare repo (for the milestone's commit range).
 cat >"$tmp/bin/git" <<EOF
 #!/bin/sh
 if [ "\$1 \$2 \$3" = "fetch -q origin" ]; then
@@ -48,11 +63,9 @@ chmod +x "$tmp/bin/gh" "$tmp/bin/git"
 printf '%s\n' review:p3 milestone:later area:core area:transport area:docs area:ci status:ready bug documentation >"$tmp/labels"
 fail=0
 
-# main has the label map; the branch feat (one commit) has a different one.
-repo=$tmp/repo
-git init -q -b main "$repo"
-mkdir -p "$repo/.github/claude-ship"
-cat >"$repo/.github/claude-ship/p3-labels" <<'EOF'
+# The slug's map, as GitHub serves it. The checkout's own maps (main's, and the branch feat's one commit ahead)
+# differ from it and must have no effect.
+cat >"$tmp/map" <<'EOF'
 # area by path
 crates/obdcracker-core/*        area:core
 crates/obdcracker-transport/*   area:transport
@@ -67,6 +80,10 @@ late/*                          area:docs,documentation
 
 *                               status:ready
 EOF
+repo=$tmp/repo
+git init -q -b main "$repo"
+mkdir -p "$repo/.github/claude-ship"
+echo '* area:checkout' >"$repo/.github/claude-ship/p3-labels"
 git -C "$repo" add -A
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m map
 git -C "$repo" remote add origin https://github.com/acme/app.git
@@ -97,7 +114,7 @@ expect() {
 }
 
 export V_CLAUDE_P3_LABELS=review:p3,milestone:later
-# Map labels add to the base ones; the branch's own map has no effect.
+# Map labels add to the base ones; the checkout's own maps have no effect.
 expect crates/obdcracker-core/src/x.rs review:p3,milestone:later,area:core,status:ready ''
 expect docs/a.md review:p3,milestone:later,area:docs,documentation,status:ready ''
 # A later rule's area replaces an earlier one (so an override goes after the broad rule); its other labels still
@@ -159,18 +176,12 @@ unset V_CLAUDE_P3_TYPE_LABEL
 	export V_CLAUDE_P3_LABELS=review:p3
 	printf '%s\n' review:p3 bug documentation area:gate area:action area:skill area:install area:docs \
 		priority:high priority:medium priority:low status:ready status:needs-decision >"$tmp/labels"
-	real=$tmp/real
-	git init -q -b main "$real"
-	mkdir -p "$real/.github/claude-ship"
-	cp "$root/.github/claude-ship/p3-labels" "$real/.github/claude-ship/p3-labels"
-	git -C "$real" add -A
-	git -C "$real" -c user.name=t -c user.email=t@t commit -q -m map
-	git -C "$real" remote add origin https://github.com/acme/app.git
-	git -C "$real" push -q -f "$tmp/origin.git" HEAD:refs/heads/main
+	cp "$tmp/map" "$tmp/map.orig"
+	cp "$root/.github/claude-ship/p3-labels" "$tmp/map"
 	git -C "$root" ls-files >"$tmp/paths"
 	while IFS= read -r path; do
 		jq -n --arg f "$path" '{file: $f, title: "t", body: "b"}' >"$tmp/finding.json"
-		if ! (cd "$real" && PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json") >"$tmp/out" 2>"$tmp/err"; then
+		if ! (cd "$repo" && PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json") >"$tmp/out" 2>"$tmp/err"; then
 			echo "FAIL: $path wasn't filed"
 			fail=1
 			continue
@@ -198,11 +209,42 @@ unset V_CLAUDE_P3_TYPE_LABEL
 			}
 		done
 	done <"$tmp/paths"
-	# Put the first repo's map back as origin's main for the milestone tests below.
-	git -C "$repo" push -q -f "$tmp/origin.git" main:refs/heads/main
 	exit "$fail"
 ) || fail=1
+mv "$tmp/map.orig" "$tmp/map"
 printf '%s\n' review:p3 milestone:later area:core area:transport area:docs area:ci status:ready bug documentation >"$tmp/labels"
+
+# The map is the slug's, whatever repo the checkout is: a checkout of another repository gets the slug's labels.
+other=$tmp/other
+git init -q -b main "$other"
+mkdir -p "$other/.github/claude-ship"
+echo '* area:other' >"$other/.github/claude-ship/p3-labels"
+git -C "$other" add -A
+git -C "$other" -c user.name=t -c user.email=t@t commit -q -m other
+git -C "$other" remote add origin https://github.com/acme/other.git
+P3_DIR=$other expect docs/a.md review:p3,milestone:later,area:docs,documentation,status:ready ''
+
+# A slug whose default branch has no map (a 404) files with the base labels alone.
+mv "$tmp/map" "$tmp/map.off"
+expect docs/a.md review:p3,milestone:later ''
+mv "$tmp/map.off" "$tmp/map"
+
+# A failed read (not a missing file) files nothing: it exits 1, says why and never runs `issue create`.
+rm -f "$tmp/args"
+jq -n '{file: "docs/a.md", title: "t", body: "b"}' >"$tmp/finding.json"
+if (cd "$repo" && MAP_STATUS=500 PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" acme/app "$tmp/finding.json") >"$tmp/out" 2>"$tmp/err"; then
+	echo "FAIL: a failed read of the label map still filed the issue"
+	fail=1
+fi
+grep -q "can't read p3-labels for acme/app" "$tmp/err" || {
+	echo "FAIL: the failed read wasn't reported"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+[ -e "$tmp/args" ] && {
+	echo "FAIL: a failed read of the label map still ran issue create"
+	fail=1
+}
 
 # Milestones only with CLAUDE_P3_MILESTONE=auto: the PR's, else the fixed issue's (#3), else none.
 PR_MS=X MS_3=Y expect src/x.c review:p3,milestone:later,status:ready ''

@@ -430,8 +430,13 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
   from the pushing checkout, so the branch is that checkout's. An optional third argument, the PR number, reads
   both from GitHub instead (`gh pr view`: the PR's own milestone, else the one milestone of the issues named by
   `fixes/closes/resolves #N` in its commits' messages, subject and body), so it gives the same answer from any
-  checkout of the repo (claude-ship #140; `codex-triage.sh` passes it). The label map is read from
-  `origin/<default>` either way, which is the same in every checkout of the repo.
+  checkout of the repo (claude-ship #140; `codex-triage.sh` passes it).
+- **The label map** is read from GitHub (`gh api repos/<slug>/contents/.github/claude-ship/p3-labels`, the default
+  branch's), never from the checkout, so it is the slug's whatever repo the cwd is (claude-ship #215). A 404 means
+  the repo has no map and the issue is filed with the base labels. Any other failed read (a 5xx, the rate limit,
+  no network) prints `p3-issue: can't read p3-labels for <slug>: …`, exits 1 and files nothing, since an issue
+  filed without its area and status labels never reaches the PR loop's queue (claude-ship #179). The status is
+  the response's own status line (`gh api -i`), not a match on the error text.
 - **Never lost to its labels.** If filing fails, it retries without the milestone, then without labels.
 
 ## `hooks/orchestrate-hint.sh`
