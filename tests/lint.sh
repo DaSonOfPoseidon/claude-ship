@@ -383,6 +383,26 @@ lacks posix-class 'fileA.txt:1: d'
 lacks posix-class 'skippedQx'
 elacks posix-class 'invalid regular expression'
 
+# A backslash makes the next glob character literal, wildcards included; a trailing backslash is a literal backslash.
+fixture
+install "ban q error file\\?.txt 'BAN' -- m
+ban s error star\\*.txt 'BAN' -- m
+ban b error trail\\ 'BAN' -- m"
+put 'file?.txt' 'BAN\n'
+put file.txt 'BAN\n'
+put 'star*.txt' 'BAN\n'
+put starx.txt 'BAN\n'
+put 'trail\' 'BAN\n'
+put trail 'BAN\n'
+lint staged
+want literal-glob 1
+has literal-glob 'file?.txt:1: q (error)'
+lacks literal-glob 'file.txt'
+has literal-glob 'star*.txt:1: s (error)'
+lacks literal-glob 'starx.txt'
+has literal-glob 'trail\:1: b (error)'
+lacks literal-glob 'trail:1:'
+
 # comment: matches the comment text only, by extension.
 fixture
 install "ban c error * comment 'TODO' -- c

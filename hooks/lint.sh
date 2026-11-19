@@ -126,7 +126,7 @@ function trim(s) {
 
 # glob2re: a shell case pattern as an anchored ERE. * spans /, ? is one character, [...] a class ([!a] negates).
 function esc(c) {
-	if (c != "" && index("\\.+(){}|^$[]", c) > 0) return "\\" c
+	if (c != "" && index("\\.+*?(){}|^$[]", c) > 0) return "\\" c
 	return c
 }
 function glob2re(g,   i, n, c, out, j, d, neg, k) {
@@ -163,8 +163,10 @@ function glob2re(g,   i, n, c, out, j, d, neg, k) {
 				i = d
 			}
 		} else if (c == "\\") {
+			# The next character is literal, even * and ?; a trailing backslash is a literal backslash.
 			i++
-			out = out esc(substr(g, i, 1))
+			if (i > n) out = out "\\\\"
+			else out = out esc(substr(g, i, 1))
 		} else out = out esc(c)
 	}
 	return out "$"
