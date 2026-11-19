@@ -666,7 +666,7 @@ x_dbm=d'bg!'
 put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\nlet %s$enabled = 1;\nlet $%s = 2;\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
 put d.py '%s()\nmy_%s()\npdb.%s()\nimport pdb\nimport ipdb\nimport pdbx\nx.%s()\n# %s()\nipdb.%s()\n' "$x_bp" "$x_bp" "$x_st" "$x_bp" "$x_bp" "$x_st"
 put d.rb '%s\n%s\nmy%s\n# %s\n' "$x_pry" "$x_bye" "$x_bye" "$x_bye"
-put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n' "$x_dbm" "$x_dbm" "$x_dbm"
+put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n*out = %s(x);\n * %s(x)\n' "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm"
 put d.md 'use %s; or %s()\n' "$x_dbg" "$x_bp"
 put d.sh '%s\n' "$x_dbg"
 lint staged
@@ -693,9 +693,11 @@ lacks debug 'd.rb:4:'
 has debug 'd.rs:1: debug-leftover (error): Remove the dbg! call;'
 lacks debug 'd.rs:2:'
 lacks debug 'd.rs:3:'
+has debug 'd.rs:4: debug-leftover (error)'
+lacks debug 'd.rs:5:'
 lacks debug 'd.md:'
 lacks debug 'd.sh:'
-has debug 'lint: 10 error(s), 0 warning(s)'
+has debug 'lint: 11 error(s), 0 warning(s)'
 
 # placeholder: error, in comments only (any language with comments; markdown has none).
 fixture
@@ -846,6 +848,9 @@ fixture
 put c.sh '#!/bin/sh\n# note\nx=1 # trailing\ny=2\n'
 put c.js 'const u = "http://x";\n// c\n'
 put c.md '# heading\n'
+put Makefile '# mk\n'
+put sub/makefile '# mk\n'
+put GNUmakefile '# mk\n'
 put c.rs '//! Module notes.\n/*! Api notes. */\nlet x = 1;\n'
 lint rules c.sh
 grep -E '^ +new-comment +off ' "$tmp/out" >/dev/null || {
@@ -868,6 +873,9 @@ has new-comment-on 'c.js:2: new-comment (warn)'
 has new-comment-on 'c.rs:1: new-comment (warn)'
 has new-comment-on 'c.rs:2: new-comment (warn)'
 lacks new-comment-on 'c.rs:3:'
+has new-comment-on 'Makefile:1: new-comment (warn)'
+has new-comment-on 'sub/makefile:1: new-comment (warn)'
+has new-comment-on 'GNUmakefile:1: new-comment (warn)'
 lacks new-comment-on 'c.md:'
 install "new-comment error"
 lint staged
