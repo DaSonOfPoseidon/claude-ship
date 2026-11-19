@@ -46,14 +46,16 @@ skip *.lock package-lock.json *.min.js *.min.css vendor/* node_modules/* *.svg
 # --- the hygiene set: slips agents leave behind. Messages say what to do instead of the slip. ---
 # POSIX ERE has no \b, so a word boundary is written (^|[^[:alnum:]_]) before and ([^[:alnum:]_]|$) after.
 
-# debug-leftover: a debugger or breakpoint left in code. Lines that are only a comment don't count, and neither does a
-# hit inside a quoted string: the `unless` also exempts a hit that follows an odd number of quotes ("..." and '...', plus
+# debug-leftover: a debugger or breakpoint left in code. Lines that are only a comment don't count, nor does a hit in a
+# trailing comment: the hit pattern may only start after code with no comment leader before it (` #` in py and rb; ` //`
+# and /* ... */ in js and rs, where `://` is not a leader). Neither does a hit inside a quoted string: the `unless` also exempts a hit that follows an odd number of quotes ("..." and '...', plus
 # `...` in js; not '...' in rs, where ' is a lifetime). Approximate: an escaped quote or mixed quoting on a line
-# can miscount, and a line with a quoted mention and a real statement is exempt as well.
-ban debug-leftover error *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])debugger[[:space:]]*([^[:alnum:]_$:"''[:space:]]|$)' unless '^[[:space:]]*(//|\*([[:space:]]|$)|\*/[[:space:]]*$|/\*([^*]|\*+[^*/])*(\**|\*+/[[:space:]]*)$)|^([^"]*"[^"]*")*[^"]*"[^"]*debugger|^([^'']*''[^'']*'')*[^'']*''[^'']*debugger|^([^`]*`[^`]*`)*[^`]*`[^`]*debugger' -- Remove the debugger statement; use a test or a log the code keeps.
-ban debug-leftover error *.py '(^|[^[:alnum:]_.])breakpoint\(\)|(^|[^[:alnum:]_])i?pdb\.set_trace\(|(^|[^[:alnum:]_])import[[:space:]]+i?pdb([^[:alnum:]_]|$)' unless '^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*(breakpoint\(\)|i?pdb\.set_trace\(|import[[:space:]]+i?pdb)|^([^'']*''[^'']*'')*[^'']*''[^'']*(breakpoint\(\)|i?pdb\.set_trace\(|import[[:space:]]+i?pdb)' -- Remove the debugger call; use a test or a log the code keeps.
-ban debug-leftover error *.rb '(^|[^[:alnum:]_])binding\.(pry|irb)([^[:alnum:]_]|$)|(^|[^[:alnum:]_.])byebug([^[:alnum:]_]|$)' unless '^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*(binding\.(pry|irb)|byebug)|^([^'']*''[^'']*'')*[^'']*''[^'']*(binding\.(pry|irb)|byebug)' -- Remove the debugger call; use a test or a log the code keeps.
-ban debug-leftover error *.rs '(^|[^[:alnum:]_])dbg!\(' unless '^[[:space:]]*(//|\*([[:space:]]|$)|\*/[[:space:]]*$|/\*([^*]|\*+[^*/])*(\**|\*+/[[:space:]]*)$)|^([^"]*"[^"]*")*[^"]*"[^"]*dbg!\(' -- Remove the dbg! call; use a test or a log the code keeps.
+# can miscount, a line with a quoted mention and a real statement is exempt as well, and a leader inside a string before
+# a real hit (`"a # b"; breakpoint()`, `"//x"; debugger;`) hides that hit.
+ban debug-leftover error *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '^([^/]|[*]/|/[^/*]|:[/][/]|/\*([^*]|\*+[^*/])*\*+/)*(^|[^[:alnum:]_$.])debugger[[:space:]]*([^[:alnum:]_$:"''[:space:]]|$)' unless '^[[:space:]]*(//|\*([[:space:]]|$)|\*/[[:space:]]*$|/\*([^*]|\*+[^*/])*(\**|\*+/[[:space:]]*)$)|^([^"]*"[^"]*")*[^"]*"[^"]*debugger|^([^'']*''[^'']*'')*[^'']*''[^'']*debugger|^([^`]*`[^`]*`)*[^`]*`[^`]*debugger' -- Remove the debugger statement; use a test or a log the code keeps.
+ban debug-leftover error *.py '^([^#]|[^[:space:]]#)*((^|[^[:alnum:]_.])breakpoint\(\)|(^|[^[:alnum:]_])i?pdb\.set_trace\(|(^|[^[:alnum:]_])import[[:space:]]+i?pdb([^[:alnum:]_]|$))' unless '^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*(breakpoint\(\)|i?pdb\.set_trace\(|import[[:space:]]+i?pdb)|^([^'']*''[^'']*'')*[^'']*''[^'']*(breakpoint\(\)|i?pdb\.set_trace\(|import[[:space:]]+i?pdb)' -- Remove the debugger call; use a test or a log the code keeps.
+ban debug-leftover error *.rb '^([^#]|[^[:space:]]#)*((^|[^[:alnum:]_])binding\.(pry|irb)([^[:alnum:]_]|$)|(^|[^[:alnum:]_.])byebug([^[:alnum:]_]|$))' unless '^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*(binding\.(pry|irb)|byebug)|^([^'']*''[^'']*'')*[^'']*''[^'']*(binding\.(pry|irb)|byebug)' -- Remove the debugger call; use a test or a log the code keeps.
+ban debug-leftover error *.rs '^([^/]|[*]/|/[^/*]|:[/][/]|/\*([^*]|\*+[^*/])*\*+/)*(^|[^[:alnum:]_])dbg!\(' unless '^[[:space:]]*(//|\*([[:space:]]|$)|\*/[[:space:]]*$|/\*([^*]|\*+[^*/])*(\**|\*+/[[:space:]]*)$)|^([^"]*"[^"]*")*[^"]*"[^"]*dbg!\(' -- Remove the dbg! call; use a test or a log the code keeps.
 
 # placeholder: a comment that stands in for code the agent didn't write.
 ban placeholder error * comment '\.\.\.[[:space:]]*([Tt]he )?[Rr]est of (the )?code|[Rr]est of (the )?code[[:space:]]*\.\.\.' -- Write the code the placeholder stands for, or delete the comment; don't leave a stub for someone else to fill in.
@@ -70,8 +72,10 @@ ban new-suppression warn * 'shellcheck[[:space:]]+disable|(^|[^[:alnum:]_])nolin
 new-suppression off *.md *.mdx *.txt *.rst *.adoc
 
 # skipped-test: a test left skipped or focused, including the parameterized form (it.only.each(...), test.skip.each`...`).
+# The receiver must be a test declaration (it, test, describe, context, suite, specify, with modifiers such as
+# test.concurrent.only), so a pagination call like cursor.skip(n) isn't flagged.
 # Conditional skips (skipIf, skipUnless) are deliberate and not flagged.
-ban skipped-test warn *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '\.(skip|only)(\.each)?[(`]|(^|[^[:alnum:]_$.])(xit|xdescribe|fit|fdescribe)\(' -- Make the test pass or delete it; a skipped test checks nothing and a focused one silently skips the rest.
+ban skipped-test warn *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])(it|test|describe|context|suite|specify)(\.[[:alnum:]_]+)*\.(skip|only)(\.each)?[(`]|(^|[^[:alnum:]_$.])(xit|xdescribe|fit|fdescribe)\(' -- Make the test pass or delete it; a skipped test checks nothing and a focused one silently skips the rest.
 ban skipped-test warn *.py '@pytest\.mark\.skip([^[:alnum:]_]|$)|@unittest\.skip([^[:alnum:]_]|$)' -- Make the test pass or delete it; a skipped test checks nothing.
 ban skipped-test warn *.go '(^|[^[:alnum:]_])t\.Skip(f|Now)?\(' -- Make the test pass or delete it; a skipped test checks nothing.
 ban skipped-test warn *.rs '#\[ignore(\]|[[:space:]]*=)' -- Make the test pass or delete it; an ignored test checks nothing.
