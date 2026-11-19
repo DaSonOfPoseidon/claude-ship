@@ -225,6 +225,56 @@ write, such as commits, refs, PRs, statuses, checks or settings, blocks. It catc
 and its state is protected by those patterns alone. Branch protection requiring the `codex-review` status is
 the server-side backstop. The design notes behind each check are in [`docs/gate.md`](docs/gate.md).
 
+## Hygiene lint
+
+`hooks/lint.sh` checks the lines a diff adds for the slips agents leave behind (conflict markers, invisible
+characters, and the rules you write), with a message that says what to do instead. It checks only added lines, so
+existing code never fails. This is the engine: the commands below work today, and the hooks that run it as Claude edits
+and commits come in later changes.
+
+```sh
+~/.claude/hooks/lint.sh staged                    # the index against HEAD (against the empty tree before the first commit)
+~/.claude/hooks/lint.sh diff origin/main...HEAD   # any range git diff takes
+~/.claude/hooks/lint.sh rules src/app.py          # the level of every rule for a path, and the config line that set it
+```
+
+Each hit prints as `path:line: rule (error|warn): <what to do instead>`, then the line (trimmed to 120 characters) and a
+summary. Exit 0 means clean or warnings only, 1 an error-level hit, 2 that it couldn't lint (callers refuse on 2).
+
+**Layers.** A later layer wins, line by line:
+
+1. `hooks/lint-rules`, the built-in defaults (deployed with the hooks and locked; its header is the grammar reference).
+2. `~/.claude/claude-ship/lint` (or `$CLAUDE_HOME/claude-ship/lint`), this install's file. `* off` turns the lint off.
+3. `.github/claude-ship/lint` in the repository, read with `git show` from the default branch (`origin/HEAD`, else
+   `origin/main`, `origin/master`, then `HEAD`; no network call), so a branch can't weaken its own lint. Outside git there is
+   no project layer.
+
+**Grammar.** One directive per line; `#` starts a comment at the start of a line. Globs are shell patterns on the
+repo-relative path (`*` spans `/`) and can't contain spaces.
+
+```
+<rule|*> <off|warn|error> [glob | !glob ...]
+ban <id> <level> <glob>[,<glob>...] [comment] '<ERE>' [unless '<ERE>'] -- <message>
+skip <glob> ...
+```
+
+- A settings line sets a rule's level (`*` is every rule) for the paths its globs match, or every path with no globs. The
+  last line that applies to a path wins. A path that matches a `!glob` gets `off` from that line.
+- A `ban` line is a rule of your own: a line matching the ERE is a hit unless it also matches the `unless` ERE. Its level
+  and globs also work as a settings line for `<id>`, and `ban` lines with one id are one rule with several patterns. With
+  `comment` the EREs match the comment text only. POSIX ERE has no `\b`; write `(^|[^[:alnum:]_])`.
+- `skip` names paths that are never linted, and adds up across layers. The default list is `*.lock`,
+  `package-lock.json`, `*.min.js`, `*.min.css`, `vendor/*`, `node_modules/*` and `*.svg`.
+- A malformed line (an unknown level, a `ban` with no ` -- `, an invalid ERE) prints `lint: <file>:<n>: ignored: <why>`
+  and is skipped, so a typo doesn't lock every repo.
+- Comment text depends on the file's extension and is approximate: `#` for sh, py, rb, yaml, toml and the like, `//` and
+  `/* */` lines for the C family, `--` for sql, lua and hs. Other extensions (md included) have no comments.
+- Two rules are coded, with a level only: `conflict-marker` (`<<<<<<< `, `>>>>>>> ` and `||||||| ` at the start of a
+  line, and a bare `=======` only when the file also adds a `<<<<<<<`) and `invisible-char` (zero-width and
+  bidi-control characters, and a byte order mark anywhere but the start of the file).
+
+There are no inline disable comments: an exception is a path glob in a config file.
+
 ## Costs
 
 Every reviewer run appends `{date, repo, head, stage, model, cost_usd, findings}` to

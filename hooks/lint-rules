@@ -1,0 +1,44 @@
+# claude-ship hygiene lint: the built-in defaults, read by hooks/lint.sh. Deployed next to it and locked like the other
+# hooks, so edit your own copy of a rule instead: ~/.claude/claude-ship/lint for this install, or
+# .github/claude-ship/lint in a repository (read from its default branch, so a branch can't weaken its own lint).
+# This file doubles as the reference for the grammar; README.md › Hygiene lint has the rest.
+#
+# Layers: this file, then the install's file, then the project's. A later layer wins, line by line.
+# Only lines a diff adds are checked, so existing code never fails. One directive per line; `#` starts a comment only
+# at the start of a line; blank lines are skipped. A malformed line is reported on stderr and skipped.
+# Globs are shell patterns that match the repo-relative path; `*` spans `/`. They can't contain spaces (use `?`).
+#
+#   <rule|*> <off|warn|error> [glob | !glob ...]
+#       Sets the level of a rule (`*` is every rule). The last line that applies to a path wins. No globs: every path.
+#       A path that matches a !glob gets `off` from that line, so `debug-leftover error !scripts/*` is error everywhere
+#       but under scripts/. Examples:
+#           new-suppression off tests/*
+#       and, in the install file, this turns the whole lint off (nothing may follow on the line):
+#           * off
+#
+#   ban <id> <off|warn|error> <glob>[,<glob>...] [comment] '<ERE>' [unless '<ERE>'] -- <message>
+#       A rule of your own: a line that matches the ERE (an extended regular expression, without \b: use
+#       (^|[^[:alnum:]_])) is a hit, unless it also matches the `unless` ERE. The ban's level and globs also act as a
+#       settings line for <id>, and several `ban` lines with one id are one rule with several patterns. With `comment`,
+#       the EREs match the line's comment text only (the text after `#`, `//` or `--` for the file's extension, or
+#       inside /* ... */); a line with no comment never matches. A single quote inside an ERE is written twice.
+#       The message says what to do instead. Example:
+#           ban no-print error *.py '(^|[^[:alnum:]_.])print\(' -- use the logging module, not print
+#
+#   skip <glob> ...
+#       Paths that are never linted. Skip lines add up across the layers.
+#
+# Comment text by extension (approximate: a leader inside a string counts, and unknown extensions have no comments):
+#   #   sh bash py rb pl r yaml yml toml conf, Makefile, Dockerfile
+#   //  js jsx ts tsx mjs cjs go rs c h cc cpp hpp java kt swift cs scala dart php (and /* ... */ block lines)
+#   --  sql lua hs
+#
+# Two rules are coded, not written as ban lines, so they only take a level here:
+#   conflict-marker  merge-conflict markers at the start of a line (and a bare ======= when the file adds a <<<<<<< too)
+#   invisible-char   zero-width, bidi-control and mid-file byte-order-mark characters
+# `./lint.sh rules <path>` shows the effective level of every rule for a path and the file:line that set it.
+
+conflict-marker error
+invisible-char error
+
+skip *.lock package-lock.json *.min.js *.min.css vendor/* node_modules/* *.svg
