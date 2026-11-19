@@ -663,7 +663,7 @@ x_st=set_'trace'
 x_pry=binding.p'ry'
 x_bye=bye'bug'
 x_dbm=d'bg!'
-put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
+put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\nlet %s$enabled = 1;\nlet $%s = 2;\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
 put d.py '%s()\nmy_%s()\npdb.%s()\nimport pdb\nimport ipdb\nimport pdbx\nx.%s()\n# %s()\nipdb.%s()\n' "$x_bp" "$x_bp" "$x_st" "$x_bp" "$x_bp" "$x_st"
 put d.rb '%s\n%s\nmy%s\n# %s\n' "$x_pry" "$x_bye" "$x_bye" "$x_bye"
 put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n' "$x_dbm" "$x_dbm" "$x_dbm"
@@ -675,6 +675,8 @@ has debug 'd.js:1: debug-leftover (error): Remove the debugger statement; use a 
 lacks debug 'd.js:2:'
 lacks debug 'd.js:3:'
 has debug 'd.js:4: debug-leftover (error)'
+lacks debug 'd.js:5:'
+lacks debug 'd.js:6:'
 has debug 'd.py:1: debug-leftover (error): Remove the debugger call;'
 lacks debug 'd.py:2:'
 has debug 'd.py:3: debug-leftover (error)'
@@ -791,7 +793,7 @@ has suppression 'lint: 0 error(s), 15 warning(s)'
 fixture
 x_sk='.sk''ip('
 x_on='.on''ly('
-put t.js 'it%s"a", f);\ndescribe%s"b", f);\n%s"c", f);\n%s"d", f);\n%s"e", f);\n%s"f", f);\nit.skipIf(c)("g", f);\nmodel.fit(x);\nbenefit(x);\n' "$x_sk" "$x_on" 'x''it(' 'x''describe(' 'f''it(' 'f''describe('
+put t.js 'it%s"a", f);\ndescribe%s"b", f);\n%s"c", f);\n%s"d", f);\n%s"e", f);\n%s"f", f);\nit.skipIf(c)("g", f);\nmodel.fit(x);\nbenefit(x);\n$%s"h", f);\n' "$x_sk" "$x_on" 'x''it(' 'x''describe(' 'f''it(' 'f''describe(' 'f''it('
 put t.py '@pytest.mark.%s\n@pytest.mark.%s(reason="x")\n@unittest.%s("x")\n@pytest.mark.skipif(c)\n@unittest.skipIf(c)\nx.skip(3)\n' 'sk''ip' 'sk''ip' 'sk''ip'
 put t.go 't.%s"x")\nt.%sf("x")\nt.%sNow()\nst.Skip("x")\n' 'Sk''ip(' 'Sk''ip' 'Sk''ip'
 put t.rs '#[%s]\n#[%s = "slow"]\n#[ignored]\n' 'ig''nore' 'ig''nore'
@@ -803,6 +805,7 @@ for l in 1 2 3 4 5 6; do has skipped "t.js:$l: skipped-test (warn): Make the tes
 lacks skipped 't.js:7:'
 lacks skipped 't.js:8:'
 lacks skipped 't.js:9:'
+lacks skipped 't.js:10:'
 for l in 1 2 3; do has skipped "t.py:$l: skipped-test (warn)"; done
 lacks skipped 't.py:4:'
 lacks skipped 't.py:5:'
@@ -843,6 +846,7 @@ fixture
 put c.sh '#!/bin/sh\n# note\nx=1 # trailing\ny=2\n'
 put c.js 'const u = "http://x";\n// c\n'
 put c.md '# heading\n'
+put c.rs '//! Module notes.\n/*! Api notes. */\nlet x = 1;\n'
 lint rules c.sh
 grep -E '^ +new-comment +off ' "$tmp/out" >/dev/null || {
 	echo "FAIL (new-comment-off): rules doesn't show new-comment off"
@@ -861,6 +865,9 @@ has new-comment-on 'c.sh:3: new-comment (warn)'
 lacks new-comment-on 'c.sh:4:'
 lacks new-comment-on 'c.js:1:'
 has new-comment-on 'c.js:2: new-comment (warn)'
+has new-comment-on 'c.rs:1: new-comment (warn)'
+has new-comment-on 'c.rs:2: new-comment (warn)'
+lacks new-comment-on 'c.rs:3:'
 lacks new-comment-on 'c.md:'
 install "new-comment error"
 lint staged

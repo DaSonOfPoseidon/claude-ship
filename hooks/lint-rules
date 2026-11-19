@@ -47,7 +47,7 @@ skip *.lock package-lock.json *.min.js *.min.css vendor/* node_modules/* *.svg
 # POSIX ERE has no \b, so a word boundary is written (^|[^[:alnum:]_]) before and ([^[:alnum:]_]|$) after.
 
 # debug-leftover: a debugger or breakpoint left in code. Lines that are only a comment don't count.
-ban debug-leftover error *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])debugger([^[:alnum:]_]|$)' unless '^[[:space:]]*(//|/\*|\*)' -- Remove the debugger statement; use a test or a log the code keeps.
+ban debug-leftover error *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])debugger([^[:alnum:]_$]|$)' unless '^[[:space:]]*(//|/\*|\*)' -- Remove the debugger statement; use a test or a log the code keeps.
 ban debug-leftover error *.py '(^|[^[:alnum:]_.])breakpoint\(\)|(^|[^[:alnum:]_])i?pdb\.set_trace\(|(^|[^[:alnum:]_])import[[:space:]]+i?pdb([^[:alnum:]_]|$)' unless '^[[:space:]]*#' -- Remove the debugger call; use a test or a log the code keeps.
 ban debug-leftover error *.rb '(^|[^[:alnum:]_])binding\.(pry|irb)([^[:alnum:]_]|$)|(^|[^[:alnum:]_.])byebug([^[:alnum:]_]|$)' unless '^[[:space:]]*#' -- Remove the debugger call; use a test or a log the code keeps.
 ban debug-leftover error *.rs '(^|[^[:alnum:]_])dbg!\(' unless '^[[:space:]]*(//|/\*|\*)' -- Remove the dbg! call; use a test or a log the code keeps.
@@ -67,7 +67,7 @@ ban new-suppression warn * 'shellcheck[[:space:]]+disable|(^|[^[:alnum:]_])nolin
 new-suppression off *.md *.mdx *.txt *.rst *.adoc
 
 # skipped-test: a test left skipped or focused. Conditional skips (skipIf, skipUnless) are deliberate and not flagged.
-ban skipped-test warn *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '\.(skip|only)\(|(^|[^[:alnum:]_.])(xit|xdescribe|fit|fdescribe)\(' -- Make the test pass or delete it; a skipped test checks nothing and a focused one silently skips the rest.
+ban skipped-test warn *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '\.(skip|only)\(|(^|[^[:alnum:]_$.])(xit|xdescribe|fit|fdescribe)\(' -- Make the test pass or delete it; a skipped test checks nothing and a focused one silently skips the rest.
 ban skipped-test warn *.py '@pytest\.mark\.skip([^[:alnum:]_]|$)|@unittest\.skip([^[:alnum:]_]|$)' -- Make the test pass or delete it; a skipped test checks nothing.
 ban skipped-test warn *.go '(^|[^[:alnum:]_])t\.Skip(f|Now)?\(' -- Make the test pass or delete it; a skipped test checks nothing.
 ban skipped-test warn *.rs '#\[ignore(\]|[[:space:]]*=)' -- Make the test pass or delete it; an ignored test checks nothing.
@@ -76,5 +76,7 @@ ban skipped-test warn *.java,*.kt '@Disabled([^[:alnum:]_]|$)' -- Make the test 
 # todo-no-issue: work promised with no issue to track it. TODO(#12), TODO(PROJ-12) and a link are fine.
 ban todo-no-issue warn * comment '(^|[^[:alnum:]_])(TODO|FIXME|XXX|HACK)([^[:alnum:]_]|$)' unless '#[0-9]+|(^|[^[:alnum:]_])[A-Z][A-Z0-9]+-[0-9]+|https?://' -- Link the work to an issue (TODO(#123) or a URL), or do it now.
 
-# new-comment: off by default. Turn it on (new-comment warn) to flag every added comment except a shebang.
-ban new-comment off * comment '.*' unless '^!' -- Remove the comment and make the code say it (a name, a smaller function, a test).
+# new-comment: off by default. Turn it on (new-comment warn) to flag every added comment except a shebang. A shebang is
+# only a comment in the # languages, so only those exempt text that starts with ! (a Rust //! doc comment is a comment).
+ban new-comment off *.sh,*.bash,*.py,*.rb,*.pl,*.r,*.R,*.yaml,*.yml,*.toml,*.conf,*Makefile,*Dockerfile comment '.*' unless '^!' -- Remove the comment and make the code say it (a name, a smaller function, a test).
+ban new-comment off *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs,*.go,*.rs,*.c,*.h,*.cc,*.cpp,*.hpp,*.java,*.kt,*.swift,*.cs,*.scala,*.dart,*.php,*.sql,*.lua,*.hs comment '.*' -- Remove the comment and make the code say it (a name, a smaller function, a test).
