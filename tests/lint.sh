@@ -669,8 +669,31 @@ put d.rb '%s\n%s\nmy%s\n# %s\n' "$x_pry" "$x_bye" "$x_bye" "$x_bye"
 put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n*out = %s(x);\n * %s(x)\n/* n */ %s(x);\n/* n %s(x) */\n' "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm"
 put d.md 'use %s; or %s()\n' "$x_dbg" "$x_bp"
 put d.sh '%s\n' "$x_dbg"
+# A trigger word inside a quoted string is text, not a statement. The check counts the quotes before the hit, so a line
+# whose quote count is even is code; a quoted mention plus a real statement on one line is exempt too (approximate).
+put q.js 'const a = "%s;";\nconst b = '"'"'a %s;'"'"';\nconst c = `a %s;`;\n"a"; %s;\n%s; // say "hi"\n"%s"; %s;\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
+put q.py 'h = "call %s() now"\nh = '"'"'call %s() now'"'"'\n"""call %s() now"""\nf("a"); %s()\nh = "pdb.%s()"\n' "$x_bp" "$x_bp" "$x_bp" "$x_bp" "$x_st"
+put q.rb 'puts "%s"\nputs '"'"'%s'"'"'\nputs "a"; %s\n' "$x_pry" "$x_bye" "$x_bye"
+put q.rs 'let h = "%s(x)";\nfn f(x: &'"'"'a str) { %s(x); }\nf("a"); %s(x);\n' "$x_dbm" "$x_dbm" "$x_dbm"
 lint staged
 want debug 1
+has debug 'q.js:4: debug-leftover (error)'
+has debug 'q.js:5: debug-leftover (error)'
+lacks debug 'q.js:1:'
+lacks debug 'q.js:2:'
+lacks debug 'q.js:3:'
+lacks debug 'q.js:6:'
+lacks debug 'q.py:1:'
+lacks debug 'q.py:2:'
+lacks debug 'q.py:3:'
+has debug 'q.py:4: debug-leftover (error)'
+lacks debug 'q.py:5:'
+lacks debug 'q.rb:1:'
+lacks debug 'q.rb:2:'
+has debug 'q.rb:3: debug-leftover (error)'
+lacks debug 'q.rs:1:'
+has debug 'q.rs:2: debug-leftover (error)'
+has debug 'q.rs:3: debug-leftover (error)'
 has debug 'd.js:1: debug-leftover (error): Remove the debugger statement; use a test or a log the code keeps.'
 lacks debug 'd.js:2:'
 lacks debug 'd.js:3:'
@@ -707,7 +730,7 @@ has debug 'd.rs:6: debug-leftover (error)'
 lacks debug 'd.rs:7:'
 lacks debug 'd.md:'
 lacks debug 'd.sh:'
-has debug 'lint: 16 error(s), 0 warning(s)'
+has debug 'lint: 22 error(s), 0 warning(s)'
 
 # placeholder: error, in comments only (any language with comments; markdown has none).
 fixture
@@ -805,7 +828,10 @@ has suppression 'lint: 0 error(s), 15 warning(s)'
 fixture
 x_sk='.sk''ip('
 x_on='.on''ly('
-put t.js 'it%s"a", f);\ndescribe%s"b", f);\n%s"c", f);\n%s"d", f);\n%s"e", f);\n%s"f", f);\nit.skipIf(c)("g", f);\nmodel.fit(x);\nbenefit(x);\n$%s"h", f);\n' "$x_sk" "$x_on" 'x''it(' 'x''describe(' 'f''it(' 'f''describe(' 'f''it('
+x_oe='.on''ly.each('
+x_se='.sk''ip.each('
+x_te='.on''ly.each`'
+put t.js 'it%s"a", f);\ndescribe%s"b", f);\n%s"c", f);\n%s"d", f);\n%s"e", f);\n%s"f", f);\nit.skipIf(c)("g", f);\nmodel.fit(x);\nbenefit(x);\n$%s"h", f);\nit%s[1])("i", f);\ntest%s[1])("j", f);\nit%sa | b`("k", f);\nit.each([1])("l", f);\n' "$x_sk" "$x_on" 'x''it(' 'x''describe(' 'f''it(' 'f''describe(' 'f''it(' "$x_oe" "$x_se" "$x_te"
 put t.py '@pytest.mark.%s\n@pytest.mark.%s(reason="x")\n@unittest.%s("x")\n@pytest.mark.skipif(c)\n@unittest.skipIf(c)\nx.skip(3)\n' 'sk''ip' 'sk''ip' 'sk''ip'
 put t.go 't.%s"x")\nt.%sf("x")\nt.%sNow()\nst.Skip("x")\n' 'Sk''ip(' 'Sk''ip' 'Sk''ip'
 put t.rs '#[%s]\n#[%s = "slow"]\n#[ignored]\n' 'ig''nore' 'ig''nore'
@@ -818,6 +844,10 @@ lacks skipped 't.js:7:'
 lacks skipped 't.js:8:'
 lacks skipped 't.js:9:'
 lacks skipped 't.js:10:'
+has skipped 't.js:11: skipped-test (warn)'
+has skipped 't.js:12: skipped-test (warn)'
+has skipped 't.js:13: skipped-test (warn)'
+lacks skipped 't.js:14:'
 for l in 1 2 3; do has skipped "t.py:$l: skipped-test (warn)"; done
 lacks skipped 't.py:4:'
 lacks skipped 't.py:5:'
@@ -831,7 +861,7 @@ has skipped 't.java:1: skipped-test (warn)'
 has skipped 't.java:2: skipped-test (warn)'
 lacks skipped 't.java:3:'
 lacks skipped 't.md:'
-has skipped 'lint: 0 error(s), 16 warning(s)'
+has skipped 'lint: 0 error(s), 19 warning(s)'
 
 # todo-no-issue: a warning, for a to-do marker comment with no issue number, tracker key or link.
 fixture

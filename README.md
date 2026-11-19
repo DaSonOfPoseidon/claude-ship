@@ -282,11 +282,11 @@ Each hit's message says what to do instead.
 |---|---|---|
 | `conflict-marker` | error | `<<<<<<< `, `>>>>>>> ` and `||||||| ` at the start of a line (coded rule, see above) |
 | `invisible-char` | error | zero-width, bidi-control and mid-file byte-order-mark characters (coded rule) |
-| `debug-leftover` | error | js/ts `debugger`; py `breakpoint()`, `pdb.set_trace(`, `import pdb`/`ipdb`; rb `binding.pry`, `binding.irb`, `byebug`; rs `dbg!(`. A line that is only a comment isn't flagged |
+| `debug-leftover` | error | js/ts `debugger`; py `breakpoint()`, `pdb.set_trace(`, `import pdb`/`ipdb`; rb `binding.pry`, `binding.irb`, `byebug`; rs `dbg!(`. A line that is only a comment isn't flagged, and neither is a hit inside a quoted string (the linter counts the quotes before it, double quotes only in rs, so an escaped quote or mixed quoting can miscount, and a line with a quoted mention and a real statement is exempt as well) |
 | `placeholder` | error | comments such as `... rest of the code`, `existing code here`/`unchanged`, `TODO implement`, `your code here`, `implementation goes here` |
 | `narration` | warn | comments that start with `Added`, `Changed`, `Updated`, `Modified`, `Removed`, `Fixed`, `Moved`, `Renamed`, `Replaced`, `Refactored` or `New:`, or say `as requested` / `per your request` |
 | `new-suppression` | warn | `noqa`, `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, `type: ignore`, `pyright: ignore`, `shellcheck disable`, `nolint`, `rubocop:disable`, `#[allow(`, `@SuppressWarnings`, `NOSONAR`, `istanbul ignore`, `pragma: no cover`. Off for `*.md`, `*.mdx`, `*.txt`, `*.rst` and `*.adoc` |
-| `skipped-test` | warn | js/ts `.skip(`, `.only(`, `xit(`, `xdescribe(`, `fit(`, `fdescribe(`; py `@pytest.mark.skip`, `@unittest.skip`; go `t.Skip(`; rs `#[ignore]`; java/kt `@Disabled`. Conditional skips (`it.skipIf(`, `@pytest.mark.skipif`, `@unittest.skipIf`) are deliberate and aren't flagged. Code files only, so prose that mentions `.only(` is fine |
+| `skipped-test` | warn | js/ts `.skip(`, `.only(` (and `.skip.each(`, `.only.each(`, also as a tagged template), `xit(`, `xdescribe(`, `fit(`, `fdescribe(`; py `@pytest.mark.skip`, `@unittest.skip`; go `t.Skip(`; rs `#[ignore]`; java/kt `@Disabled`. Conditional skips (`it.skipIf(`, `@pytest.mark.skipif`, `@unittest.skipIf`) are deliberate and aren't flagged. Code files only, so prose that mentions `.only(` is fine |
 | `todo-no-issue` | warn | `TODO`, `FIXME`, `XXX` or `HACK` in a comment with no `#123`, tracker key (`PROJ-123`) or link |
 | `new-comment` | off | every added comment except a shebang: turn it on with `new-comment warn` (or `error`) for a no-comments policy |
 
