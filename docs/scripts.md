@@ -289,8 +289,9 @@ of the status script ends the wait with its error.
 `agent-context.sh <marker>` prints how large a running subagent's context is, so the `ship-implementer` can hand a
 long fix round to a fresh one (#246; `agents/ship-implementer.md` › Handoff check, `orchestrate.md` step 4). A
 subagent doesn't know its own transcript, so it first writes a marker (`implementer-` and twelve hex digits) into a
-Bash command, which Claude Code keeps in `<projects>/<project>/<session>/subagents/agent-<id>.jsonl`
-(`$CLAUDE_PROJECTS_DIR` or `~/.claude/projects`). The script finds the one subagent transcript that holds the marker,
+Bash command. The digits come from `/dev/urandom` (`od -An -N6 -tx1`), not from the model's own pick: nine implementers
+picked the same one and the check then exited 1 (#271). Claude Code keeps the command's transcript in
+`<projects>/<project>/<session>/subagents/agent-<id>.jsonl` (`$CLAUDE_PROJECTS_DIR` or `~/.claude/projects`). The script finds the one subagent transcript that holds the marker,
 under every project (main-session transcripts and `.meta.json` files are not searched), and prints the prompt size of
 the last assistant request: input + cache read + cache write, with the write the larger of the total and the 5m + 1h
 split, as `token-report.sh` takes a request's size. Records are read in file order; lines that aren't JSON, records

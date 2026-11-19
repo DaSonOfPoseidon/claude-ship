@@ -51,10 +51,11 @@ finding costs a full extra round, so care here is cheaper than speed.
    later request, so keep exploration out of it. The exception is an answer marked `unsure:`: read the places it says
    it checked yourself (beyond the files you edit, for that question only), or, if that doesn't settle it, say so in
    the report.
-4. Mark your transcript, so the **Handoff check** can find it later: pick `implementer-` and twelve hex digits of
-   your own (not one that is in your prompt), and run `echo <that marker>` as a Bash command of its own, with the
-   marker written out in the command (not computed in it). Remember it for the Codex rounds. Skip this when the
-   orchestrator's message doesn't tell you to open the PR and run them.
+4. Mark your transcript, so the **Handoff check** can find it later. Run `od -An -N6 -tx1 /dev/urandom | tr -d ' \n'` as
+   a Bash command of its own: it prints twelve hex digits from the system's random source. Then run
+   `echo implementer-<those digits>` as a Bash command of its own, with the digits written out in the command (not
+   computed in it). Don't pick the digits yourself: a model's own pick repeats across agents (#271). Remember the
+   marker for the Codex rounds. Skip this when the orchestrator's message doesn't tell you to open the PR and run them.
 
 ## Implement
 
