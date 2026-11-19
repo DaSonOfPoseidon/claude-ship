@@ -11,6 +11,23 @@ mkdir -p "$tmp/bin" "$tmp/home"
 link_shfmt "$tmp/home"
 printf '#!/bin/sh\necho true\n' >"$tmp/bin/gh"
 chmod +x "$tmp/bin/gh"
+# The gate fetches origin's default branch (`git fetch -q origin ...`) once a push has no pass, and the fixtures' origin is a real
+# GitHub URL: that fetch would ask github.com for credentials, which once hung this test for minutes. Every case that gets that
+# far wants the fetch to fail, so a git ahead of the real one in PATH fails it at once. The cases that need a fetch to work
+# (rbin below) name a local repo instead of `origin`, which passes through.
+mkdir -p "$tmp/netbin"
+cat >"$tmp/netbin/git" <<EOF
+#!/bin/sh
+if [ "\$1 \$2 \$3" = "fetch -q origin" ]; then
+	echo "fatal: no network in tests/gate-push.sh" >&2
+	exit 128
+fi
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$tmp/netbin/git"
+PATH=$tmp/netbin:$PATH
+GIT_TERMINAL_PROMPT=0
+export PATH GIT_TERMINAL_PROMPT
 export HOME="$tmp/home"
 # The gate wants the pre-push check active before it lets a push through (docs/gate.md › Pre-push check).
 gate_git_hooks "$HOME"
@@ -124,14 +141,14 @@ gitcfg=$HOME/.gitconfig
 cp "$gitcfg" "$tmp/gitconfig.good"
 : >"$gitcfg"
 expect 2 'git push -u origin HEAD'
-grep -q "core.hooksPath is ''" "$tmp/err" && grep -q 'install.sh' "$tmp/err" || {
+grep -q "in $repo (core.hooksPath is '')" "$tmp/err" && grep -q 'install.sh' "$tmp/err" || {
 	echo "FAIL: the unset-hooksPath block lacks its advice"
 	sed 's/^/  /' "$tmp/err"
 	fail=1
 }
 git config -f "$gitcfg" core.hooksPath /elsewhere
 expect 2 'git push -u origin HEAD'
-grep -q "core.hooksPath is '/elsewhere'" "$tmp/err" || {
+grep -q "in $repo (core.hooksPath is '/elsewhere')" "$tmp/err" || {
 	echo "FAIL: the block doesn't name the other path"
 	sed 's/^/  /' "$tmp/err"
 	fail=1
@@ -223,6 +240,127 @@ jq -nc --arg c 'git push -u origin HEAD' --arg d "$repo" '{tool_name: "Bash", to
 	fail=1
 }
 cp "$tmp/gitconfig.good" "$gitcfg"
+# core.hooksPath is judged where git reads it, per checkout (claude-ship #241): with extensions.worktreeConfig a worktree's own
+# config.worktree beats the shared .git/config, so a shared `.husky` is no override in a worktree that sets the deployed path, and
+# a deployed shared value is no protection in one that sets `.husky`. A linked worktree of the session's repo:
+deployed=$HOME/.claude/git-hooks
+# A push in a repo the session's own is not (a `cd`), where the hook is off, names that repo and its value (claude-ship #239).
+fixture https://github.com/acme/app.git
+session_repo=$repo
+fixture https://github.com/acme/app.git
+git -C "$repo" config core.hooksPath .husky
+other=$repo
+repo=$session_repo
+expect 2 "cd $other && git push origin HEAD"
+grep -q "in $other (core.hooksPath is '.husky')" "$tmp/err" || {
+	echo "FAIL: the push-site block doesn't name the repo and its value"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+fixture https://github.com/acme/app.git
+main_repo=$repo
+git -C "$main_repo" worktree add -q "$tmp/wt1" -b wtbranch
+git -C "$main_repo" config extensions.worktreeConfig true
+git -C "$main_repo" config core.hooksPath .husky
+repo=$tmp/wt1
+expect 2 'ls'
+git -C "$repo" config --worktree core.hooksPath "$deployed"
+expect 0 'ls'
+expect 0 'git push -u origin HEAD'
+git -C "$main_repo" config core.hooksPath "$deployed"
+git -C "$repo" config --worktree core.hooksPath .husky
+expect 2 'ls'
+expect 2 'git push -u origin HEAD'
+grep -q "in $repo (core.hooksPath is '.husky')" "$tmp/err" || {
+	echo "FAIL: the block for a worktree's config.worktree doesn't name the worktree and its value"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+git -C "$repo" config --worktree --unset core.hooksPath
+expect 0 'ls'
+# An explicitly empty value is an override too, not "no override": its effective value is empty, and the empty one differs from the
+# deployed path all the same.
+git -C "$repo" config --worktree --unset core.hooksPath
+git -C "$main_repo" config core.hooksPath ""
+expect 2 'ls'
+expect 2 'git push -u origin HEAD'
+git -C "$main_repo" config core.hooksPath "$deployed"
+git -C "$repo" config --worktree core.hooksPath ""
+expect 2 'ls'
+git -C "$repo" config --worktree --unset core.hooksPath
+expect 0 'ls'
+git -C "$main_repo" config --unset core.hooksPath
+git -C "$main_repo" config --unset extensions.worktreeConfig
+# The same for the checkouts under the scan root: the main one and a linked worktree each count by their own value.
+git -C "$scan/husky" config extensions.worktreeConfig true
+git -C "$scan/husky" config core.hooksPath .husky
+expect 2 'ls'
+git -C "$scan/husky" config --worktree core.hooksPath "$deployed"
+expect 0 'ls'
+git -C "$scan/husky" config --worktree core.hooksPath ""
+expect 2 'ls'
+git -C "$scan/husky" config --worktree core.hooksPath "$deployed"
+git -C "$scan/husky" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
+git -C "$scan/husky" worktree add -q "$tmp/wt2" -b wtbranch2
+# A newer git copies the main checkout's config.worktree into a new worktree's: start wt2 with none of its own, whatever git does.
+rm -f "$scan/husky/.git/worktrees/wtbranch2/config.worktree" "$scan/husky/.git/worktrees/wt2/config.worktree"
+expect 2 'ls'
+git -C "$tmp/wt2" config --worktree core.hooksPath "$deployed"
+expect 0 'ls'
+git -C "$tmp/wt2" config --worktree core.hooksPath .husky
+git -C "$scan/husky" config core.hooksPath "$deployed"
+expect 2 'ls'
+git -C "$tmp/wt2" config --worktree --unset core.hooksPath
+expect 0 'ls'
+git -C "$scan/husky" worktree remove --force "$tmp/wt2"
+git -C "$scan/husky" config --unset core.hooksPath
+git -C "$scan/husky" config --unset extensions.worktreeConfig
+rm -f "$scan/husky/.git/config.worktree"
+expect 0 'ls'
+git -C "$main_repo" worktree remove --force "$tmp/wt1"
+repo=$main_repo
+# A global core.hooksPath set through an include or the system config is the global one all the same (claude-ship #224): the
+# gate takes the fast path for it, so GitHub is not asked for the repo's opt-in. A gh that is called fails the case.
+mkdir -p "$tmp/nogh"
+printf '#!/bin/sh\ntouch "%s/gh-called"\nexit 1\n' "$tmp" >"$tmp/nogh/gh"
+chmod +x "$tmp/nogh/gh"
+# expect_nogh <exit code>: `ls` in the current fixture, under the harness HOME's global config.
+expect_nogh() {
+	rm -f "$tmp/gh-called"
+	jq -nc --arg d "$repo" '{tool_name: "Bash", tool_input: {command: "ls"}, cwd: $d}' |
+		PATH=$tmp/nogh:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != "$1" ] || { [ "$1" = 0 ] && [ -e "$tmp/gh-called" ]; }; then
+		echo "FAIL (exit $rc, want $1; gh $([ -e "$tmp/gh-called" ] && echo called || echo "not called")): ls with the global config in $gitcfg"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+expect_nogh 0
+git config -f "$tmp/gitconfig.inc" core.hooksPath "$deployed"
+printf '[include]\n\tpath = %s\n' "$tmp/gitconfig.inc" >"$gitcfg"
+expect_nogh 0
+# A global value that is some other directory is no fast path: the repo is asked for (the failing gh blocks).
+git config -f "$tmp/gitconfig.inc" core.hooksPath /elsewhere
+expect_nogh 2
+cp "$tmp/gitconfig.good" "$gitcfg"
+# The system config counts when the global one sets nothing, and loses to a global value.
+: >"$tmp/gitconfig.empty"
+git config -f "$tmp/gitconfig.sys" core.hooksPath "$deployed"
+jq -nc --arg d "$repo" '{tool_name: "Bash", tool_input: {command: "ls"}, cwd: $d}' >"$tmp/ls.json"
+rm -f "$tmp/gh-called"
+GIT_CONFIG_GLOBAL=$tmp/gitconfig.empty GIT_CONFIG_SYSTEM=$tmp/gitconfig.sys PATH=$tmp/nogh:$PATH sh -c 'unset GIT_CONFIG_NOSYSTEM; exec sh "$0" <"$1"' "$root/hooks/review-gate.sh" "$tmp/ls.json" >/dev/null 2>"$tmp/err"
+[ $? = 0 ] && [ ! -e "$tmp/gh-called" ] || {
+	echo "FAIL: a deployed hooksPath in the system config didn't take the fast path"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+GIT_CONFIG_GLOBAL=$tmp/gitconfig.inc GIT_CONFIG_SYSTEM=$tmp/gitconfig.sys PATH=$tmp/bin:$PATH sh -c 'unset GIT_CONFIG_NOSYSTEM; exec sh "$0" <"$1"' "$root/hooks/review-gate.sh" "$tmp/ls.json" >/dev/null 2>"$tmp/err"
+[ $? = 2 ] || {
+	echo "FAIL: a global hooksPath elsewhere lost to the system config's"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
 # The gate starts a review only for a canonical push: one statement, `git push ARGS` or `cd DIR && git push ARGS` (or either
 # piped on), whose git command is the first of its pipeline. Anything else passes to the pre-push check (docs/gate.md ›
 # Command reading). A canonical push that the tree doesn't describe as the push shape blocks: a word that isn't literal text,

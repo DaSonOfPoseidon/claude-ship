@@ -276,6 +276,11 @@ review finds a new class.
   When a protection is a global layer, check its state where it lives (the config of every checkout, and the session's), for
   every command, instead of working out which repo a command means; a lookup that costs a network call goes behind the cheap
   local check (docs/gate.md › Pre-push check).
+- **A setting read file by file misses the precedence git applies.** The hooksPath scan reported every config file whose value
+  was not ours, so a worktree whose `config.worktree` (with `extensions.worktreeConfig`) set the deployed path was blocked for
+  the shared `.git/config`'s `.husky`, and a global value set through `include.path` failed a `grep` of `~/.gitconfig` and
+  sent every command to GitHub (claude-ship #241, #224). Where the effective value is what matters, ask git for it in the
+  checkout (`git -C <dir> config --get`, `--global --includes`), and keep the file scan only as the cheap filter in front.
 - **A notice about a setting must read the file the loop reads.** The hook's "no `## PR loop` section, running on defaults"
   notice first looked in `CLAUDE.md` too, so a section there silenced it although the GitHub loop reads settings only from
   `AGENTS.md` (orchestrate.md › Repo settings) and so ran on defaults unannounced (claude-ship #260). Take the file list from
