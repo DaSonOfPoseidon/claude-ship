@@ -581,6 +581,42 @@ to bare repos, with a stub `gh` and a stub `ps` for the process tree.
 never run. `autonomous` fails when `gh` is missing: the shell's `gh: not found` would otherwise match the "not found"
 that means a repo never opted in.
 
+## `hooks/lint.sh`
+
+The hygiene linter for added lines (README › Hygiene lint). POSIX `sh` plus one awk program, run with `LC_ALL=C`, and
+no GNU awk features (`tests/lint.sh` runs one scenario under gawk, mawk and busybox awk). `hooks/lint-rules` holds the
+built-in defaults and the grammar reference. The design choices:
+
+- **Added lines only.** The input is `git diff -U0 --diff-filter=ACMR --no-renames`, with the options that fix its
+  shape whatever the user's git config says (`a/` `b/` prefixes, no textconv, external diff, relative paths or
+  submodule lines). Line numbers come from the `@@ … +c,d @@` headers, and the counts decide where a hunk ends, so an
+  added line that reads `+++ b/x` or `@@` is content. Existing code never fails a commit, so a rule can be adopted
+  without a cleanup; renames count as adds (`--no-renames`), so a moved file is linted whole. Binary files have no
+  hunks, and deleted files are filtered out.
+- **The default branch's project file.** The project layer is read with `git show` from `origin/HEAD` (else
+  `origin/main`, `origin/master`, `HEAD`), not from the checkout: a branch that edits `.github/claude-ship/lint` changes
+  nothing until it is merged. The refs are local (no network call), so a stale fetch lints with the old file; the
+  last fallback, `HEAD`, only applies to a repo with no remote branch. Outside git there is no project layer, and
+  `rules` still works.
+- **Bad lines are skipped, git and awk failures are not.** A config typo prints a warning and the rest still applies,
+  because one bad line shouldn't lock every repo. A failed `git diff`, an unreadable layer file or an awk crash exits 2,
+  so the callers (Claude's commit check) refuse rather than pass unlinted code. Each ban's EREs are checked with
+  `grep -E` before awk sees them, since an invalid regex is fatal to awk (one `grep` for all of them, then one each
+  to find the bad ones); an invalid one is reported and its line skipped.
+- **Globs are `case` patterns.** awk has no `case`, so a glob is turned into an anchored ERE (`*` to `.*`, `?`, `[…]`
+  with `[!…]` negation, `\` escapes); the result matches what `case` does under `set -f`.
+- **awk finishes by writing a status file**, not an exit code: busybox awk exits 1 on its own errors, which would read as
+  an error-level hit.
+- **conflict-marker reads the diff twice** (`diff` and a copy): the first pass notes which files add a `<<<<<<<`, so the
+  second can report a bare `=======` in order, without buffering hits.
+- **invisible-char finds UTF-8 byte sequences** (U+200B–200F, 202A–202E, 2060–2064, 2066–2069, FEFF) with `index()` on
+  octal-escaped literals, so no awk's regex dialect or locale matters. A byte order mark at the start of the file's
+  first line is ordinary. Hits print with control characters replaced by `?`, so an added escape sequence can't act on
+  the terminal.
+- **Comment text is approximate.** The leader comes from the extension (`#`, `//` plus `/*` block lines, `--`); a line is
+  a comment if it starts with the leader or has the leader after whitespace, which a string literal can fool. It is
+  enough for rules like "no TODO without an issue", and a rule that needs more can match the whole line.
+
 ## `install.sh`
 
 Only `origin/main` is deployed, so what runs has passed review. That holds for the installer too: after
