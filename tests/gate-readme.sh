@@ -53,8 +53,26 @@ if [ "$want" != "$got" ]; then
 	echo "FAIL: settings/claude-ship.json registers a different hook than the README's snippet"
 	fail=1
 fi
-if [ "$(jq -c 'keys' "$dropin")" != '["hooks"]' ] || [ "$(jq -c '.hooks | keys' "$dropin")" != '["PreToolUse"]' ]; then
-	echo "FAIL: settings/claude-ship.json holds more than the gate's PreToolUse hook"
+if [ "$(jq -c 'keys' "$dropin")" != '["hooks"]' ] || [ "$(jq -c '.hooks | keys' "$dropin")" != '["PostToolUse","PreToolUse"]' ]; then
+	echo "FAIL: settings/claude-ship.json holds more than the gate's PreToolUse hook and the lint's PostToolUse hook"
+	fail=1
+fi
+# The lint's PostToolUse hook (hooks/lint.sh hook): the README's snippet and the drop-in register the same one, and it must not
+# block (no onFailure: PostToolUse can't undo the write, and a user without the install should only see a hook error).
+post=$(awk '
+	/^```json/ { inblock = 1; block = ""; next }
+	/^```/ { if (inblock && block ~ /PostToolUse/) { printf "%s", block; exit } inblock = 0; next }
+	inblock { block = block $0 "\n" }
+' "$root/README.md")
+if [ -z "$post" ]; then
+	echo "FAIL: no PostToolUse snippet in README.md"
+	fail=1
+elif [ "$(printf '%s' "$post" | jq -cS '.hooks.PostToolUse')" != "$(jq -cS '.hooks.PostToolUse' "$dropin")" ]; then
+	echo "FAIL: settings/claude-ship.json registers a different PostToolUse hook than the README's snippet"
+	fail=1
+fi
+if ! jq -e '.hooks.PostToolUse[0] | .matcher == "Write|Edit|MultiEdit" and (.hooks | length == 1) and (.hooks[0].command | test("lint[.]sh hook$")) and (.hooks[0] | has("onFailure") | not)' "$dropin" >/dev/null 2>&1; then
+	echo "FAIL: the drop-in's PostToolUse hook isn't lint.sh hook on Write|Edit|MultiEdit without onFailure"
 	fail=1
 fi
 

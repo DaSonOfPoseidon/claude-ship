@@ -11,16 +11,29 @@
 # Config layers, a later one winning line by line: hooks/lint-rules (next to this script), the install's
 # ${CLAUDE_HOME:-$HOME/.claude}/claude-ship/lint, and the project's .github/claude-ship/lint as it is on the default
 # branch (a branch can't weaken its own lint). The grammar is documented in hooks/lint-rules and the README.
+# `lint.sh hook` is the PostToolUse hook for Write, Edit and MultiEdit (JSON on stdin): it reports only the lines that edit
+# added, as {"decision":"block",...} for errors (warnings ride along as additionalContext) or as additionalContext for
+# warnings alone, prints nothing when the edit is clean, and always exits 0 (a failure of its own is an additionalContext
+# note, never a block: the write is already done).
 # Design notes: docs/scripts.md › hooks/lint.sh.
 set -uf
 LC_ALL=C
 export LC_ALL
 
 usage() {
-	echo "usage: lint.sh staged [--only <rule>] [--remote] | diff <range> | rules <path>" >&2
+	echo "usage: lint.sh staged [--only <rule>] [--remote] | diff <range> | rules <path> | hook" >&2
 	exit 2
 }
+# hook_note <text>: the hook's way to say something without blocking. Fixed text when jq is missing.
+hook_note() {
+	jq -cn --arg c "lint hook: $*" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $c}}' 2>/dev/null ||
+		printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"lint hook: could not run"}}'
+}
 die() {
+	if [ "${mode:-}" = hook ]; then
+		hook_note "$*"
+		exit 0
+	fi
 	echo "lint: $*" >&2
 	exit 2
 }
@@ -56,17 +69,53 @@ diff)
 	esac
 	;;
 rules) [ $# -eq 2 ] && [ -n "$2" ] || usage ;;
+hook) [ $# -eq 1 ] || usage ;;
 *) usage ;;
 esac
 
 here=$(cd "$(dirname "$0")" && pwd) || die "can't find the script's directory"
 t=$(mktemp -d) || die "mktemp failed"
 trap 'rm -rf "$t"' EXIT
-trap 'exit 2' HUP INT TERM
+if [ "$mode" = hook ]; then trap 'exit 0' HUP INT TERM; else trap 'exit 2' HUP INT TERM; fi
+
+# --- hook mode: what the tool call wrote (jq reads the JSON on stdin) ---
+# The rest runs in the file's own directory, so its repository (not the session's) gives the project layer.
+if [ "$mode" = hook ]; then
+	command -v jq >/dev/null 2>&1 || die "jq is not installed"
+	cat >"$t/in" || die "can't read its input"
+	jq -r '(.tool_input.file_path // ""), (.cwd // "")' "$t/in" >"$t/fields" 2>/dev/null || die "can't read its input as JSON"
+	hfp=$(sed -n 1p "$t/fields")
+	hcwd=$(sed -n 2p "$t/fields")
+	# Not a file tool call: nothing to lint.
+	[ -n "$hfp" ] || exit 0
+	[ -n "$hcwd" ] || hcwd=$PWD
+	case $hfp in
+	/*) ;;
+	*) hfp=$hcwd/$hfp ;;
+	esac
+	[ -f "$hfp" ] || exit 0
+	# The new text: content (Write), new_string (Edit) or each edits[].new_string (MultiEdit, read defensively), and the
+	# old text the same way; a field of another type is skipped. An edit may change only part of a line, so each new text
+	# becomes records that say how a file line may contain it: S (a one-line text: anywhere in the line), F (the first line
+	# of several: the line's end), M (a middle line: the whole line) and L (the last line: the line's start). A text with
+	# nothing in it (a deletion) can have exposed a violation anywhere, so it is the record A: every line is a candidate.
+	jq -r 'def recs: split("\n") as $a | if (($a | map(length) | add) // 0) == 0 then "A" elif ($a | length) == 1 then "S" + $a[0] else ("F" + $a[0]), ($a[1:-1][] | "M" + .), ("L" + $a[-1]) end;
+		[.tool_input | objects | (.content, .new_string, (.edits[]? | objects | .new_string))] | map(select(type == "string")) | .[] | recs' "$t/in" >"$t/new" 2>/dev/null || die "can't read its input as JSON"
+	jq -r '[.tool_input | objects | (.old_string, (.edits[]? | objects | .old_string))] | map(select(type == "string")) | join("\n")' "$t/in" >"$t/old" 2>/dev/null || die "can't read its input as JSON"
+	hcwdp=$(cd "$hcwd" 2>/dev/null && pwd -P) || hcwdp=
+	hbase=$(basename "$hfp")
+	cd "$(dirname "$hfp")" 2>/dev/null || die "can't enter the directory of $hfp"
+	hdirp=$(pwd -P)
+	LINT_OUT_E=$t/out_e
+	LINT_OUT_W=$t/out_w
+	export LINT_OUT_E LINT_OUT_W
+	: >"$LINT_OUT_E"
+	: >"$LINT_OUT_W"
+fi
 
 in_git=
 git rev-parse --git-dir >/dev/null 2>&1 && in_git=1
-if [ "$mode" != rules ] && [ -z "$in_git" ]; then
+if [ "$mode" != rules ] && [ "$mode" != hook ] && [ -z "$in_git" ]; then
 	die "not in a git repository"
 fi
 
@@ -80,7 +129,118 @@ if [ "$mode" != rules ]; then
 			diff -U0 --inter-hunk-context=0 --no-color --no-ext-diff --no-textconv --no-renames --diff-filter=ACMRT \
 			--ignore-submodules=all --src-prefix=a/ --dst-prefix=b/ "$@"
 	}
-	if [ "$mode" = staged ]; then
+	if [ "$mode" = hook ]; then
+		# The candidate lines are the file's lines that the new text contains (all of a line, or the part an edit changed). In
+		# a repo they are the ones the diff against HEAD adds (so an earlier, uncommitted edit's lines are not reported again,
+		# unless this edit repeats them). A file git doesn't track yet (and doesn't ignore) or a repo with no commit is whole;
+		# so is a file outside git, where an edit keeps only the new_string lines that old_string lacks.
+		hmode=whole
+		hnogit=
+		if [ -n "$in_git" ]; then
+			hrel=$(git rev-parse --show-prefix) || die "git failed"
+			hrel=$hrel$hbase
+			cp "$t/new" "$t/set" || die "can't write a temp file"
+			if git ls-files --error-unmatch -- "$hbase" >/dev/null 2>&1; then
+				if git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1; then hmode=added; fi
+			elif git check-ignore -q -- "$hbase" 2>/dev/null; then
+				exit 0
+			fi
+		else
+			case $hdirp in
+			"$hcwdp") hrel=$hbase ;;
+			"$hcwdp"/*) hrel=${hdirp#"$hcwdp"/}/$hbase ;;
+			*) hrel=${hdirp#/}/$hbase ;;
+			esac
+			cp "$t/new" "$t/set" || die "can't write a temp file"
+			hnogit=1
+		fi
+		if [ "$hmode" = added ]; then
+			gitd HEAD -- "$hbase" >"$t/raw" || die "git diff failed"
+		else
+			cp "$hbase" "$t/raw" || die "can't read $hfp"
+		fi
+		cat >"$t/hook.awk" <<'EOF'
+# Writes a diff of only the wanted lines: the added lines of a -U0 diff (HOOK_MODE=added), else the lines of the file,
+# that contain a record of the set (see the jq above). Outside git (HOOK_NOGIT=1) a record whose text is a line of
+# old_string is dropped. One hunk per line, so the line numbers are the file's own.
+function wanted(text,   i, n) {
+	if (everything || (text in whole)) return 1
+	for (i = 1; i <= ns; i++) if (index(text, subs[i]) > 0) return 1
+	n = length(text)
+	for (i = 1; i <= nf; i++) if (n >= length(firsts[i]) && substr(text, n - length(firsts[i]) + 1) == firsts[i]) return 1
+	for (i = 1; i <= nl; i++) if (substr(text, 1, length(lasts[i])) == lasts[i]) return 1
+	return 0
+}
+function emit(n, text) {
+	if (!hdr) {
+		print "diff --git a/" rel " b/" rel
+		print "+++ b/" rel
+		hdr = 1
+	}
+	print "@@ -0,0 +" n ",1 @@"
+	print "+" text
+}
+BEGIN {
+	rel = ENVIRON["HOOK_REL"]
+	diffmode = (ENVIRON["HOOK_MODE"] == "added")
+	setf = ENVIRON["HOOK_SET"]
+	oldf = ENVIRON["HOOK_OLD"]
+	nogit = (ENVIRON["HOOK_NOGIT"] == "1")
+}
+FILENAME == oldf {
+	oldl[$0] = 1
+	next
+}
+FILENAME == setf {
+	k = substr($0, 1, 1)
+	v = substr($0, 2)
+	if (k == "A") everything = 1
+	if (v == "" || (nogit && (v in oldl))) next
+	if (k == "S") subs[++ns] = v
+	else if (k == "F") firsts[++nf] = v
+	else if (k == "M") whole[v] = 1
+	else if (k == "L") lasts[++nl] = v
+	next
+}
+!diffmode {
+	if ($0 != "" && wanted($0)) emit(FNR, $0)
+	next
+}
+{
+	if (ro > 0 || rn > 0) {
+		c = substr($0, 1, 1)
+		if (c == "+") {
+			rn--
+			if (length($0) > 1 && wanted(substr($0, 2))) emit(ln, substr($0, 2))
+			ln++
+			next
+		}
+		if (c == "-") {
+			ro--
+			next
+		}
+		if (c == "\\") next
+		ro = 0
+		rn = 0
+	}
+	if (substr($0, 1, 4) == "@@ -") {
+		np = split(substr($0, 5), parts, " ")
+		if (np < 2 || substr(parts[2], 1, 1) != "+") next
+		o = parts[1]
+		w = substr(parts[2], 2)
+		ro = index(o, ",") ? substr(o, index(o, ",") + 1) + 0 : 1
+		if (index(w, ",")) {
+			rn = substr(w, index(w, ",") + 1) + 0
+			ln = substr(w, 1, index(w, ",") - 1) + 0
+		} else {
+			rn = 1
+			ln = w + 0
+		}
+	}
+}
+EOF
+		HOOK_REL=$hrel HOOK_MODE=$hmode HOOK_SET=$t/set HOOK_OLD=$t/old HOOK_NOGIT=$hnogit awk -f "$t/hook.awk" "$t/old" "$t/set" "$t/raw" >"$t/diff" || die "awk failed"
+	elif [ "$mode" = staged ]; then
 		if git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1; then
 			base=HEAD
 		else
@@ -608,7 +768,9 @@ function hit(rule, level, msg, text) {
 	if (only != "" && rule != only) return
 	if (rule in here) return
 	here[rule] = 1
-	printf "%s:%d: %s (%s): %s\n    %s\n", path, ln, rule, level, msg, clip(text)
+	# hook mode splits the hits by level into two files, which the shell turns into the hook's JSON.
+	if (m == "hook") printf "%s:%d: %s (%s): %s\n    %s\n", path, ln, rule, level, msg, clip(text) > ((level == "error") ? ENVIRON["LINT_OUT_E"] : ENVIRON["LINT_OUT_W"])
+	else printf "%s:%d: %s (%s): %s\n    %s\n", path, ln, rule, level, msg, clip(text)
 	if (level == "error") nerr++
 	else nwarn++
 }
@@ -765,7 +927,7 @@ BEGIN {
 END {
 	if (!cfg_done) finish_cfg()
 	if (m == "rules") report_rules()
-	else if (nerr + nwarn > 0) printf "lint: %d error(s), %d warning(s)\n", nerr, nwarn
+	else if (nerr + nwarn > 0 && m != "hook") printf "lint: %d error(s), %d warning(s)\n", nerr, nwarn
 	print nerr + 0 > ENVIRON["LINT_STATUS"]
 	close(ENVIRON["LINT_STATUS"])
 }
@@ -789,5 +951,17 @@ errs=$(cat "$t/status")
 case $errs in
 '' | *[!0-9]*) die "awk gave a bad status" ;;
 esac
+if [ "$mode" = hook ]; then
+	# Errors block, with the warnings riding along as context; warnings alone are context; a clean edit prints nothing.
+	hreason=$(cat "$t/out_e")
+	hwarn=$(cat "$t/out_w")
+	if [ -n "$hreason" ]; then
+		jq -cn --arg r "$hreason
+Fix these now: the pre-commit check refuses a commit that adds them." --arg w "$hwarn" '{decision: "block", reason: $r} + (if $w == "" then {} else {hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $w}} end)' || die "jq failed"
+	elif [ -n "$hwarn" ]; then
+		jq -cn --arg w "$hwarn" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $w}}' || die "jq failed"
+	fi
+	exit 0
+fi
 [ "$errs" -eq 0 ] || exit 1
 exit 0

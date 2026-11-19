@@ -161,6 +161,8 @@ The drop-in applies to every Claude Code user of the machine, and its hook is `~
 the session. On a machine with other Claude Code users, run `./install.sh` for each of them first (`CLAUDE_HOME=<their
 ~/.claude>`), or remove the drop-in (`sudo chattr -i /etc/claude-code /etc/claude-code/managed-settings.d /etc/claude-code/managed-settings.d/claude-ship.json`, then delete the file) and keep the gate in user
 settings: a user without the gate installed gets every matching tool call blocked, since the hook is missing and fails closed.
+The drop-in also registers the hygiene lint's edit hook, `~/.claude/hooks/lint.sh hook`, for the same users; it has no
+`onFailure`, so for a user without the install it only shows a non-blocking hook error after each file edit.
 
 After installing, restart Claude Code and check that `/status` lists "Enterprise managed settings (drop-ins)". The
 drop-in has the same hook as the snippet below, so while you keep that snippet, Claude Code runs the gate once; once
@@ -183,6 +185,17 @@ and blocks every call without it.
 `./install.sh` checks this entry after deploying and prints what to change (the entry above, plus a warning for each
 value that differs); it never edits `settings.json`. A gate registered in the drop-in counts: without the entry above it
 reports the drop-in instead of failing.
+
+The hygiene lint also checks each file edit as Claude makes it (Hygiene lint, below). The drop-in has this hook too; in
+`~/.claude/settings.json` it is:
+
+```json
+{"hooks": {"PostToolUse": [{"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "~/.claude/hooks/lint.sh hook", "timeout": 30}]}]}}
+```
+
+It has no `onFailure` on purpose: it runs after the write, so it can't undo it, and a failure of its own must never block.
+`./install.sh` also creates `~/.claude/claude-ship/lint` (a commented header, no rules) when it is missing, and never
+overwrites or locks it; that is the file you edit to tune the lint for this install.
 
 For orchestrated mode, also register the hint hook:
 
@@ -277,6 +290,16 @@ skip <glob> ...
   bidi-control characters, and a byte order mark anywhere but the start of the file).
 
 There are no inline disable comments: an exception is a path glob in a config file.
+
+**Claude's edits.** A `PostToolUse` hook (`lint.sh hook`, registered in the drop-in and in the Install section's snippet) runs
+after every Write, Edit and MultiEdit and reports only the lines that edit added: a file's lines the diff against `HEAD` adds
+(the whole file when git doesn't track it yet, or outside git, where an edit counts the `new_string` lines that `old_string`
+lacks), and only those that contain the edit's new text (also when the edit changed just part of a line), so earlier
+edits aren't reported again. An edit that deletes text can expose a violation anywhere, so it checks every added line. An error-level hit comes
+back to Claude as feedback to act on (`"decision": "block"` with the hits and "Fix these now: the pre-commit check refuses
+a commit that adds them"; the file is already written), a warning as extra context, and a clean edit prints nothing. It always exits 0: the write has
+happened, and a failure of its own becomes a note, never a block. Files git ignores and files under `skip` are not
+linted. Reviewer sessions have only Read, Grep and Glob, so the hook never runs in them.
 
 **Claude's commits.** The `pre-commit` stub (`hooks/git-hook.sh`) runs `lint.sh staged --remote` when Claude commits (the
 same test as the pre-push check: `CLAUDE_CODE_CHILD_SESSION=1` or a `claude` ancestor). An error-level hit refuses the
