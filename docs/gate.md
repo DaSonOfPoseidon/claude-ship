@@ -224,6 +224,14 @@ way (a script, a compound command, `bash -c`, a wrapper) would reach an opted-in
 Claude's push of a commit with no `.pass` or `.waived` in the review state, whatever started the push. It is a backstop
 for the gate, not a second reviewer: it only reads the state the gate writes (and the user's waiver).
 
+**Commits too.** The same stubs lint Claude's commits: `pre-commit` runs `hooks/lint.sh staged --remote` before the repo's own
+hook and refuses the commit on an error-level hit (README › Hygiene lint). It uses the detection below, unchanged: one function
+serves both hooks. It is a hygiene check, not part of the review, so a hit that is wrong goes to the user (`! git commit
+--no-verify`, or an exclude in the default branch's `.github/claude-ship/lint` or `~/.claude/claude-ship/lint`), and Claude
+must not skip the check itself (`--no-verify`; the gate's denial of it for commits is a separate change, #269). A lint that is missing or can't run refuses (fail closed); offline, the
+project rules come from the local refs instead of GitHub, with a note. The user's own commits are untouched. Design:
+[`scripts.md`](scripts.md#hooksgit-hooksh-and-hooksgate-commonsh).
+
 **Whose pushes.** The check applies to Claude's pushes only, so the user's own pushes are untouched. A push is Claude's when
 `CLAUDE_CODE_CHILD_SESSION` is `1` (the variable Claude Code sets for the processes it starts; the npm install runs as
 `node`, so the process name alone would miss it) or a process named `claude` is among the hook's ancestors (walked with

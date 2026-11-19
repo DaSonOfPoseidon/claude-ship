@@ -139,10 +139,11 @@ same section.
 
 `./install.sh` also sets git's global `core.hooksPath` to `~/.claude/git-hooks` when it is unset (any other value is left
 alone and makes the exit non-zero: the gate blocks pushes until it is ours). The stubs there run a pre-push check on
-Claude's pushes: a commit with no passing review is refused, however the push started (docs/gate.md › Pre-push check).
+Claude's pushes: a commit with no passing review is refused, however the push started (docs/gate.md › Pre-push check). The
+`pre-commit` stub lints Claude's commits too and refuses one that adds an error-level hit (Hygiene lint, below).
 Git stops running a repo's own `.git/hooks` once `core.hooksPath` is set, so each stub also runs the repo's hook of the same
-name. Your own pushes are untouched, but a command you run with `!` inside Claude Code counts as Claude's: `! git push
---no-verify` skips the check.
+name. Your own pushes and commits are untouched, but a command you run with `!` inside Claude Code counts as Claude's: `! git push
+--no-verify` and `! git commit --no-verify` skip the checks.
 
 Run `./install.sh` as root, for your own `~/.claude`: if you are root that is just `./install.sh`; otherwise use
 `sudo --preserve-env=HOME ./install.sh` (a plain `sudo` may make `$HOME` root's, and the gate would be installed into
@@ -229,13 +230,14 @@ the server-side backstop. The design notes behind each check are in [`docs/gate.
 
 `hooks/lint.sh` checks the lines a diff adds for the slips agents leave behind (conflict markers, invisible
 characters, and the rules you write), with a message that says what to do instead. It checks only added lines, so
-existing code never fails. This is the engine and its default rules: the commands below work today, and the hooks that
-run it as Claude edits and commits come in later changes.
+existing code never fails. The git `pre-commit` stub runs it on every commit Claude makes and refuses the commit on an
+error-level hit (below); the commands work from a shell too.
 
 ```sh
 ~/.claude/hooks/lint.sh staged                    # the index against HEAD (against the empty tree before the first commit)
 ~/.claude/hooks/lint.sh diff origin/main...HEAD   # any range git diff takes
 ~/.claude/hooks/lint.sh rules src/app.py          # the level of every rule for a path, and the config line that set it
+~/.claude/hooks/lint.sh staged --only debug-leftover   # report one rule only (--remote: see Claude's commits, below)
 ```
 
 Each hit prints as `path:line: rule (error|warn): <what to do instead>`, then the line (trimmed to 120 characters) and a
@@ -274,6 +276,16 @@ skip <glob> ...
   bidi-control characters, and a byte order mark anywhere but the start of the file).
 
 There are no inline disable comments: an exception is a path glob in a config file.
+
+**Claude's commits.** The `pre-commit` stub (`hooks/git-hook.sh`) runs `lint.sh staged --remote` when Claude commits (the
+same test as the pre-push check: `CLAUDE_CODE_CHILD_SESSION=1` or a `claude` ancestor). An error-level hit refuses the
+commit and lists the hits; warnings print and the commit goes on; the repo's own pre-commit runs after a clean lint. Your
+own commits are never linted. Fix the hits; if one is wrong, commit it yourself with `! git commit --no-verify` (Claude
+must not skip it), or add an exclude (for example `debug-leftover off scripts/*`) to the default branch's
+`.github/claude-ship/lint` or to `~/.claude/claude-ship/lint`. `--remote` reads the project file from GitHub's default branch,
+not a local ref, so `git remote set-head` or `update-ref` can't point it at the branch; if GitHub can't be read (offline, no
+`gh`, a non-GitHub origin) it uses the local refs and says so on stderr. During a merge, cherry-pick or revert only
+`conflict-marker` is checked, since the other side's code isn't Claude's. A missing or broken `lint.sh` refuses the commit.
 
 **Default rules.** `hooks/lint-rules` ships these (`~/.claude/hooks/lint.sh rules <path>` shows what applies to a path).
 Each hit's message says what to do instead.

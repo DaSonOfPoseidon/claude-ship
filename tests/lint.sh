@@ -651,6 +651,177 @@ want bad-range 2
 lint rules
 want usage-rules 2
 
+# --- staged --only <rule>: that rule's hits and exit status; the other rules are ignored ---
+fixture
+put m.txt '%s HEAD\n' "$(mk LLLLLLL)"
+put d.js '%s;\n' "debug"'ger'
+put n.js '// Ad''ded a thing\n'
+lint staged
+want only-all 1
+has only-all 'm.txt:1: conflict-marker (error)'
+has only-all 'd.js:1: debug-leftover (error)'
+has only-all 'n.js:1: narration (warn)'
+lint staged --only conflict-marker
+want only-cm 1
+has only-cm 'm.txt:1: conflict-marker (error)'
+lacks only-cm 'd.js'
+lacks only-cm 'n.js'
+has only-cm 'lint: 1 error(s), 0 warning(s)'
+# A warning-only rule: the error-level hits of other rules neither print nor fail it.
+lint staged --only narration
+want only-warn 0
+has only-warn 'n.js:1: narration (warn)'
+lacks only-warn 'conflict-marker'
+lacks only-warn 'd.js'
+has only-warn 'lint: 0 error(s), 1 warning(s)'
+lint staged --only no-such-rule
+want only-unknown 0
+lacks only-unknown 'lint:'
+lint staged --only debug-leftover --remote
+want only-order 1
+lint staged --remote --only debug-leftover
+want only-order2 1
+lint staged --only
+want usage-only-missing 2
+lint staged --only ''
+want usage-only-empty 2
+lint staged --only 'a b'
+want usage-only-space 2
+lint staged --bogus
+want usage-staged-option 2
+lint diff HEAD --remote
+want usage-diff-remote 2
+lint rules x --remote
+want usage-rules-remote 2
+
+# --- staged --remote: the project file from GitHub's default branch, not from a local ref ---
+# A fake gh answers `gh api -i repos/<slug>/contents/.github/claude-ship/lint` by $GH_LINT: 200 (the body is $GH_FILE),
+# 404, 500, or cut (a 200 whose body stops short and gh exits 1); anything else fails with no output.
+mkdir -p "$tmp/bin" "$tmp/nogh"
+cat >"$tmp/bin/gh" <<'EOF'
+#!/bin/sh
+echo "$*" >>"$GH_LOG"
+case ${GH_LINT:-} in
+200) printf 'HTTP/2.0 200 OK\r\nContent-Type: application/vnd.github.raw\r\n\r\n'; cat "$GH_FILE" ;;
+404) printf 'HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n\r\n{"message":"Not Found"}\n'; exit 1 ;;
+500) printf 'HTTP/2.0 500 Internal Server Error\r\nContent-Type: application/json\r\n\r\n{"message":"Server Error"}\n'; exit 1 ;;
+cut) printf 'HTTP/2.0 200 OK\r\nContent-Type: application/vnd.github.raw\r\n\r\nt er'; exit 1 ;;
+*) exit 1 ;;
+esac
+EOF
+chmod +x "$tmp/bin/gh"
+# The tools lint.sh needs and nothing else, so `gh` is not found.
+for c in sh git sed awk tr mktemp cat paste grep sort cp rm dirname mkdir; do
+	ln -sf "$(command -v $c)" "$tmp/nogh/$c"
+done
+GH_LOG=$tmp/gh.log
+GH_FILE=$tmp/ghfile
+export GH_LOG GH_FILE
+
+# rlint <args>: lint with the fake gh first on PATH ($rpath replaces the PATH).
+rlint() {
+	(cd "$repo" && PATH=${rpath:-$tmp/bin:$PATH} sh "$lint_sh" "$@") >"$tmp/out" 2>"$tmp/err"
+	rc=$?
+}
+
+# rfixture <origin URL>: the fixture with origin at a GitHub URL (the bare repo stands behind it), the install file
+# making `t` a warning, and a tampered default branch: the branch commits a project file that turns the lint off and
+# points origin/main at that commit, so the local read of the project layer says `* off`.
+rfixture() {
+	fixture
+	git -C "$repo" config url."$tmp/origin.git".insteadOf "$1"
+	git -C "$repo" remote set-url origin "$1"
+	install "ban t warn * 'BAN' -- remove BAN"
+	mkdir -p "$repo/.github/claude-ship"
+	printf '* off\n' >"$repo/.github/claude-ship/lint"
+	git -C "$repo" add -A
+	git -C "$repo" commit -q -m tamper
+	git -C "$repo" update-ref refs/remotes/origin/main HEAD
+	printf 'BAN\n' >"$repo/a.txt"
+	git -C "$repo" add -A
+	: >"$GH_LOG"
+	rpath=
+	GH_LINT=
+	export GH_LINT
+}
+
+# The local read is fooled, and says so nowhere: this is the state the remote read is for.
+rfixture https://github.com/o/r.git
+lint staged
+want remote-tampered-local 0
+lacks remote-tampered-local 'a.txt'
+# A 200 wins over the tampered local ref, with the request made against the repo's default branch (no ref).
+printf 't error\n' >"$tmp/ghfile"
+GH_LINT=200 rlint staged --remote
+want remote-200 1
+has remote-200 'a.txt:1: t (error)'
+elacks remote-200 'not GitHub'
+grep -qx 'api -i repos/o/r/contents/.github/claude-ship/lint -H Accept: application/vnd.github.raw' "$tmp/gh.log" || {
+	echo "FAIL (remote-200): the request was not the plain default-branch read"
+	sed 's/^/  gh.log: /' "$tmp/gh.log"
+	fail=1
+}
+GH_LINT=200 rlint staged --remote --only t
+want remote-200-only 1
+# A 200 with an empty file is a project layer with nothing in it: the install file's warning stands.
+: >"$tmp/ghfile"
+GH_LINT=200 rlint staged --remote
+want remote-200-empty 0
+has remote-200-empty 'a.txt:1: t (warn)'
+# A 404: no project layer, whatever the local ref says.
+GH_LINT=404 rlint staged --remote
+want remote-404 0
+has remote-404 'a.txt:1: t (warn)'
+elacks remote-404 'not GitHub'
+# A 500, a response cut short and an unreadable answer: the local refs, with one note that says why.
+GH_LINT=500 rlint staged --remote
+want remote-500 0
+lacks remote-500 'a.txt'
+ehas remote-500 'lint: project rules read from origin/main, not GitHub: HTTP/2.0 500 Internal Server Error Server Error'
+GH_LINT="cut" rlint staged --remote
+want remote-cut 0
+ehas remote-cut 'not GitHub: HTTP/2.0 200 OK (the response was cut short)'
+GH_LINT=other rlint staged --remote
+want remote-nothing 0
+ehas remote-nothing 'not GitHub: no response from gh'
+# No gh at all.
+rpath=$tmp/nogh
+rlint staged --remote
+want remote-no-gh 0
+ehas remote-no-gh 'lint: project rules read from origin/main, not GitHub: gh is not installed'
+# The ssh form of the origin URL names the same repository.
+rfixture git@github.com:o/r.git
+printf 't error\n' >"$tmp/ghfile"
+GH_LINT=200 rlint staged --remote
+want remote-ssh 1
+grep -q 'repos/o/r/contents' "$tmp/gh.log" || {
+	echo "FAIL (remote-ssh): gh wasn't asked about o/r"
+	fail=1
+}
+# A GitHub URL that doesn't parse, and an origin that isn't GitHub at all: the local refs, and gh isn't called.
+rfixture https://github.com/o
+GH_LINT=200 rlint staged --remote
+want remote-bad-url 0
+ehas remote-bad-url "not GitHub: can't read the GitHub repo in the remote URL https://github.com/o"
+rfixture https://example.com/o/r.git
+GH_LINT=200 rlint staged --remote
+want remote-other-host 0
+ehas remote-other-host 'not GitHub: origin is not a GitHub repository'
+[ ! -s "$tmp/gh.log" ] || {
+	echo "FAIL (remote-other-host): gh was called for a non-GitHub origin"
+	fail=1
+}
+# Without --remote nothing talks to GitHub, and no note is printed.
+rfixture https://github.com/o/r.git
+GH_LINT=200 rlint staged
+want local-only 0
+elacks local-only 'not GitHub'
+[ ! -s "$tmp/gh.log" ] || {
+	echo "FAIL (local-only): gh was called without --remote"
+	fail=1
+}
+rpath=
+
 # --- default rules (the real hooks/lint-rules, no install file) ---
 # Every trigger word below is built from two quoted pieces, so no line of this file is a hit for the rules it tests: once
 # the lint runs on commits, a change to this file is linted with these defaults.

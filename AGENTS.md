@@ -46,6 +46,8 @@ or anything CI already checks (shellcheck, actionlint).
 ### Project invariants
 
 - The gate fails closed: when it can't tell (GitHub unreachable, reviewer error, unreadable output), it blocks.
+- Claude's commits pass the hygiene lint (pre-commit stub); only the user skips it (`! git commit --no-verify`). Until the
+  gate denies Claude's own `git commit --no-verify` (the next change of #269), that rule is not enforced for commits.
 - A branch can't weaken its own review: the rules come from the default branch's `AGENTS.md` when it has them,
   and so do the review checklist (`CONTRIBUTING.md` › Reviews) and `docs/pitfalls.md`.
 - Reviewers only read: Read, Grep and Glob are their only tools (`--tools`), with no shell (even
