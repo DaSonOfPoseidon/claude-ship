@@ -117,7 +117,8 @@ Write | Edit | MultiEdit | NotebookEdit)
 	# protected too: the path is also checked folded.
 	rpath=$(printf '%s' "$input" | jq -r --arg home "$hn" --arg user "$user" --arg cwd "$cwd" "$path_defs"'
 		(.tool_input.file_path // .tool_input.notebook_path // "") | if . == "" then "" else (tilde // .) | if startswith("/") then . else $cwd + "/" + . end | norm(false) end') || unreadable "file path"
-	# Protected: the installed gate, prompts, skill and ship agents, the gate's state, the settings that register it
+	# Protected: the installed gate, prompts, skill and ship agents, the gate's state, the install's lint config
+	# (~/.claude/claude-ship/: weakening it would switch the pre-commit lint off), the settings that register it
 	# (the managed settings directory, /etc/claude-code, included: the gate's drop-in is there, and so would be any policy
 	# file that overrides it) and shfmt (~/.claude/bin, which the gate reads every Bash command with: replacing it would
 	# blind the gate).
@@ -127,7 +128,7 @@ Write | Edit | MultiEdit | NotebookEdit)
 	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq '\.claude/settings'; then
 		written=$(printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")') || unreadable "text written"
 	fi
-	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|git-hooks/|settings|skills/ship/|agents/ship-|bin/)|\.git/review-gate(/|$)|^/etc/claude-code(/|$)" ||
+	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|git-hooks/|settings|skills/ship/|agents/ship-|bin/|claude-ship(/|$))|\.git/review-gate(/|$)|^/etc/claude-code(/|$)" ||
 		printf '%s' "$written" | grep -q disableAllHooks; then
 		echo "Blocked: the review gate's script, prompts, settings and state are the user's to change." >&2
 		exit 2
@@ -209,10 +210,10 @@ fi
 # prot_res is the protected paths as a regex for jq, for a path already resolved (an absolute, folded one): the gate's files
 # under the home directory (the directories with or without the slash after them), `.git/review-gate` in any repo, and
 # /etc/claude-code, the managed settings directory the gate is registered in (claude-ship #189).
-prot_res="^$hn_re/\\.claude/((hooks|git-hooks|skills/ship|bin)(/|\$)|settings|agents/ship-)|/\\.git/review-gate(/|\$)|^/etc/claude-code(/|\$)"
-# narrow_res is the part of it a `cd` is followed for: the targets the immutable flag does not cover, the gate state and the
-# settings (docs/gate.md › Tamper protection).
-narrow_res="^$hn_re/\\.claude/settings|/\\.git/review-gate(/|\$)"
+prot_res="^$hn_re/\\.claude/((hooks|git-hooks|skills/ship|bin|claude-ship)(/|\$)|settings|agents/ship-)|/\\.git/review-gate(/|\$)|^/etc/claude-code(/|\$)"
+# narrow_res is the part of it a `cd` is followed for: the targets the immutable flag does not cover, the gate state, the
+# settings and the install's lint config, `~/.claude/claude-ship/` (docs/gate.md › Tamper protection).
+narrow_res="^$hn_re/\\.claude/(settings|claude-ship(/|\$))|/\\.git/review-gate(/|\$)"
 # `disableAllHooks` among the words: a write to a settings file then blocks too, as it does for the Write tool.
 dah=0
 if printf '%s' "$cmd_all" | grep -q disableAllHooks; then dah=1; fi
@@ -235,7 +236,7 @@ def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
 #   {k: "gh"}           a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
 #   {k: "gapi", r}      a `gh api` call the tree shows; r is true when it is a read (below `def gapi`)
-#   {k: "deny", m}      a `push --no-verify`, a write of core.hooksPath (docs/gate.md › Pre-push check) or a `chattr`
+#   {k: "deny", m}      a `push --no-verify` or `commit --no-verify`/`-n`, a write of core.hooksPath (docs/gate.md › Pre-push check) or a `chattr`
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
 # kept as text, `$HOME` and `${HOME}` on their own the home directory); anything else is dynamic and is not read: a variable,
 # a substitution, a glob, `$'...'`. The output, for the loop below: the verdict (deny, block, pass, or bad when the input is
@@ -326,12 +327,28 @@ def shellstr($a):
 			else {k: "dyn"} end
 		end;
 	go(0);
-# What skips the pre-push check hooks/git-hook.sh makes of Claude pushes (docs/gate.md › Pre-push check), read from the words
-# after `git`: `push --no-verify`, and a write of core.hooksPath, which points git at that hook: `-c core.hooksPath=…`
-# (also `-ccore.hooksPath=…`), `--config-env=core.hooksPath=…`, and `git config` in any form that is not a read (a bare key,
-# `--get`, `--get-all`, `--get-regexp`, `--list`, `-l`). The key is matched in any case. {k: "deny", m: the message}, or nothing.
+# What skips the checks hooks/git-hook.sh makes of Claude pushes and commits (docs/gate.md › Pre-push check), read from the
+# words after `git`: `push --no-verify`, `commit --no-verify` and `commit -n` (the pre-commit lint), and a write of
+# core.hooksPath, which points git at that hook: `-c core.hooksPath=…` (also `-ccore.hooksPath=…`),
+# `--config-env=core.hooksPath=…`, and `git config` in any form that is not a read (a bare key, `--get`, `--get-all`,
+# `--get-regexp`, `--list`, `-l`). The key is matched in any case. {k: "deny", m: the message}, or nothing.
 def hookkey: test("^core\\.hookspath(=.*)?$"; "i");
 def gitdeny($a):
+	# Whether the words after `commit` skip its hooks: `--no-verify`, or `-n` alone or in a short bundle. A bundle counts when
+	# `n` comes before a letter that takes a value (m F C c t u S: the rest of the word is the value). The word after a bare
+	# -m/-F/-C/-c/-t (or a long option that takes one) is that value, and the words after `--` are paths. An abbreviated long
+	# option (`--no-ver`) is out of scope (AGENTS.md > Gate scope).
+	def nov($r):
+		def go($i): if $i >= ($r | length) then false else $r[$i] as $x
+			| if $x == "--" then false
+			elif $x == "--no-verify" then true
+			elif ($x | test("^--(message|file|author|date|cleanup|template|reuse-message|reedit-message|fixup|squash|trailer|pathspec-from-file)$")) then go($i + 2)
+			elif ($x | test("^-[A-Za-z]+$")) then
+				if ($x | test("^-[^nmFCctuS]*n")) then true
+				elif ($x | test("^-[^mFCctuS]*[mFCct]$")) then go($i + 2)
+				else go($i + 1) end
+			else go($i + 1) end end;
+		go(0);
 	def pre($i; $o):
 		if $i >= ($a | length) then {sub: null, rest: [], o: $o}
 		else $a[$i] as $x
@@ -360,6 +377,8 @@ def gitdeny($a):
 		{k: "deny", m: "core.hooksPath runs the review gate\u0027s pre-push check, which refuses an unreviewed push; only the user changes it. Ask them to make the change with `!`."}
 	elif $g.sub == "push" and ($g.rest | any(. == "--no-verify")) then
 		{k: "deny", m: "`git push --no-verify` would skip the review gate\u0027s pre-push check, which refuses an unreviewed push. Push without it; if a review is wrong, ask the user to waive it."}
+	elif $g.sub == "commit" and nov($g.rest) then
+		{k: "deny", m: "`git commit --no-verify` (also `-n`) would skip claude-ship\u0027s pre-commit hygiene lint and the repo\u0027s own pre-commit hooks. Commit without it and fix what the lint reports; if a hit is wrong, ask the user to commit with `! git commit --no-verify`, or to add an exclude to the lint config."}
 	else empty end;
 # The words of a simple command that name a protected path, among the words $all of the whole command (wrappers included) with
 # a marker for each word that is not literal; $c0 is the effective command word. The command (and the wrapper before it) is

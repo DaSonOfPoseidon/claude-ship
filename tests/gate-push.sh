@@ -90,8 +90,9 @@ expect 0 'git pu\
 sh origin HEAD'
 expect 0 'git push origin HEAD 3>&-'
 # The git hook that checks Claude's pushes (hooks/git-hook.sh) must stay on: `--no-verify` and a write of
-# core.hooksPath skip it, so they block, with or without a push, in any spelling the tree shows. Reading the setting,
-# `git commit --no-verify` and text that only mentions the name are fine.
+# core.hooksPath skip it, so they block, with or without a push, in any spelling the tree shows. Reading the setting
+# and text that only mentions the name are fine. `commit --no-verify` and `-n` skip the pre-commit lint, so they block
+# too (below).
 expect 2 'git push --no-verify origin HEAD'
 expect 2 'git push origin HEAD --no-verify'
 expect 2 'git -C . push --no-verify'
@@ -130,11 +131,65 @@ expect 0 'git config --global core.hooksPath'
 expect 0 'git config get core.hooksPath'
 expect 0 'git config user.name t'
 expect 0 'git -c user.name=t status'
-expect 0 'git commit --no-verify -m x'
 expect 0 'git grep hooksPath'
 expect 0 'git log --grep hooksPath'
 expect 0 'grep -n hooksPath docs/gate.md'
 expect 0 'echo "core.hooksPath"'
+# `git commit --no-verify` and `-n` (alone or in a short bundle) skip the pre-commit lint and the repo's own hooks, so
+# they block in any repo (#269). A short bundle counts when `n` comes before a letter that takes a value (m F C c t u S);
+# the word after a bare -m/-F/-C/-c/-t and the words after `--` are values and operands. Abbreviated long options are
+# out of scope (AGENTS.md > Gate scope).
+expect 2 'git commit --no-verify -m x'
+expect 2 'git commit -m x --no-verify'
+expect 2 'git commit -n -m x'
+expect 2 'git commit -nm x'
+expect 2 'git commit -anm x'
+expect 2 'git commit -m x -n'
+expect 2 'git commit --amend -n --no-edit'
+expect 2 'git -C . commit -n -m x'
+expect 2 "cd $repo && git commit -n"
+expect 2 'git commit -m x -- a && git commit -n'
+expect 2 'sh -c "git commit -n -m x"'
+expect 2 'git commit -am x -n'
+expect 2 'git commit -S -n -m x'
+expect 2 'git commit -qn -m x'
+expect 0 'git commit -m -n'
+expect 0 'git commit -mn'
+expect 0 'git commit -m "fix -n"'
+expect 0 'git commit -m "fix --no-verify"'
+expect 0 'git commit -- -n'
+expect 0 'git commit -- --no-verify'
+expect 0 'git commit -am x'
+expect 0 'git commit -am -n'
+expect 0 'git commit -S -m x'
+expect 0 'git commit -F -n'
+expect 0 'git commit -C -n'
+expect 0 'git commit -uno -m x'
+expect 0 'git commit --message -n'
+expect 0 'git commit --amend --no-edit'
+expect 0 'git status -n'
+expect 0 'git clean -n'
+expect 0 'git push -n origin HEAD'
+expect 0 'echo "git commit -n"'
+expect 0 'git log --grep "commit --no-verify"'
+expect 2 'git commit -n'
+grep -q 'pre-commit' "$tmp/err" && grep -q '! git commit --no-verify' "$tmp/err" || {
+	echo "FAIL: the commit --no-verify block lacks its advice"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+# A repo that is not opted in, and a directory that is no repo, are held to it too: the lint runs in every repo.
+nogit=$tmp/nogit
+mkdir -p "$nogit"
+keep=$repo
+fixture https://example.com/acme/app.git
+expect 2 'git commit --no-verify -m x'
+expect 2 'git commit -n -m x'
+expect 0 'git commit -m x'
+repo=$nogit
+expect 2 'git commit --no-verify -m x'
+expect 0 'git commit -m x'
+repo=$keep
 # The check before a push: the gate wants the hook active where the push runs (core.hooksPath at ours, with an
 # executable pre-push), else a push would skip the review the hook enforces. The harness HOME above has both.
 gitcfg=$HOME/.gitconfig

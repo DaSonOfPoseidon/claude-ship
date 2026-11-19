@@ -206,7 +206,8 @@ repo, when `~/.claude/bin/shfmt` is missing or can't parse the command (docs/gat
 `./install.sh` before relying on a gate that has this check. install.sh fetches shfmt first and, when that fails, stops with exit 1 before it changes anything. It exits non-zero when any other part of the install fails. It needs `curl` and `sha256sum` (or `shasum`); only Linux x86_64 and aarch64 are supported for now.
 
 After a PR merges, run `./install.sh` again to deploy it. The installed files (the ship agents included), the gate's state in
-`.git/review-gate/` and the settings are protected from Claude's edits; this repo's source isn't, because
+`.git/review-gate/`, the lint config in `~/.claude/claude-ship/` and the settings are protected from Claude's edits (and the gate
+denies Claude's `git commit --no-verify` and `-n`, which would skip the pre-commit lint); this repo's source isn't, because
 changes to it go through the same review as any other repo.
 
 The matcher sends the MCP tools that write files, branches or PRs (`push_files`, `create_or_update_file`,
@@ -280,8 +281,8 @@ There are no inline disable comments: an exception is a path glob in a config fi
 **Claude's commits.** The `pre-commit` stub (`hooks/git-hook.sh`) runs `lint.sh staged --remote` when Claude commits (the
 same test as the pre-push check: `CLAUDE_CODE_CHILD_SESSION=1` or a `claude` ancestor). An error-level hit refuses the
 commit and lists the hits; warnings print and the commit goes on; the repo's own pre-commit runs after a clean lint. Your
-own commits are never linted. Fix the hits; if one is wrong, commit it yourself with `! git commit --no-verify` (Claude
-must not skip it), or add an exclude (for example `debug-leftover off scripts/*`) to the default branch's
+own commits are never linted. Fix the hits; if one is wrong, commit it yourself with `! git commit --no-verify` (the gate
+denies Claude's own `--no-verify` and `-n`), or add an exclude (for example `debug-leftover off scripts/*`) to the default branch's
 `.github/claude-ship/lint` or to `~/.claude/claude-ship/lint`. `--remote` reads the project file from GitHub's default branch,
 not a local ref, so `git remote set-head` or `update-ref` can't point it at the branch; if GitHub can't be read (offline, no
 `gh`, a non-GitHub origin) it uses the local refs and says so on stderr. During a merge, cherry-pick or revert only

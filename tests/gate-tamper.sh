@@ -224,7 +224,7 @@ expectc 2 /repo 'rm .git/review-gate/abc.pass'
 expectc 2 /etc 'rm claude-code/managed-settings.json'
 expectc 2 /etc/claude-code 'rm managed-settings.json'
 # One narrow `cd`: a statement that is just `cd LITERAL`, or one on the left of `&&`, sets where later relative words and
-# redirect targets resolve from, for the two targets the immutable flag does not cover: the gate's state and the settings
+# redirect targets resolve from, for the targets the immutable flag does not cover: the gate state, the settings and the lint config
 # under ~/.claude (the cd's word has ~ and $HOME folded, and is relative to the cwd or to the cd before it).
 expect 2 'cd ~/.claude && rm settings.json'
 expect 2 'cd ~/.claude; echo x > settings.local.json'
@@ -273,6 +273,20 @@ expect 2 'rm ~/.claude/git-hooks/pre-push'
 expect 2 'echo exit 0 > ~/.claude/git-hooks/pre-push'
 expect 2 'cp /tmp/x $HOME/.claude/agents/ship-explorer.md'
 expect 2 'cp /tmp/x ~/.claude/bin/shfmt'
+expect 2 'echo x > ~/.claude/claude-ship/lint'
+expect 2 'echo "* off" >> $HOME/.claude/claude-ship/lint'
+expect 2 'cp f ~/.claude/claude-ship/lint'
+expect 2 'sed -i s/a/b/ ~/.claude/claude-ship/lint'
+expect 2 'tee ~/.claude/claude-ship/lint </tmp/a'
+expect 2 'cd ~/.claude && echo x > claude-ship/lint'
+expect 2 'cd ~/.claude/claude-ship && rm lint'
+expect 0 'cat ~/.claude/claude-ship/lint'
+expect 0 'grep -n off ~/.claude/claude-ship/lint'
+expect 0 'echo x > ~/.claude/state/claude-ship/triage-o+r-1.json'
+expect 0 'echo x > ~/.claude/claude-ship-notes.md'
+expect 0 'git commit --amend -m x'
+expect 2 'git commit --no-verify -m x'
+expect 2 'git commit -n -m x'
 expect 2 'cp x /etc/claude-code/managed-settings.json'
 expect 2 'mv /etc/claude-code/managed-settings.d /tmp/x'
 expect 2 'echo x | tee /etc/claude-code/managed-settings.json'
@@ -615,6 +629,12 @@ write 2 "$tmp/home/.claude/agents/ship-implementer.md"
 write 2 "$tmp/home/.claude/skills/ship/orchestrate.md"
 write 2 "$tmp/home/.claude/hooks/review-lib.sh"
 write 2 "$tmp/home/.claude/bin/shfmt"
+# The install's lint config: weakening it would switch the pre-commit lint off for Claude's own commits.
+write 2 "$tmp/home/.claude/claude-ship/lint"
+write 2 "$tmp/home/.claude/./claude-ship/lint"
+write 2 "$tmp/home/.claude/claude-ship"
+write 0 "$tmp/home/.claude/claude-ship-notes.md"
+write 0 "$tmp/home/.claude/state/claude-ship/triage-o+r-1.json"
 # The git hook stubs run the pre-push check; replacing one would switch it off while the executable-file check passed.
 write 2 "$tmp/home/.claude/git-hooks/pre-push"
 write 2 "$tmp/home/.claude/./git-hooks/pre-push"
