@@ -19,7 +19,8 @@
 #   ban <id> <off|warn|error> <glob>[,<glob>...] [comment] '<ERE>' [unless '<ERE>'] -- <message>
 #       A rule of your own: a line that matches the ERE (an extended regular expression, without \b: use
 #       (^|[^[:alnum:]_])) is a hit, unless it also matches the `unless` ERE. The ban's level and globs also act as a
-#       settings line for <id>, and several `ban` lines with one id are one rule with several patterns. With `comment`,
+#       settings line for <id> (its globs may include !glob too), and several `ban` lines with one id are one rule with
+#       several patterns. With `comment`,
 #       the EREs match the line's comment text only (the text after `#`, `//` or `--` for the file's extension, or
 #       inside /* ... */); a line with no comment never matches. A single quote inside an ERE is written twice.
 #       The message says what to do instead. Example:

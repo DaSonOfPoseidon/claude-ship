@@ -62,7 +62,9 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    `.github/claude-ship/p3-labels` (format in claude-ship's README; give every path an area and a `*` rule
    for priority and status, since the PR loop only picks up labeled issues) and ask the user to set the variables:
    `! gh variable set CLAUDE_P3_LABELS --body "review:p3,<more>"`, and optionally `CLAUDE_P3_TYPE_LABEL`
-   (e.g. `bug`) and `CLAUDE_P3_MILESTONE` (`auto`).
+   (e.g. `bug`) and `CLAUDE_P3_MILESTONE` (`auto`). Optionally, write `.github/claude-ship/lint` for the repo's own
+   hygiene rules (the grammar is in claude-ship's README, Hygiene lint). Like the p3-labels map, the lint reads it from
+   the default branch, so it takes effect once merged.
 6. Show the user the invariants you wrote, then ship the branch with the steps below.
 7. After the bootstrap PR merges, ask the user before turning on branch protection that requires
    `codex-review` and the CI checks. It's outward-facing, so get an explicit yes first. Not before the

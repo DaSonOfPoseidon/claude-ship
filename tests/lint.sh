@@ -1412,5 +1412,64 @@ for a in mawk gawk; do
 done
 command -v busybox >/dev/null 2>&1 && busybox awk 'BEGIN{exit 0}' 2>/dev/null && portable busybox busybox awk
 
+# --- this repo's own project file (.github/claude-ship/lint): the POSIX-only rule ---
+# It is read from the default branch, so the fixture publishes it there first. tests/ is exempt (its fixtures quote the
+# flags on purpose), and a whole-line comment isn't code.
+if [ ! -f "$root/.github/claude-ship/lint" ]; then
+	echo "FAIL (own-lint): .github/claude-ship/lint is missing"
+	fail=1
+else
+	fixture
+	set_default_project "$(cat "$root/.github/claude-ship/lint")"
+	mkdir -p "$repo/scripts" "$repo/tests"
+	cat >"$repo/scripts/gnu.sh" <<'EOF'
+#!/bin/sh
+sed -i 's/a/b/' "$f"
+sed -ni '1p' "$f"
+sed --in-place 's/a/b/' "$f"
+x=$(date -u -d @0 +%s)
+grep -oP 'a+' "$f"
+readlink -f "$0"
+stat -c %s "$f"
+EOF
+	cat >"$repo/scripts/posix.sh" <<'EOF'
+#!/bin/sh
+# sed -i is GNU-only, so this comment names it without being code
+sed -E 's/a/b/' "$f"
+sed -n 1p "$f"
+sed -e 's/x -i/y/' "$f"
+sed 's/a/-i/' "$f"
+date +%s
+date -u +%Y-%m-%dT%H:%M:%SZ
+grep -E 'a+' "$f"
+grep -- 'a' "$f"
+readlink "$0"
+wc -c <"$f"
+EOF
+	cat >"$repo/tests/fixture.sh" <<'EOF'
+#!/bin/sh
+sed -i 's/a/b/' "$f"
+EOF
+	git -C "$repo" add -A
+	lint staged
+	want own-lint 1
+	has own-lint 'scripts/gnu.sh:2: gnu-sed-i (error)'
+	has own-lint 'scripts/gnu.sh:3: gnu-sed-i (error)'
+	has own-lint 'scripts/gnu.sh:4: gnu-sed-i (error)'
+	has own-lint 'scripts/gnu.sh:5: gnu-date-d (error)'
+	has own-lint 'scripts/gnu.sh:6: gnu-grep-p (error)'
+	has own-lint 'scripts/gnu.sh:7: gnu-readlink-f (error)'
+	has own-lint 'scripts/gnu.sh:8: gnu-stat-c (error)'
+	lacks own-lint 'scripts/gnu.sh:1:'
+	lacks own-lint 'scripts/posix.sh:'
+	lacks own-lint 'tests/fixture.sh:'
+	lint rules tests/fixture.sh
+	grep -Eq '^ +gnu-sed-i +off ' "$tmp/out" || {
+		echo "FAIL (own-lint-tests): tests/ is not exempt from gnu-sed-i"
+		sed 's/^/  out: /' "$tmp/out"
+		fail=1
+	}
+fi
+
 [ "$fail" = 0 ] && echo "lint: all passed"
 exit "$fail"
