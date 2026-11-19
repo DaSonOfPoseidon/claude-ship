@@ -27,20 +27,43 @@ var() {
 	gh variable get "$1" -R "$slug" 2>/dev/null
 }
 
-# The default branch, as GitHub reports it, fetched; empty if either fails.
+# The default branch's remote ref, as GitHub names the branch, fetched; empty if either fails. Only the milestone's
+# commit range uses it.
 base=
 if main=$(gh repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) &&
 	git check-ref-format "refs/heads/$main" && git fetch -q origin "+refs/heads/$main:refs/remotes/origin/$main" 2>/dev/null; then
 	base=refs/remotes/origin/$main
 fi
 
+# The label map of <slug>'s default branch, read from GitHub: the cwd's origin can be another repository, and a
+# branch can't change how its own findings are filed. A 404 means the repo has no map. Any other outcome without
+# the file stops here, before anything is filed, since an issue filed without its labels may never reach the loop
+# (claude-ship #215, #179). The status is the response's own status line (-i), not a match on the error text. A 200
+# counts only if gh exited 0 too: a connection dropped mid-body leaves the 200 headers and part of the map on stdout
+# and exits 1.
+ok=
+resp=$(gh api -i "repos/$slug/contents/.github/claude-ship/p3-labels" -H 'Accept: application/vnd.github.raw' 2>/dev/null) && ok=ok
+resp=$(printf '%s\n' "$resp" | tr -d '\r')
+status=$(printf '%s\n' "$resp" | sed -n '1s/^HTTP\/[0-9.]* \([0-9][0-9]*\).*/\1/p')
+map=
+case $ok$status in
+ok200) map=$(printf '%s\n' "$resp" | sed '1,/^$/d') ;;
+404) ;;
+*)
+	# The status line and the error body's message, or that there was no response.
+	why=$(printf '%s\n' "$resp" | sed -n '1p;s/.*"message": *"\([^"]*\)".*/\1/p' | paste -sd' ' -)
+	[ "$status" = 200 ] && why="$why (the response was cut short)"
+	echo "p3-issue: can't read p3-labels for $slug: ${why:-no response}" >&2
+	exit 1
+	;;
+esac
+
 # One label per line. $labels is the base (CLAUDE_P3_LABELS); $maplabels is what the map adds, where a matching rule
 # that names an area replaces the area of every earlier rule (the map's header comment, README).
 labels=$(var CLAUDE_P3_LABELS) || labels=review:p3
 labels=$(printf '%s\n' "$labels" | tr ',' '\n')
 maplabels=
-if [ -n "$base" ]; then
-	map=$(git show "$base:.github/claude-ship/p3-labels" 2>/dev/null)
+if [ -n "$map" ]; then
 	set -f
 	while read -r glob add; do
 		case $glob in
