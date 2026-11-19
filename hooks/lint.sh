@@ -97,8 +97,9 @@ if [ "$mode" = hook ]; then
 	# The new text: content (Write), new_string (Edit) or each edits[].new_string (MultiEdit, read defensively), and the
 	# old text the same way; a field of another type is skipped. An edit may change only part of a line, so each new text
 	# becomes records that say how a file line may contain it: S (a one-line text: anywhere in the line), F (the first line
-	# of several: the line's end), M (a middle line: the whole line) and L (the last line: the line's start).
-	jq -r 'def recs: split("\n") as $a | if ($a | length) == 1 then "S" + $a[0] else ("F" + $a[0]), ($a[1:-1][] | "M" + .), ("L" + $a[-1]) end;
+	# of several: the line's end), M (a middle line: the whole line) and L (the last line: the line's start). A text with
+	# nothing in it (a deletion) can have exposed a violation anywhere, so it is the record A: every line is a candidate.
+	jq -r 'def recs: split("\n") as $a | if (($a | map(length) | add) // 0) == 0 then "A" elif ($a | length) == 1 then "S" + $a[0] else ("F" + $a[0]), ($a[1:-1][] | "M" + .), ("L" + $a[-1]) end;
 		[.tool_input | objects | (.content, .new_string, (.edits[]? | objects | .new_string))] | map(select(type == "string")) | .[] | recs' "$t/in" >"$t/new" 2>/dev/null || die "can't read its input as JSON"
 	jq -r '[.tool_input | objects | (.old_string, (.edits[]? | objects | .old_string))] | map(select(type == "string")) | join("\n")' "$t/in" >"$t/old" 2>/dev/null || die "can't read its input as JSON"
 	hcwdp=$(cd "$hcwd" 2>/dev/null && pwd -P) || hcwdp=
@@ -163,7 +164,7 @@ if [ "$mode" != rules ]; then
 # that contain a record of the set (see the jq above). Outside git (HOOK_NOGIT=1) a record whose text is a line of
 # old_string is dropped. One hunk per line, so the line numbers are the file's own.
 function wanted(text,   i, n) {
-	if (text in whole) return 1
+	if (everything || (text in whole)) return 1
 	for (i = 1; i <= ns; i++) if (index(text, subs[i]) > 0) return 1
 	n = length(text)
 	for (i = 1; i <= nf; i++) if (n >= length(firsts[i]) && substr(text, n - length(firsts[i]) + 1) == firsts[i]) return 1
@@ -193,6 +194,7 @@ FILENAME == oldf {
 FILENAME == setf {
 	k = substr($0, 1, 1)
 	v = substr($0, 2)
+	if (k == "A") everything = 1
 	if (v == "" || (nogit && (v in oldl))) next
 	if (k == "S") subs[++ns] = v
 	else if (k == "F") firsts[++nf] = v

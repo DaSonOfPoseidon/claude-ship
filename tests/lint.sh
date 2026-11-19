@@ -1223,6 +1223,32 @@ printf 'p; z;\nr; s; %s\n' "$dbg" >"$repo/t.js"
 hook "$(hjson Edit "$repo/t.js" "$repo" 'z;' 'q;')"
 want hook-partial-other 0
 silent hook-partial-other
+# An edit that deletes text (an empty new_string) can expose a violation anywhere in the file, so every line the diff adds
+# is a candidate (the P2 of #288). Here removing the comment leader leaves a statement.
+git -C "$repo" checkout -q -- t.js
+printf 'a;\n// %s\nb;\n' "$dbg" >"$repo/t.js"
+git -C "$repo" add -A
+commit
+printf 'a;\n%s\nb;\n' "$dbg" >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" '' '// ')"
+want hook-delete 0
+hdec hook-delete block
+hreason hook-delete 't.js:2: debug-leftover (error)'
+# The same for a new_string that is only line breaks.
+nlx=$(printf '\n_')
+hook "$(hjson Edit "$repo/t.js" "$repo" "${nlx%_}" ' ')"
+want hook-delete-nl 0
+hdec hook-delete-nl block
+hreason hook-delete-nl 't.js:2: debug-leftover (error)'
+# A deletion that exposes nothing stays quiet.
+printf 'a;\nb2;\n' >"$repo/t.js"
+hook "$(hjson Edit "$repo/t.js" "$repo" '' '// x')"
+want hook-delete-clean 0
+silent hook-delete-clean
+git -C "$repo" checkout -q -- t.js
+printf 'a;\nb;\nc;\n' >"$repo/t.js"
+git -C "$repo" add -A
+commit
 # A warning is context for the next step, not a block; a clean edit prints nothing.
 git -C "$repo" checkout -q -- t.js
 printf 'a;\nb;\n%s\nc;\n' "$nar" >"$repo/t.js"
@@ -1310,6 +1336,13 @@ hook "$(hjson Edit "$tmp/outside/sub/o.js" "$tmp/outside" "$(printf 'x;\n%s' "$d
 want hook-outside-new 0
 hdec hook-outside-new block
 hreason hook-outside-new 'sub/o.js:2: debug-leftover (error)'
+# Outside git, a deletion lints the whole file.
+printf '%s\n' "$dbg" >"$tmp/outside/sub/o.js"
+hookdir=$tmp/outside
+hook "$(hjson Edit "$tmp/outside/sub/o.js" "$tmp/outside" '' '// ')"
+want hook-outside-delete 0
+hdec hook-outside-delete block
+hreason hook-outside-delete 'sub/o.js:1: debug-leftover (error)'
 # Outside git, a partial-line edit counts too.
 printf 'x; %s\n' "$dbg" >"$tmp/outside/sub/o.js"
 hookdir=$tmp/outside

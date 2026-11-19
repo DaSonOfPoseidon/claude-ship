@@ -295,7 +295,7 @@ There are no inline disable comments: an exception is a path glob in a config fi
 after every Write, Edit and MultiEdit and reports only the lines that edit added: a file's lines the diff against `HEAD` adds
 (the whole file when git doesn't track it yet, or outside git, where an edit counts the `new_string` lines that `old_string`
 lacks), and only those that contain the edit's new text (also when the edit changed just part of a line), so earlier
-edits aren't reported again. An error-level hit comes
+edits aren't reported again. An edit that deletes text can expose a violation anywhere, so it checks every added line. An error-level hit comes
 back to Claude as feedback to act on (`"decision": "block"` with the hits and "Fix these now: the pre-commit check refuses
 a commit that adds them"; the file is already written), a warning as extra context, and a clean edit prints nothing. It always exits 0: the write has
 happened, and a failure of its own becomes a note, never a block. Files git ignores and files under `skip` are not
