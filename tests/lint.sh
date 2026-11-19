@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tests hooks/lint.sh, the hygiene linter for added lines: the diff parsing (hunk headers, binary and deleted files,
 # paths with spaces), the three config layers and the grammar (settings lines, `ban` with `comment` and `unless`,
-# `skip`, malformed lines), the two coded rules (conflict-marker, invisible-char), the `rules` mode and the exit codes.
+# `skip`, malformed lines), the two coded rules (conflict-marker, invisible-char), the default rule set of hooks/lint-rules
+# (a hit and a near miss for each), the `rules` mode and the exit codes.
 # Real repos and a bare origin; HOME is a temporary directory, so the real ~/.claude/claude-ship/lint is never read.
 # The conflict markers and invisible characters in fixtures are built with printf, so this file passes its own lint.
 set -u
@@ -650,6 +651,240 @@ want bad-range 2
 lint rules
 want usage-rules 2
 
+# --- default rules (the real hooks/lint-rules, no install file) ---
+# Every trigger word below is built from two quoted pieces, so no line of this file is a hit for the rules it tests: once
+# the lint runs on commits, a change to this file is linted with these defaults.
+
+# debug-leftover: error, by language. A near miss is a longer word, a method, or a line that is only a comment.
+fixture
+x_dbg=debug'ger'
+x_bp=break'point'
+x_st=set_'trace'
+x_pry=binding.p'ry'
+x_bye=bye'bug'
+x_dbm=d'bg!'
+put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
+put d.py '%s()\nmy_%s()\npdb.%s()\nimport pdb\nimport ipdb\nimport pdbx\nx.%s()\n# %s()\nipdb.%s()\n' "$x_bp" "$x_bp" "$x_st" "$x_bp" "$x_bp" "$x_st"
+put d.rb '%s\n%s\nmy%s\n# %s\n' "$x_pry" "$x_bye" "$x_bye" "$x_bye"
+put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n' "$x_dbm" "$x_dbm" "$x_dbm"
+put d.md 'use %s; or %s()\n' "$x_dbg" "$x_bp"
+put d.sh '%s\n' "$x_dbg"
+lint staged
+want debug 1
+has debug 'd.js:1: debug-leftover (error): Remove the debugger statement; use a test or a log the code keeps.'
+lacks debug 'd.js:2:'
+lacks debug 'd.js:3:'
+has debug 'd.js:4: debug-leftover (error)'
+has debug 'd.py:1: debug-leftover (error): Remove the debugger call;'
+lacks debug 'd.py:2:'
+has debug 'd.py:3: debug-leftover (error)'
+has debug 'd.py:4: debug-leftover (error)'
+has debug 'd.py:5: debug-leftover (error)'
+lacks debug 'd.py:6:'
+lacks debug 'd.py:7:'
+lacks debug 'd.py:8:'
+has debug 'd.py:9: debug-leftover (error)'
+has debug 'd.rb:1: debug-leftover (error)'
+has debug 'd.rb:2: debug-leftover (error)'
+lacks debug 'd.rb:3:'
+lacks debug 'd.rb:4:'
+has debug 'd.rs:1: debug-leftover (error): Remove the dbg! call;'
+lacks debug 'd.rs:2:'
+lacks debug 'd.rs:3:'
+lacks debug 'd.md:'
+lacks debug 'd.sh:'
+has debug 'lint: 10 error(s), 0 warning(s)'
+
+# placeholder: error, in comments only (any language with comments; markdown has none).
+fixture
+x_r1='...'' rest of the code'
+x_r2='rest of code''...'
+x_e1='existing code he''re'
+x_e2='existing code unchang''ed'
+x_t1='TO''DO: implement'
+x_t2='TO''DO implement me'
+x_y1='your code he''re'
+x_y2='implementation goes he''re'
+put p.py 'x = 1  # %s ...\n# %s\n# %s\n# %s\n# %s\n# %s\n# %s\n# the rest of the code uses X\n# TO''DO(#12): implement retries\nx = "%s"\n' "$x_r1" "$x_e1" "$x_e2" "$x_t1" "$x_t2" "$x_y1" "$x_y2" "$x_y1"
+put p.js '// %s\n/* %s */\n * %s\nlet s = "%s";\n' "$x_r2" "$x_y2" "$x_e1" "$x_y1"
+put p.md '# %s\nuse %s\n' "$x_r1" "$x_y1"
+lint staged
+want placeholder 1
+for l in 1 2 3 4 5 6 7; do
+	has placeholder "p.py:$l: placeholder (error): Write the code the placeholder stands for"
+done
+lacks placeholder 'p.py:8: placeholder'
+lacks placeholder 'p.py:9: placeholder'
+lacks placeholder 'p.py:10: placeholder'
+has placeholder 'p.js:1: placeholder (error)'
+has placeholder 'p.js:2: placeholder (error)'
+has placeholder 'p.js:3: placeholder (error)'
+lacks placeholder 'p.js:4: placeholder'
+lacks placeholder 'p.md:'
+has placeholder 'lint: 10 error(s), 2 warning(s)'
+
+# narration: a warning, for comments that start with a past-tense verb or say who asked for the change. A comment that merely starts
+# with a similar word is fine (Address, Not added), and so is the verb in code or a string.
+fixture
+put n.py '# %s foo\nx = 1  # %s it\n# Address the thing\n# %sx\n# %s feature\n# Not %s\n# %s by the user\nx = "%s"\n' "Add""ed" "Chang""ed" "Add""ed" "Ne""w:" "Add""ed" "as reque""sted" "Add""ed"
+put n.js '// %s the old path\n// %s\n' "Remov""ed" "per your reque""st"
+lint staged
+want narration 0
+has narration 'n.py:1: narration (warn): Say what the code does, not what you changed'
+has narration 'n.py:2: narration (warn)'
+lacks narration 'n.py:3:'
+lacks narration 'n.py:4:'
+has narration 'n.py:5: narration (warn)'
+lacks narration 'n.py:6:'
+has narration 'n.py:7: narration (warn)'
+lacks narration 'n.py:8:'
+has narration 'n.js:1: narration (warn)'
+has narration 'n.js:2: narration (warn)'
+has narration 'lint: 0 error(s), 6 warning(s)'
+
+# new-suppression: a warning, in any language; docs (md, txt) are off.
+fixture
+x_noq='no''qa'
+x_ti='type: ''ignore'
+x_pi='pyright: ''ignore'
+x_pc='pragma: no ''cover'
+x_esl='eslint-''disable-next-line'
+x_tsi='@ts-''ignore'
+x_tsn='@ts-''nocheck'
+x_tse='@ts-expect-''error'
+x_ist='istanbul ''ignore next'
+x_nl='no''lint:errcheck'
+x_al='#[''allow('
+x_rc='rubocop:''disable Style/Foo'
+x_sw='@Suppress''Warnings'
+x_ns='NO''SONAR'
+x_sc='shellcheck ''disable=SC2086'
+put s.py 'a  # %s\nb  # %s\nc  # %s\nd  # %s\ne  # %sx\n' "$x_noq" "$x_ti" "$x_pi" "$x_pc" "$x_noq"
+put s.js '// %s\n// %s\n// %s\n// %s\n/* %s */\n' "$x_esl" "$x_tsi" "$x_tsn" "$x_tse" "$x_ist"
+put s.go 'x() //%s\n' "$x_nl"
+put s.rs '%sdead_code)]\n' "$x_al"
+put s.rb 'x # %s\n' "$x_rc"
+put s.java '%s("unchecked")\nint x; // %s\n' "$x_sw" "$x_ns"
+put s.sh '# %s\n# shellcheck enable=all\n' "$x_sc"
+put s.md 'use %s or %s\n' "$x_noq" "$x_esl"
+put s.txt '%s\n' "$x_noq"
+lint staged
+want suppression 0
+has suppression 's.py:1: new-suppression (warn): Fix the underlying lint finding instead of silencing it; if it'\''s wrong, say why in the PR.'
+has suppression 's.py:2: new-suppression (warn)'
+has suppression 's.py:3: new-suppression (warn)'
+has suppression 's.py:4: new-suppression (warn)'
+lacks suppression 's.py:5:'
+for l in 1 2 3 4 5; do has suppression "s.js:$l: new-suppression (warn)"; done
+has suppression 's.go:1: new-suppression (warn)'
+has suppression 's.rs:1: new-suppression (warn)'
+has suppression 's.rb:1: new-suppression (warn)'
+has suppression 's.java:1: new-suppression (warn)'
+has suppression 's.java:2: new-suppression (warn)'
+has suppression 's.sh:1: new-suppression (warn)'
+lacks suppression 's.sh:2:'
+lacks suppression 's.md:'
+lacks suppression 's.txt:'
+has suppression 'lint: 0 error(s), 15 warning(s)'
+
+# skipped-test: a warning, in code only. A conditional skip (skipIf, skipUnless) is a deliberate choice and isn't flagged.
+fixture
+x_sk='.sk''ip('
+x_on='.on''ly('
+put t.js 'it%s"a", f);\ndescribe%s"b", f);\n%s"c", f);\n%s"d", f);\n%s"e", f);\n%s"f", f);\nit.skipIf(c)("g", f);\nmodel.fit(x);\nbenefit(x);\n' "$x_sk" "$x_on" 'x''it(' 'x''describe(' 'f''it(' 'f''describe('
+put t.py '@pytest.mark.%s\n@pytest.mark.%s(reason="x")\n@unittest.%s("x")\n@pytest.mark.skipif(c)\n@unittest.skipIf(c)\nx.skip(3)\n' 'sk''ip' 'sk''ip' 'sk''ip'
+put t.go 't.%s"x")\nt.%sf("x")\nt.%sNow()\nst.Skip("x")\n' 'Sk''ip(' 'Sk''ip' 'Sk''ip'
+put t.rs '#[%s]\n#[%s = "slow"]\n#[ignored]\n' 'ig''nore' 'ig''nore'
+put t.java '@%s\n@%s("x")\n@DisabledOnOs(OS.WINDOWS)\n' 'Dis''abled' 'Dis''abled'
+put t.md 'Use %s to focus one test.\n' "$x_on"
+lint staged
+want skipped 0
+for l in 1 2 3 4 5 6; do has skipped "t.js:$l: skipped-test (warn): Make the test pass or delete it;"; done
+lacks skipped 't.js:7:'
+lacks skipped 't.js:8:'
+lacks skipped 't.js:9:'
+for l in 1 2 3; do has skipped "t.py:$l: skipped-test (warn)"; done
+lacks skipped 't.py:4:'
+lacks skipped 't.py:5:'
+lacks skipped 't.py:6:'
+for l in 1 2 3; do has skipped "t.go:$l: skipped-test (warn)"; done
+lacks skipped 't.go:4:'
+has skipped 't.rs:1: skipped-test (warn)'
+has skipped 't.rs:2: skipped-test (warn)'
+lacks skipped 't.rs:3:'
+has skipped 't.java:1: skipped-test (warn)'
+has skipped 't.java:2: skipped-test (warn)'
+lacks skipped 't.java:3:'
+lacks skipped 't.md:'
+has skipped 'lint: 0 error(s), 16 warning(s)'
+
+# todo-no-issue: a warning, for a to-do marker comment with no issue number, tracker key or link.
+fixture
+x_todo='TO''DO'
+put t.py '# %s fix\nx = 1  # %s later\n# FIX''ME\n# X''XX\n# HA''CK\n# %s(#12) fix\n# %s: see https://x.example/1\n# %s(PROJ-123) fix\n# %ss\nx = "%s"\n' "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo"
+put t.js 'const u = "http://%s.example";\n// %s later\n' "$x_todo" "$x_todo"
+put t.md '# %s heading\n' "$x_todo"
+lint staged
+want todo 0
+has todo 't.py:1: todo-no-issue (warn): Link the work to an issue'
+has todo 't.py:2: todo-no-issue (warn)'
+has todo 't.py:3: todo-no-issue (warn)'
+has todo 't.py:4: todo-no-issue (warn)'
+has todo 't.py:5: todo-no-issue (warn)'
+for l in 6 7 8 9 10; do lacks todo "t.py:$l:"; done
+lacks todo 't.js:1:'
+has todo 't.js:2: todo-no-issue (warn)'
+lacks todo 't.md:'
+has todo 'lint: 0 error(s), 6 warning(s)'
+
+# new-comment is off by default, and flags every added comment once turned on, except a shebang. The // in a URL isn't a
+# comment.
+fixture
+put c.sh '#!/bin/sh\n# note\nx=1 # trailing\ny=2\n'
+put c.js 'const u = "http://x";\n// c\n'
+put c.md '# heading\n'
+lint rules c.sh
+grep -E '^ +new-comment +off ' "$tmp/out" >/dev/null || {
+	echo "FAIL (new-comment-off): rules doesn't show new-comment off"
+	sed 's/^/  out: /' "$tmp/out"
+	fail=1
+}
+lint staged
+want new-comment-off 0
+lacks new-comment-off 'new-comment'
+install "new-comment warn"
+lint staged
+want new-comment-on 0
+lacks new-comment-on 'c.sh:1:'
+has new-comment-on 'c.sh:2: new-comment (warn): Remove the comment'
+has new-comment-on 'c.sh:3: new-comment (warn)'
+lacks new-comment-on 'c.sh:4:'
+lacks new-comment-on 'c.js:1:'
+has new-comment-on 'c.js:2: new-comment (warn)'
+lacks new-comment-on 'c.md:'
+install "new-comment error"
+lint staged
+want new-comment-error 1
+
+# The defaults are tunable like any rule: a level for one rule, a path glob, or the whole lint.
+fixture
+put d.py '%s()\n' 'break''point'
+put e.js 'x;\n// %s\n' 'Add''ed it'
+install "debug-leftover warn"
+lint staged
+want tune-warn 0
+has tune-warn 'd.py:1: debug-leftover (warn)'
+install "debug-leftover off *.py"
+lint staged
+want tune-glob 0
+lacks tune-glob 'd.py:1:'
+has tune-glob 'e.js:2: narration (warn)'
+install "* off"
+lint staged
+want tune-all 0
+lacks tune-all 'd.py:1:'
+lacks tune-all 'e.js:'
+
 # --- portability: the same checks under the other awks that are installed ---
 portable() {
 	name=$1
@@ -659,9 +894,9 @@ portable() {
 	chmod +x "$tmp/awk-$name/awk"
 	fixture
 	install "ban t error * 'BAN' unless 'OK' -- m
-ban c error * comment 'TODO' -- c
+ban c error * comment 'MARK' -- c
 ban br error * 'a(' -- x"
-	put a.py 'BAN\nBAN OK\nx = 1  # TODO\ny = 2\n'
+	put a.py 'BAN\nBAN OK\nx = 1  # MARK\ny = 2\n'
 	put m.txt '%s HEAD\n' "$(mk LLLLLLL)"
 	put i.txt 'a\342\200\213b\nnb\302\240\n'
 	PATH=$tmp/awk-$name:$PATH lint staged
