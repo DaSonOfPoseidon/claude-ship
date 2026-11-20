@@ -7,12 +7,20 @@
 # the branch unmerged by SHA, so -D is needed, and only after the remove succeeded).
 # A lock is not a sign of a live agent: an agent's worktree stays locked with its parent session's pid, which
 # outlives the agent. The unit-state facts decide, and the caller checks that no implementer is running.
+# Then two passes over the local branches no worktree holds (claude-ship #286), against GitHub's default branch, freshly
+# fetched. `worktree-agent-*` branches (made by Claude Code for an isolation: worktree agent) are deleted when their
+# tip is on origin's default branch. Every other branch is deleted only when unit-state.sh says `state: merged`
+# with no `unpushed:` and no `diverged:` line. The default branch and any branch a worktree has checked out (the main
+# checkout's included, and a worktree whose directory is gone) are never touched. A branch in any other state is the
+# user's or a live unit's, and prints nothing. The second pass costs two gh calls per local branch.
 # Output, one line each:
 #   removed: <path> <branch>
 #   kept: <path> <branch> <reason>     <branch> is "(none)" for a detached worktree
+#   deleted: <branch>                  a branch with no worktree
+#   kept: - <branch> <reason>          a merged or agent branch that still holds something
 # It finishes with `git worktree prune`. The main checkout and the checkout it runs in are never touched.
 # Exit 0 when it ran to the end (removing nothing or something), 2 on usage, 1 when git or gh failed: it stops at
-# once, before any further removal and before the prune.
+# once, before any further removal and before the prune; what an earlier pass removed stands.
 # Usage: worktree-sweep.sh [owner/repo]   (repo defaults to the current checkout's)
 set -eu
 usage() {
@@ -125,6 +133,84 @@ while IFS=$us read -r path branch locked reason; do
 	git branch -D "$branch" >/dev/null </dev/null || die "git branch -D $branch failed (its worktree $path is already removed)"
 	echo "removed: $path $branch"
 done <"$tmp/records"
+
+# The branch passes below delete local branches that no worktree holds (claude-ship #286): the worktree pass only
+# deletes the branch of a worktree it removed. They compare against GitHub's default branch, freshly fetched (local
+# refs are state the agent controls). A failure here stops the sweep, and the worktree pass's removals stand.
+default=$(gh repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.name </dev/null) || die "gh repo view $slug (default branch) failed: no branch was deleted"
+case $default in
+'' | -*) die "$slug has no usable default branch ($default): no branch was deleted" ;;
+esac
+git check-ref-format --branch "$default" >/dev/null 2>&1 || die "$slug has an odd default branch name ($default): no branch was deleted"
+git fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" 2>"$tmp/err" </dev/null ||
+	die "git fetch origin $default failed: no branch was deleted: $(head -n 3 "$tmp/err")"
+
+# Branches a worktree has checked out are never touched, the main checkout's included. Read after the worktree pass
+# and before the prune, so a worktree whose directory is gone still holds its branch (it has unfinished work).
+git worktree list --porcelain >"$tmp/porcelain" 2>"$tmp/err" || die "git worktree list failed: no branch was deleted: $(head -n 3 "$tmp/err")"
+awk '/^branch refs\/heads\// { print substr($0, 19) }' "$tmp/porcelain" >"$tmp/checked" || die "reading the worktree list failed: no branch was deleted"
+
+# held <branch>: some worktree has the branch checked out.
+held() {
+	grep -qxF -- "$1" "$tmp/checked"
+}
+
+# The branches Claude Code makes for an isolation: worktree agent (`worktree-agent-<id>`) outlive the agent's
+# worktree. One whose tip is on origin's default branch holds nothing more. -D, not -d, after that check: -d compares
+# with HEAD or the branch's upstream, which in the user's checkout may be another or a stale branch, and would refuse
+# a branch the ancestor check has just proved merged.
+git for-each-ref --format='%(refname)' 'refs/heads/worktree-agent-*' >"$tmp/agents" 2>"$tmp/err" || die "git for-each-ref failed: no branch was deleted: $(head -n 3 "$tmp/err")"
+while IFS= read -r ref; do
+	b=${ref#refs/heads/}
+	! held "$b" || continue
+	rc=0
+	git merge-base --is-ancestor "$ref" "refs/remotes/origin/$default" </dev/null 2>"$tmp/err" || rc=$?
+	case $rc in
+	0)
+		git branch -D "$b" >/dev/null </dev/null || die "git branch -D $b failed"
+		echo "deleted: $b"
+		;;
+	1) echo "kept: - $b commits not on origin/$default" ;;
+	*) die "git merge-base $b failed (exit $rc): no more branches were deleted: $(head -n 3 "$tmp/err")" ;;
+	esac
+done <"$tmp/agents"
+
+# Every other local branch is deleted only when its PR is merged and it holds nothing more, the facts the worktree pass
+# uses. A branch in any other state is the user's or a live unit's: it says nothing, so the `kept:` lines stay few.
+# Costs two gh calls per local branch.
+git for-each-ref --format='%(refname)' refs/heads/ >"$tmp/branches" 2>"$tmp/err" || die "git for-each-ref failed: no more branches were deleted: $(head -n 3 "$tmp/err")"
+while IFS= read -r ref; do
+	b=${ref#refs/heads/}
+	case $b in
+	"$default" | worktree-agent-*) continue ;;
+	esac
+	! held "$b" || continue
+	rc=0
+	sh "$state" "$b" "$slug" >"$tmp/state" 2>"$tmp/err" </dev/null || rc=$?
+	case $rc in
+	0) ;;
+	2) continue ;;
+	*)
+		sed 's/^/worktree-sweep.sh: /' "$tmp/err" >&2
+		die "unit-state.sh $b failed (exit $rc): no more branches were deleted"
+		;;
+	esac
+	case $(head -n 1 "$tmp/state") in
+	'state: merged '*) ;;
+	*) continue ;;
+	esac
+	# A worktree that unit-state.sh found and the list above lacked (made meanwhile) holds the branch.
+	if grep -q '^worktree:' "$tmp/state"; then
+		continue
+	elif grep -q '^unpushed:' "$tmp/state"; then
+		echo "kept: - $b commits the merged PR lacks"
+	elif grep -q '^diverged:' "$tmp/state"; then
+		echo "kept: - $b local and origin diverged"
+	else
+		git branch -D "$b" >/dev/null </dev/null || die "git branch -D $b failed"
+		echo "deleted: $b"
+	fi
+done <"$tmp/branches"
 
 git worktree prune || die "git worktree prune failed"
 exit 0

@@ -319,3 +319,11 @@ review finds a new class.
   issues filtered on `review:p3`, but the repo variable `CLAUDE_P3_LABELS` renames that label, so the read succeeded with
   `[]` and the empty list replaced the file's entries in the prompt (claude-ship #112). Derive the filter from the same
   setting the writer uses, and when that setting can't be read, treat the whole read as failed so the fallback applies.
+
+- **A cleanup keyed on one record misses what that record no longer points to.** `worktree-sweep.sh` deleted a branch only
+  together with the worktree it removed, so the `worktree-agent-<id>` branches Claude Code makes for an isolated agent and the
+  branches of merged PRs that never had a worktree piled up for good (82 of them; claude-ship #286), while `orchestrate.md`
+  promised they were cleared. When a cleanup starts from one list (worktrees), also sweep the other kind of record it leaves behind
+  (the branches), with its own proof that each item holds nothing more (the tip on the fetched default branch, a merged PR with
+  nothing unpushed), and never touch what another record still holds (a branch a worktree has checked out). Test each kind
+  of leftover, and the guard that keeps the live one.
