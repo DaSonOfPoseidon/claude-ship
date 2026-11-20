@@ -221,7 +221,8 @@ repo, when `~/.claude/bin/shfmt` is missing or can't parse the command (docs/gat
 After a PR merges, run `./install.sh` again to deploy it. The installed files (the ship agents included), the gate's state in
 `.git/review-gate/`, the lint config in `~/.claude/claude-ship/` and the settings are protected from Claude's edits (and the gate
 denies Claude's `git commit --no-verify` and `-n`, which would skip the pre-commit lint); this repo's source isn't, because
-changes to it go through the same review as any other repo.
+changes to it go through the same review as any other repo. `.git/review-gate/` grows with every review; the user trims it with
+`! ~/.claude/hooks/review-gate.sh --prune [--dry-run] [days]` (`docs/gate.md` › Pruning old state).
 
 The matcher sends the MCP tools that write files, branches or PRs (`push_files`, `create_or_update_file`,
 `delete_file`, `create_branch`, `create_pull_request`, `update_pull_request`, `update_pull_request_branch`,

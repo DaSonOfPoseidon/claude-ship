@@ -557,6 +557,33 @@ tamper check protects with the rest of `~/.claude/claude-ship/` (no extra patter
 shell-write checks already cover it), and `codex-request.sh` reads it (`docs/scripts.md`). Literal words only, as for every
 check here: a script name built at run time is out of scope (`AGENTS.md` › Gate scope).
 
+### Pruning old state
+
+`.git/review-gate/` only grows (one checkout's held 1876 files, 21 MB, in a month). The user prunes it from the repo with
+`! ~/.claude/hooks/review-gate.sh --prune [--dry-run] [days]` (#107): it deletes the files older than `days` (30 by default;
+whole number, no leading zero) that nothing will read again, and says how many. `--dry-run` lists the names and deletes
+nothing. A commit counts as live when `git rev-list --all` has it: any branch, remote-tracking ref, tag or stash, and every
+linked worktree's HEAD (a detached one included). It reads that list once, and if git fails it deletes nothing and exits 2
+(an empty list would make every commit look dead). It needs no jq and no stdin, and it never creates the directory.
+
+| File | Read later by | Pruned when it is old and |
+|---|---|---|
+| `<sha>.prompt.md`, `<sha>.verify.md` | only the run that wrote them | the commit is on no ref |
+| `<sha>.json`, `<sha>.verify.json` | the cache check on a re-push of that head, and the cost line | the commit is on no ref |
+| `<sha>.json.err`, `<sha>.verify.json.err`, `<sha>.json.failed`, `<sha>.verify.json.failed` | nothing | the commit is on no ref |
+| `<sha>.pass` | the head check, the scoping loop, the pre-push check | the commit is on no ref (an old pass could scope a later review) |
+| `patch-<40 hex>.pass` | the diff-id cache, keyed by the branch diff, not a commit | always (losing one only forces a re-review) |
+| `p3-<digits>.json` | `p3-issue.sh`, in the run that wrote it | always |
+| `<sha>.md` | `gate-stats.sh` (history) | **never** |
+| `<sha>.waived` | the head check, the pre-push check, `gate-stats.sh` | **never** (the user's decision) |
+| `p3-filed.tsv` | the P3 dedupe and the reviewers' prompt | **never** |
+| any other name, and subdirectories | | **never**: only the exact names above are deleted |
+
+Only the user prunes, as for waivers: the tamper check denies a run of `review-gate.sh` with `--prune` among its arguments,
+as the command or as the script a shell runs (the same reading as `codex-allow.sh` above), and a name-only mention
+(`grep -- --prune hooks/review-gate.sh`, a commit message, `sh -n`, `sh tests/gate-prune.sh`) passes. `install.sh` does not
+prune, since Claude runs it after each merge.
+
 ## Reviewer pipeline
 
 Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer uses Opus.
