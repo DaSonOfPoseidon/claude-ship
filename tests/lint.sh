@@ -404,6 +404,28 @@ lacks literal-glob 'starx.txt'
 has literal-glob 'trail\:1: b (error)'
 lacks literal-glob 'trail:1:'
 
+# A skip glob and a leading \* take a backslash-escaped wildcard as a literal too, and compile without an awk error.
+fixture
+install "skip docs/a\\*b.txt
+skip docs/c\\?d.txt
+ban t error * 'BAN' -- m
+ban e error \\*x 'BAN' -- m"
+put 'docs/a*b.txt' 'BAN\n'
+put docs/axb.txt 'BAN\n'
+put 'docs/c?d.txt' 'BAN\n'
+put docs/cxd.txt 'BAN\n'
+put '*x' 'BAN\n'
+put ax 'BAN\n'
+lint staged
+want literal-skip 1
+lacks literal-skip 'docs/a*b.txt'
+has literal-skip 'docs/axb.txt:1: t (error)'
+lacks literal-skip 'docs/c?d.txt'
+has literal-skip 'docs/cxd.txt:1: t (error)'
+has literal-skip '*x:1: e (error)'
+lacks literal-skip 'ax:1: e'
+elacks literal-skip 'invalid regular expression'
+
 # comment: matches the comment text only, by extension.
 fixture
 install "ban c error * comment 'TODO' -- c
@@ -514,6 +536,20 @@ has conflict 'm.txt:2: conflict-marker (error)'
 has conflict 'm.txt:4: conflict-marker (error)'
 has conflict 'm.txt:6: conflict-marker (error)'
 has conflict 'm.txt:7: conflict-marker (error)'
+# An unlabeled opener is an opener (git writes a label, but a hand edit may drop it): it is reported on its own line,
+# alone or beside a separator. Eight angle brackets, or text glued on, is not a marker.
+fixture
+put m.txt 'ok\n%s\nmine\n%s\ntheirs\n' "$(mk LLLLLLL)" "$(mk EEEEEEE)"
+put n.txt '%s\n%sx\n%s\n' "$(mk LLLLLLL)" "$(mk LLLLLLL)" "$(mk LLLLLLLL)"
+put o.txt '%s\n' "$(mk RRRRRRR)"
+lint staged
+want bare-opener 1
+has bare-opener 'm.txt:2: conflict-marker (error)'
+has bare-opener 'm.txt:4: conflict-marker (error)'
+has bare-opener 'n.txt:1: conflict-marker (error)'
+lacks bare-opener 'n.txt:2:'
+lacks bare-opener 'n.txt:3:'
+lacks bare-opener 'o.txt:'
 # A bare separator alone (markdown setext heading) isn't a conflict; mid-line markers aren't either.
 fixture
 put s.md 'Title\n%s\n\nText %s HEAD\n' "$(mk EEEEEEE)" "$(mk LLLLLLL)"
@@ -580,6 +616,8 @@ install "$BAN"
 long=$(printf '%0130d' 0 | tr 0 x)
 put 'we"ird.txt' 'BAN esc\033[31m\n%s BAN\nBAN no newline' "$long"
 put "$(printf 'tab\tname.txt')" 'BAN\n'
+put "$(printf 'esc\033[31mname.txt')" 'BAN\n'
+put "$(printf 'nl\nforged:9: x (error): y.txt')" 'BAN\n'
 lint staged
 want quoted-paths 1
 has quoted-paths 'we"ird.txt:1: t (error): remove BAN'
@@ -589,6 +627,13 @@ has quoted-paths 'BAN esc?[31m'
 lacks quoted-paths "$(printf '\033')"
 lacks quoted-paths "$long"
 has quoted-paths "$(printf '%0120d' 0 | tr 0 x)"
+# A path's control characters are replaced too, so a name can't act on the terminal or forge a hit line.
+has quoted-paths 'esc?[31mname.txt:1: t (error)'
+has quoted-paths 'nl?forged:9: x (error): y.txt:1: t (error)'
+if grep -q '^forged' "$tmp/out"; then
+	echo "FAIL (quoted-paths): a newline in a path started a forged line"
+	fail=1
+fi
 
 # staged mode reads the index git is told to use.
 fixture
@@ -834,10 +879,10 @@ x_st=set_'trace'
 x_pry=binding.p'ry'
 x_bye=bye'bug'
 x_dbm=d'bg!'
-put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\nlet %s$enabled = 1;\nlet $%s = 2;\nconst o = { %s: false };\nf({ %s: e });\n/* n */ %s;\n/* n %s */\n */ %s;\nok({ %s });\nif (x) %s\nlet q = { "%s": 1 };\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
+put d.js '%s;\nlet %sEnabled = 1;\n// %s\nif (x) %s;\nlet %s$enabled = 1;\nlet $%s = 2;\nconst o = { %s: false };\nf({ %s: e });\n/* n */ %s;\n/* n %s */\n */ %s;\nok({ %s });\nif (x) %s\nlet q = { "%s": 1 };\n*x; %s;\n' "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg" "$x_dbg"
 put d.py '%s()\nmy_%s()\npdb.%s()\nimport pdb\nimport ipdb\nimport pdbx\nx.%s()\n# %s()\nipdb.%s()\n' "$x_bp" "$x_bp" "$x_st" "$x_bp" "$x_bp" "$x_st"
 put d.rb '%s\n%s\nmy%s\n# %s\n' "$x_pry" "$x_bye" "$x_bye" "$x_bye"
-put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n*out = %s(x);\n * %s(x)\n/* n */ %s(x);\n/* n %s(x) */\n' "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm"
+put d.rs '%s(x);\nmy%s(x);\n// %s(x);\n*out = %s(x);\n * %s(x)\n/* n */ %s(x);\n/* n %s(x) */\n*slot = %s(value);\n' "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm" "$x_dbm"
 put d.md 'use %s; or %s()\n' "$x_dbg" "$x_bp"
 put d.sh '%s\n' "$x_dbg"
 # A trigger word inside a quoted string is text, not a statement. The check counts the quotes before the hit, so a line
@@ -891,6 +936,9 @@ has debug 'd.js:11: debug-leftover (error)'
 has debug 'd.js:12: debug-leftover (error)'
 has debug 'd.js:13: debug-leftover (error)'
 lacks debug 'd.js:14:'
+# A line that starts with * is a comment continuation only when whitespace or the end follows it: a dereference is code.
+has debug 'd.js:15: debug-leftover (error)'
+has debug 'd.rs:8: debug-leftover (error)'
 has debug 'd.py:1: debug-leftover (error): Remove the debugger call;'
 lacks debug 'd.py:2:'
 has debug 'd.py:3: debug-leftover (error)'
@@ -913,7 +961,7 @@ has debug 'd.rs:6: debug-leftover (error)'
 lacks debug 'd.rs:7:'
 lacks debug 'd.md:'
 lacks debug 'd.sh:'
-has debug 'lint: 29 error(s), 0 warning(s)'
+has debug 'lint: 31 error(s), 0 warning(s)'
 
 # placeholder: error, in comments only (any language with comments; markdown has none).
 fixture
@@ -1014,7 +1062,7 @@ x_on='.on''ly('
 x_oe='.on''ly.each('
 x_se='.sk''ip.each('
 x_te='.on''ly.each`'
-put t.js 'it%s"a", f);\ndescribe%s"b", f);\n%s"c", f);\n%s"d", f);\n%s"e", f);\n%s"f", f);\nit.skipIf(c)("g", f);\nmodel.fit(x);\nbenefit(x);\n$%s"h", f);\nit%s[1])("i", f);\ntest%s[1])("j", f);\nit%sa | b`("k", f);\nit.each([1])("l", f);\nreturn cursor%soffset).limit(20);\nq = query%sx);\ntest.concurrent%s"m", f);\ndescribe%s[1])("n", f);\n' "$x_sk" "$x_on" 'x''it(' 'x''describe(' 'f''it(' 'f''describe(' 'f''it(' "$x_oe" "$x_se" "$x_te" "$x_sk" "$x_on" "$x_on" "$x_oe"
+put t.js 'it%s"a", f);\ndescribe%s"b", f);\n%s"c", f);\n%s"d", f);\n%s"e", f);\n%s"f", f);\nit.skipIf(c)("g", f);\nmodel.fit(x);\nbenefit(x);\n$%s"h", f);\nit%s[1])("i", f);\ntest%s[1])("j", f);\nit%sa | b`("k", f);\nit.each([1])("l", f);\nreturn cursor%soffset).limit(20);\nq = query%sx);\ntest.concurrent%s"m", f);\ndescribe%s[1])("n", f);\nconst model = fit(data);\n%s"o", () => {\n  await fit(X, y);\ndescribe("p", () => { %s"q", f); });\nconst m = fit("r", f);\nQUnit%s"s", f);\nQUnit%s"t", f);\nDeno.test%s"u", f);\nQUnit.module%s"v", f);\nt.skip.is(a, b);\nDeno.test("w", f);\n' "$x_sk" "$x_on" 'x''it(' 'x''describe(' 'f''it(' 'f''describe(' 'f''it(' "$x_oe" "$x_se" "$x_te" "$x_sk" "$x_on" "$x_on" "$x_oe" 'f''it(' 'f''it(' "$x_on" "$x_sk" "$x_on" "$x_sk"
 put t.py '@pytest.mark.%s\n@pytest.mark.%s(reason="x")\n@unittest.%s("x")\n@pytest.mark.skipif(c)\n@unittest.skipIf(c)\nx.skip(3)\n' 'sk''ip' 'sk''ip' 'sk''ip'
 put t.go 't.%s"x")\nt.%sf("x")\nt.%sNow()\nst.Skip("x")\n' 'Sk''ip(' 'Sk''ip' 'Sk''ip'
 put t.rs '#[%s]\n#[%s = "slow"]\n#[ignored]\n' 'ig''nore' 'ig''nore'
@@ -1035,6 +1083,16 @@ lacks skipped 't.js:15:'
 lacks skipped 't.js:16:'
 has skipped 't.js:17: skipped-test (warn)'
 has skipped 't.js:18: skipped-test (warn)'
+# fit( is a focused test only as a statement that starts with a title, not an ML call or part of an expression.
+lacks skipped 't.js:19:'
+has skipped 't.js:20: skipped-test (warn)'
+lacks skipped 't.js:21:'
+has skipped 't.js:22: skipped-test (warn)'
+lacks skipped 't.js:23:'
+# QUnit and Deno declare tests with skip and only too; an assertion skip (ava's t.skip.is) is not a test.
+for l in 24 25 26 27; do has skipped "t.js:$l: skipped-test (warn)"; done
+lacks skipped 't.js:28:'
+lacks skipped 't.js:29:'
 for l in 1 2 3; do has skipped "t.py:$l: skipped-test (warn)"; done
 lacks skipped 't.py:4:'
 lacks skipped 't.py:5:'
@@ -1048,12 +1106,12 @@ has skipped 't.java:1: skipped-test (warn)'
 has skipped 't.java:2: skipped-test (warn)'
 lacks skipped 't.java:3:'
 lacks skipped 't.md:'
-has skipped 'lint: 0 error(s), 21 warning(s)'
+has skipped 'lint: 0 error(s), 27 warning(s)'
 
 # todo-no-issue: a warning, for a to-do marker comment with no issue number, tracker key or link.
 fixture
 x_todo='TO''DO'
-put t.py '# %s fix\nx = 1  # %s later\n# FIX''ME\n# X''XX\n# HA''CK\n# %s(#12) fix\n# %s: see https://x.example/1\n# %s(PROJ-123) fix\n# %ss\nx = "%s"\n' "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo"
+put t.py '# %s fix\nx = 1  # %s later\n# FIX''ME\n# X''XX\n# HA''CK\n# %s(#12) fix\n# %s: see https://x.example/1\n# %s(PROJ-123) fix\n# %ss\nx = "%s"\n# %s: handle UTF-8 input\n# FIX''ME: SHA-256 only\n# %s PROJ-12: x\n# %s ABC-1234 x\n# %s(alice, PROJ-12) x\n' "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo" "$x_todo"
 put t.js 'const u = "http://%s.example";\n// %s later\n' "$x_todo" "$x_todo"
 put t.md '# %s heading\n' "$x_todo"
 lint staged
@@ -1064,10 +1122,14 @@ has todo 't.py:3: todo-no-issue (warn)'
 has todo 't.py:4: todo-no-issue (warn)'
 has todo 't.py:5: todo-no-issue (warn)'
 for l in 6 7 8 9 10; do lacks todo "t.py:$l:"; done
+# A tracker key counts only right after the marker (TODO(PROJ-12), TODO PROJ-12), so UTF-8 or SHA-256 in the text doesn't.
+has todo 't.py:11: todo-no-issue (warn)'
+has todo 't.py:12: todo-no-issue (warn)'
+for l in 13 14 15; do lacks todo "t.py:$l:"; done
 lacks todo 't.js:1:'
 has todo 't.js:2: todo-no-issue (warn)'
 lacks todo 't.md:'
-has todo 'lint: 0 error(s), 6 warning(s)'
+has todo 'lint: 0 error(s), 8 warning(s)'
 
 # new-comment is off by default, and flags every added comment once turned on, except a shebang. The // in a URL isn't a
 # comment.

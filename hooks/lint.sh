@@ -764,17 +764,26 @@ function clip(text) {
 	gsub(/\t/, " ", text)
 	return substr(text, 1, 120)
 }
-function hit(rule, level, msg, text) {
+# safe_path: a path for output. A path can hold any byte but NUL and git quotes it, so unquote() hands back raw escape
+# sequences and newlines; those become ? (a tab stays).
+function safe_path(p) {
+	gsub(/[\001-\010\012-\037\177]/, "?", p)
+	return p
+}
+function hit(rule, level, msg, text,   sp) {
 	if (only != "" && rule != only) return
 	if (rule in here) return
 	here[rule] = 1
+	sp = safe_path(path)
 	# hook mode splits the hits by level into two files, which the shell turns into the hook's JSON.
-	if (m == "hook") printf "%s:%d: %s (%s): %s\n    %s\n", path, ln, rule, level, msg, clip(text) > ((level == "error") ? ENVIRON["LINT_OUT_E"] : ENVIRON["LINT_OUT_W"])
-	else printf "%s:%d: %s (%s): %s\n    %s\n", path, ln, rule, level, msg, clip(text)
+	if (m == "hook") printf "%s:%d: %s (%s): %s\n    %s\n", sp, ln, rule, level, msg, clip(text) > ((level == "error") ? ENVIRON["LINT_OUT_E"] : ENVIRON["LINT_OUT_W"])
+	else printf "%s:%d: %s (%s): %s\n    %s\n", sp, ln, rule, level, msg, clip(text)
 	if (level == "error") nerr++
 	else nwarn++
 }
 
+# is_open: an opener, with or without the label git appends (<<<<<<< HEAD). The closer and the base marker still need
+# their space: a bare >>>>>>> or ||||||| is more likely text than a marker.
 function is_open(text) {
 	return substr(text, 1, 7) == "<<<<<<<" && (length(text) == 7 || substr(text, 8, 1) == " ")
 }
@@ -790,7 +799,7 @@ function added(text,   a, k, idx, target, e, rest) {
 	split("", here)
 	if (lvl_cm != "off") {
 		a = substr(text, 1, 8)
-		if (a == "<<<<<<< " || a == ">>>>>>> " || a == "||||||| ") hit("conflict-marker", lvl_cm, "resolve the merge conflict and delete the marker line", text)
+		if (is_open(text) || a == ">>>>>>> " || a == "||||||| ") hit("conflict-marker", lvl_cm, "resolve the merge conflict and delete the marker line", text)
 		else if (text ~ /^=======[ \t]*$/ && (path in has_open)) hit("conflict-marker", lvl_cm, "resolve the merge conflict and delete the marker line", text)
 	}
 	if (lvl_iv != "off") {

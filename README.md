@@ -289,15 +289,17 @@ skip <glob> ...
   and globs also work as a settings line for `<id>`, and `ban` lines with one id are one rule with several patterns. Its
   globs may include `!glob` as a settings line's do (`*.sh,!tests/*` is every shell script but the tests). With
   `comment` the EREs match the comment text only. POSIX ERE has no `\b`; write `(^|[^[:alnum:]_])`.
+- Globs are shell patterns: `*` (spans `/`), `?` and `[...]`. A backslash makes the next character literal, so
+  `skip docs/a\*b.txt` skips the file named `a*b.txt` and nothing else.
 - `skip` names paths that are never linted, and adds up across layers. The default list is `*.lock`,
   `package-lock.json`, `*.min.js`, `*.min.css`, `vendor/*`, `node_modules/*` and `*.svg`.
 - A malformed line (an unknown level, a `ban` with no ` -- `, an invalid ERE) prints `lint: <file>:<n>: ignored: <why>`
   and is skipped, so a typo doesn't lock every repo.
 - Comment text depends on the file's extension and is approximate: `#` for sh, py, rb, yaml, toml and the like, `//` and
   `/* */` lines for the C family, `--` for sql, lua and hs. Other extensions (md included) have no comments.
-- Two rules are coded, with a level only: `conflict-marker` (`<<<<<<< `, `>>>>>>> ` and `||||||| ` at the start of a
-  line, and a bare `=======` only when the file also adds a `<<<<<<<`) and `invisible-char` (zero-width and
-  bidi-control characters, and a byte order mark anywhere but the start of the file).
+- Two rules are coded, with a level only: `conflict-marker` (`<<<<<<<` alone or followed by a space, `>>>>>>> ` and
+  `||||||| ` at the start of a line, and a bare `=======` only when the file also adds a `<<<<<<<`) and
+  `invisible-char` (zero-width and bidi-control characters, and a byte order mark anywhere but the start of the file).
 
 There are no inline disable comments: an exception is a path glob in a config file.
 
@@ -326,14 +328,14 @@ Each hit's message says what to do instead.
 
 | Rule | Level | Flags |
 |---|---|---|
-| `conflict-marker` | error | `<<<<<<< `, `>>>>>>> ` and `||||||| ` at the start of a line (coded rule, see above) |
+| `conflict-marker` | error | `<<<<<<<` (with or without a label), `>>>>>>> ` and `||||||| ` at the start of a line (coded rule, see above) |
 | `invisible-char` | error | zero-width, bidi-control and mid-file byte-order-mark characters (coded rule) |
 | `debug-leftover` | error | js/ts `debugger`; py `breakpoint()`, `pdb.set_trace(`, `import pdb`/`ipdb`; rb `binding.pry`, `binding.irb`, `byebug`; rs `dbg!(`. A line that is only a comment isn't flagged, and neither is a hit in a trailing comment (`breakpoint()  # note` is still a hit) or inside a quoted string. Approximate: the linter counts the quotes before the hit (double quotes only in rs), so an escaped quote or mixed quoting can miscount, a line with a quoted mention and a real statement is exempt, and a comment leader inside a string before a real hit (`"a # b"; breakpoint()`) hides it |
 | `placeholder` | error | comments such as `... rest of the code`, `existing code here`/`unchanged`, `TODO implement`, `your code here`, `implementation goes here` |
 | `narration` | warn | comments that start with `Added`, `Changed`, `Updated`, `Modified`, `Removed`, `Fixed`, `Moved`, `Renamed`, `Replaced`, `Refactored` or `New:`, or say `as requested` / `per your request` |
 | `new-suppression` | warn | `noqa`, `eslint-disable`, `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, `type: ignore`, `pyright: ignore`, `shellcheck disable`, `nolint`, `rubocop:disable`, `#[allow(`, `@SuppressWarnings`, `NOSONAR`, `istanbul ignore`, `pragma: no cover`. Off for `*.md`, `*.mdx`, `*.txt`, `*.rst` and `*.adoc` |
-| `skipped-test` | warn | js/ts `.skip(`, `.only(`, `.skip.each(`, `.only.each(` (also as a tagged template) on a test declaration (`it`, `test`, `describe`, `context`, `suite`, `specify`, with modifiers like `test.concurrent.only(`; `cursor.skip(n)` is fine), `xit(`, `xdescribe(`, `fit(`, `fdescribe(`; py `@pytest.mark.skip`, `@unittest.skip`; go `t.Skip(`; rs `#[ignore]`; java/kt `@Disabled`. Conditional skips (`it.skipIf(`, `@pytest.mark.skipif`, `@unittest.skipIf`) are deliberate and aren't flagged. Code files only, so prose that mentions `.only(` is fine |
-| `todo-no-issue` | warn | `TODO`, `FIXME`, `XXX` or `HACK` in a comment with no `#123`, tracker key (`PROJ-123`) or link |
+| `skipped-test` | warn | js/ts `.skip(`, `.only(`, `.skip.each(`, `.only.each(` (also as a tagged template) on a test declaration (`it`, `test`, `describe`, `context`, `suite`, `specify`, `QUnit`, `Deno`, with modifiers like `test.concurrent.only(`, `QUnit.module.skip(` or `Deno.test.only(`; `cursor.skip(n)` and ava's `t.skip.is(` assertion skip are fine), and a statement of its own that starts with `xit(`, `xdescribe(`, `fdescribe(` or `fit(` and a quoted title (`model = fit(data)` is fine); py `@pytest.mark.skip`, `@unittest.skip`; go `t.Skip(`; rs `#[ignore]`; java/kt `@Disabled`. Conditional skips (`it.skipIf(`, `@pytest.mark.skipif`, `@unittest.skipIf`) are deliberate and aren't flagged. Code files only, so prose that mentions `.only(` is fine |
+| `todo-no-issue` | warn | `TODO`, `FIXME`, `XXX` or `HACK` in a comment with no `#123`, link or tracker key right after the marker (`TODO(PROJ-123)`, `TODO PROJ-123`; `UTF-8` in the text is not a key) |
 | `new-comment` | off | every added comment except a shebang: turn it on with `new-comment warn` (or `error`) for a no-comments policy |
 
 Tune any of them in your own file, for example `new-suppression off tests/*`, `skipped-test error` or `* off`.
