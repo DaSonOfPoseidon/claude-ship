@@ -577,7 +577,7 @@ linked worktree's HEAD (a detached one included). It reads that list once, and i
 | `<sha>.json`, `<sha>.verify.json` | the cache check on a re-push of that head, and the cost line | the commit is on no ref |
 | `<sha>.json.err`, `<sha>.verify.json.err`, `<sha>.json.failed`, `<sha>.verify.json.failed` | nothing | the commit is on no ref |
 | `<sha>.pass` | the head check, the scoping loop, the pre-push check | the commit is on no ref (an old pass could scope a later review) |
-| `patch-<40 or 64 hex>.pass` | the diff-id cache, keyed by the branch diff, not a commit | always (losing one only forces a re-review) |
+| `patch-<40 or 64 hex>.pass` | the diff-id cache, keyed by the branch diff, not a commit; its first line is the key of the review rules it passed under | always (losing one only forces a re-review) |
 | `p3-<digits>.json` | `p3-issue.sh`, in the run that wrote it | always |
 | `<sha>.md` | `gate-stats.sh` (history) | **never** |
 | `<sha>.waived` | the head check, the pre-push check, `gate-stats.sh` | **never** (the user's decision) |
@@ -625,8 +625,12 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   the full review (#105). A rename counts both its old and new path, and if `git diff` fails to list the changed
   paths the push is blocked.
 - Results are cached per HEAD commit and per branch diff (`git patch-id`) in `.git/review-gate/`, so a re-push or
-  a clean rebase costs nothing. After a commit passes, later pushes review only the newer commits, with a sweep
-  for the same class of bug across the branch. A commit that was already reviewed keeps its findings, so
+  a clean rebase costs nothing. The branch-diff pass is also keyed on the review rules it passed under (a hash of where
+  they came from and their text): a rules change on the default branch, a dropped `skip` rule above all, means a
+  re-review after a rebase (#298). A pass file that is empty (from before the key), unreadable or holds another key
+  is a miss. The false positives, pitfalls, checklist and prompts also shape a review but change often, so they are
+  not in the key. After a commit passes, later pushes review only the newer commits, with a sweep for the same class
+  of bug across the branch. A commit that was already reviewed keeps its findings, so
   re-pushing it re-blocks without a new review.
 - The project's review rules come from the default branch's `AGENTS.md` (a branch can't weaken its own review),
   else from the branch's own, which is how the bootstrap PR that adds them gets reviewed. The fallback is for a
@@ -704,7 +708,7 @@ the rules that match the reviewed files into the prompt, and `skip` rules leave 
   shows a skipped `cache/y.lock` too. `$changed`, the commit list and the branch
   stat are unchanged. The review's kind (docs or code) is judged on the paths that stay. When nothing stays, the gate
   prints `every changed file matches a skip rule` and passes, like an empty diff. The patch-id pass cache is still keyed
-  on the whole branch diff.
+  on the whole branch diff (and the rules).
 - **Never skipped**, whatever a rule says (instructions still apply to them): any `AGENTS.md` or `CLAUDE.md`, `.claude/*`,
   `.github/*`, `docs/pitfalls.md`, `docs/false-positives.md`, `docs/CONTRIBUTING.md` and `CONTRIBUTING.md`. These steer the gate (the rules, the checklist, the pitfalls, the false positives) or Claude from
   the repo, so a skip rule that hid them would let a change to what steers the review go unreviewed. And when any

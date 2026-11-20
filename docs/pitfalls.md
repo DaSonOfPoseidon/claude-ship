@@ -97,6 +97,11 @@ review finds a new class.
   concurrency group so comment runs stop cancelling the push run let a reopened PR's push run read 0 threads and
   write `success` over a comment run's `failure` (claude-ship #75). Keep one group per PR with
   `cancel-in-progress: false`, so the last run to start reads the latest state.
+- **A cached verdict outlives the inputs that produced it.** The branch-diff pass was keyed on the diff's patch-id, which
+  survives a rebase, so after the default branch dropped a `*.lock skip` rule a rebased branch reused a pass made when
+  the lockfile was never reviewed (claude-ship #298). A cache key holds every input that changes the result, or the
+  entry stores them and the hit compares them. An empty, unreadable or old-format entry is a miss, never a hit. Related:
+  a status that goes stale when its inputs change some other way, above.
 - **A hook sees the whole command at once, but each step runs in the state of its own moment.** The gate
   resolved `{owner}/{repo}` in the directory after a trailing `cd`, while the `gh api` before it ran in the
   first one (claude-ship #9). Check each state a step could run in. State the gate reads up front (git config,

@@ -1693,6 +1693,15 @@ if [ -z "$rules" ]; then
 	exit 2
 fi
 
+# A key of the rules this review runs under: where they came from and their text. The branch-diff pass records it and
+# only a pass made under the same key is reused, since the patch-id survives a rebase and the rules (a path `skip` rule
+# above all) decide what a pass covered (claude-ship #298). The false positives, pitfalls, checklist and prompts also
+# shape a review but change often; keying on them would void most hits, so they stay out. An empty key never matches.
+rules_key=$(printf '%s\n%s\n' "$rules_ref" "$rules" | git hash-object --stdin) && [ -n "$rules_key" ] || {
+	echo "Blocked: couldn't hash the review rules for the pass cache. Retry the push." >&2
+	exit 2
+}
+
 # The reviewer's other context, the review checklist and docs/pitfalls.md, comes from the default branch too: a
 # branch that edits them would steer its own review (its edits are in the diff, reviewed as changes). ctx_file
 # <path>... sets ctx_ref and ctx_text to the first of the paths that exists on the default branch, else on the
@@ -1721,17 +1730,21 @@ ctx_file() {
 	return 1
 }
 
-# Records a pass for HEAD and for its branch diff.
+# Records a pass for HEAD (an empty file: the hooks only test that it exists) and for its branch diff (holding the key of
+# the rules it passed under).
 pass() {
 	: >"$state/$head.pass"
 	if [ -n "$patch_id" ]; then
-		: >"$state/patch-$patch_id.pass"
+		printf '%s\n' "$rules_key" >"$state/patch-$patch_id.pass"
 	fi
 }
 
-# The same branch diff as a commit that already passed (after a rebase, say) needs no new review.
+# The same branch diff as a commit that already passed (after a rebase, say) needs no new review, if it passed under the
+# same rules. A file that is empty (made before the key), unreadable or holds another key is a miss, and costs a review.
 patch_id=$(git diff "$upstream"...HEAD | git patch-id --stable | cut -d' ' -f1)
-if [ -n "$patch_id" ] && [ -e "$state/patch-$patch_id.pass" ]; then
+if [ -n "$patch_id" ] && [ -e "$state/patch-$patch_id.pass" ] &&
+	patch_key=$(head -n 1 "$state/patch-$patch_id.pass" 2>/dev/null) &&
+	[ -n "$patch_key" ] && [ "$patch_key" = "$rules_key" ]; then
 	echo "review-gate: this branch diff already passed review." >&2
 	pass
 	exit 0
@@ -1761,7 +1774,7 @@ changed=$(git diff --name-only --no-renames "$range") || {
 # review covers, and the paths a `skip` rule leaves out of it. `skip` counts only in the default branch's rules: a branch that
 # wrote the rules itself (the bootstrap fallback) could skip its own files. AGENTS.md, CLAUDE.md, .claude, .github and the
 # gate's context files are never skipped (never_skipped). The kind is judged on the paths that stay, and the pass cache above
-# stays keyed on the whole branch diff.
+# stays keyed on the whole branch diff and the rules.
 path_rules=$(path_rules_of "$rules") || {
 	echo "Blocked: couldn't read the path rules in AGENTS.md on $rules_ref. Retry the push." >&2
 	exit 2
