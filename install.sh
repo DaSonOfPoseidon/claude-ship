@@ -14,6 +14,7 @@
 # counts as a registration), and says when the PR loop's CLAUDE_CODE_FORK_SUBAGENT=0 setting is missing. It also fails (exit 1) when a hook named in a ship agent's
 # frontmatter was not deployed or is not executable (#122). It creates the install's hygiene-lint file,
 # ${CLAUDE_HOME:-$HOME/.claude}/claude-ship/lint, with a commented header when it is missing, and never overwrites it.
+# It removes the hooks/ and agents/ship-*.md files that origin/main's history has and main no longer does (#108).
 set -eu
 repo=${CLAUDE_SHIP_REPO:-$(cd "$(dirname "$0")" && pwd)}
 dest=${CLAUDE_HOME:-$HOME/.claude}
@@ -56,6 +57,8 @@ lock_list() {
 	for f in "$tmp"/hooks/*; do printf '1 %s\n' "$dest/hooks/${f##*/}"; done
 	printf 'r %s\n' "$dest/skills/ship"
 	for f in "$tmp"/agents/ship-*.md; do printf '1 %s\n' "$dest/agents/${f##*/}"; done
+	# The files main has dropped (see $tmp/stale below): flagged by an earlier install, so lifted before they are removed.
+	while IFS= read -r f; do printf '1 %s\n' "$f"; done <"$tmp/stale"
 	printf '1 %s\n' "$dest/bin/shfmt"
 	printf 'r %s\n' "$dest/git-hooks"
 	# $1 set: the managed paths too (they are lifted whether or not this run writes them, locked only when it did).
@@ -102,6 +105,27 @@ if ! jq -es 'length == 1 and (.[0] | ((.hooks | keys) == ["PreToolUse"] or (.hoo
 		and all(.hooks[]; .type == "command" and (.command | type == "string") and (.timeout | type == "number")))))' "$tmp/settings/claude-ship.json" >/dev/null 2>&1; then
 	echo "install: settings/claude-ship.json on origin/main isn't a valid managed-settings drop-in (a bug there); nothing was installed." >&2
 	exit 1
+fi
+# The files main has dropped (#108), one absolute path per line in $tmp/stale: a hooks/<name> or agents/ship-<name>.md that
+# some commit of origin/main's history has (listed without rename detection, so no diff.renames setting hides a name), that
+# origin/main no longer has, and that is a regular file here (never a symlink or a directory). The history, not a
+# manifest: a file the user could edit must not decide what gets deleted as root. A history that can't be read (or a
+# shallow clone's short one) means fewer names, so fewer deletions. A quoted path (one git prints with a `"`, because of a
+# special character in it) is left alone.
+: >"$tmp/stale"
+if git -C "$repo" log --no-renames --format= --name-only origin/main -- hooks agents >"$tmp/history" 2>/dev/null; then
+	sort -u "$tmp/history" >"$tmp/history.sorted"
+	while IFS= read -r path; do
+		case $path in
+		\"* | hooks/*/* | agents/*/* | hooks/.*) continue ;;
+		hooks/?* | agents/ship-?*.md) ;;
+		*) continue ;;
+		esac
+		[ ! -e "$tmp/$path" ] || continue
+		if [ -f "$dest/$path" ] && [ ! -L "$dest/$path" ]; then printf '%s\n' "$dest/$path"; fi
+	done <"$tmp/history.sorted" >"$tmp/stale"
+else
+	echo "install: warning: couldn't read origin/main's history, so files main has dropped weren't removed." >&2
 fi
 # Lift the flags on everything this script is about to write (also the rm -rf of skills/ship below), and check that it
 # worked: a flag that can't be lifted (not root) must stop the install before the first write, not half way through it.
@@ -156,6 +180,11 @@ fi
 # File by file: agents/ also holds the user's own agents.
 cp "$tmp"/agents/ship-*.md "$dest/agents/"
 cp "$tmp"/hooks/* "$dest/hooks/"
+# Only now that main's files are in place: the dropped ones go (their flag was lifted with the rest). A failed rm stops the install.
+while IFS= read -r f; do
+	rm -f "$f"
+	echo "Removed $f (no longer in origin/main)."
+done <"$tmp/stale"
 rm -rf "$dest/skills/ship"
 cp -R "$tmp/skills/ship" "$dest/skills/ship"
 cp "$tmp/scripts/codex-status.sh" "$dest/skills/ship/codex-status.sh"
