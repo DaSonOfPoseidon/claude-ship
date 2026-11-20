@@ -8,8 +8,12 @@ caught are in [`pitfalls.md`](pitfalls.md), and the label map and variables `p3-
 ## `scripts/codex-status.sh`
 
 The only copy of the status script. Repos run it through this repo's action (`action.yml`, called at `@v1`), and
-`install.sh` deploys it into the ship skill for local checks. `DRY_RUN=1` prints the status instead of setting
-it; `HEAD_SHA` checks another commit, to test against past reviews.
+`install.sh` deploys it into the ship skill for local checks. It sets the status only in GitHub Actions
+(`GITHUB_ACTIONS` exactly `true`, which GitHub sets on every step, so the action posts as before). Anywhere else it
+prints the status and says on stderr that it set nothing: run by hand, it would post as the user, branch protection
+requires the status from Actions, and the newer one blocks the merge (#290, #291). `CODEX_STATUS_SET=1` sets it by
+hand anyway, for debugging the action from a shell. `DRY_RUN=1` never sets it, in Actions too (and adds no stderr
+note); `HEAD_SHA` checks another commit, to test against past reviews.
 
 | State | When |
 |---|---|

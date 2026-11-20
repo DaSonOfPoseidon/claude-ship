@@ -333,3 +333,9 @@ review finds a new class.
   docs called the remove a guard of the contents. Say what a guard does not see (`--ignored` shows them), tell the user
   what a removal deletes, and fail closed when the listing itself fails. Test with an ignored file, with several, and with
   a listing that fails.
+
+- **A script that both computes and publishes a value publishes under the wrong identity when run by hand.** Run from a
+  shell to read the verdict, `codex-status.sh` set the `codex-review` status with the user's gh token; branch protection
+  requires that status from GitHub Actions, and the newer one from another identity blocked the merge (claude-ship #290,
+  #291). Make the publish step opt-in to where it is meant to run (Actions, or an explicit override), print everywhere else
+  and say so, and test every environment: in the job, by hand, with the override, with the dry-run flag.

@@ -12,7 +12,7 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
 - `skills/ship/orchestrate.md`, `agents/`, `hooks/orchestrate-hint.sh`, `hooks/explorer-bash.sh` and
   `hooks/codex-bash.sh`: the optional orchestrated mode (below).
-- `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. It sets the `codex-review` commit
+- `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. In GitHub Actions it sets the `codex-review` commit
   status that branch protection requires (success once Codex reviewed the PR's head and every Codex thread is
   resolved). Opted-in repos call it through the reusable workflow `.github/workflows/codex-status.yml` from a
   short caller, a copy of `skills/ship/templates/codex-review.yml`. This repo's caller,

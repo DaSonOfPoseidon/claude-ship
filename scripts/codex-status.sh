@@ -5,7 +5,13 @@
 # one of the phrases below after it was pushed.
 # The rules and design notes are in docs/scripts.md. Repos run this one copy through the action (action.yml,
 # @v1); install.sh deploys it into the ship skill for local checks.
-# Usage: codex-status.sh <pr>. With DRY_RUN=1 it prints the status instead of setting it.
+# Usage: codex-status.sh <pr>. It prints the status and sets it only in GitHub Actions (GITHUB_ACTIONS=true):
+# - in Actions: sets it and prints `<state>: <description>`;
+# - with DRY_RUN=1, anywhere: prints `<state>: <description> (<head sha>)` and sets nothing;
+# - by hand (not in Actions): the same line, plus a note on stderr, and sets nothing. Run by hand it would post as
+#   the user, and branch protection wants the status from Actions; the newer one blocks the merge (#291).
+# CODEX_STATUS_SET=1 sets it by hand anyway, to debug the action from a shell. It posts as you, so the merge stays
+# blocked until the action posts a newer status.
 # Needs `gh` (authenticated, or GH_TOKEN) and REPO (defaults to this repository).
 set -eu
 pr=${1:-}
@@ -329,8 +335,18 @@ else
 	description="Waiting for Codex to review $short"
 fi
 
-if [ "${DRY_RUN:-}" = 1 ]; then
+# Set the status only in GitHub Actions (it sets GITHUB_ACTIONS=true on every step) or when CODEX_STATUS_SET=1 asks
+# for it; DRY_RUN=1 never sets it. Run by hand, a set status carries the user's identity, not the Actions app's that
+# branch protection requires, and being newer it blocks the merge (#290, #291). Only the exact value `true` counts.
+set_it=
+if [ "${DRY_RUN:-}" != 1 ]; then
+	[ "${GITHUB_ACTIONS:-}" = true ] && set_it=1
+	[ "${CODEX_STATUS_SET:-}" = 1 ] && set_it=1
+fi
+if [ -z "$set_it" ]; then
 	echo "$state: $description ($head)"
+	[ "${DRY_RUN:-}" = 1 ] ||
+		echo "codex-status: not in GitHub Actions, so the status was printed, not set (CODEX_STATUS_SET=1 sets it as you; branch protection may then block the merge)" >&2
 	exit 0
 fi
 gh api --silent "repos/$repo/statuses/$head" \
