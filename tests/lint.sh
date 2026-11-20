@@ -843,7 +843,8 @@ grep -q 'repos/o/r/contents' "$tmp/gh.log" || {
 	echo "FAIL (remote-ssh): gh wasn't asked about o/r"
 	fail=1
 }
-# A GitHub URL that doesn't parse, and an origin that isn't GitHub at all: the local refs, and gh isn't called.
+# A GitHub URL that doesn't parse: the local refs, with a note. An origin that isn't GitHub, or no origin at all: the same
+# local refs, gh isn't called, and no note (there is no GitHub origin to read, so nothing was missed).
 rfixture https://github.com/o
 GH_LINT=200 rlint staged --remote
 want remote-bad-url 0
@@ -851,11 +852,34 @@ ehas remote-bad-url "not GitHub: can't read the GitHub repo in the remote URL ht
 rfixture https://example.com/o/r.git
 GH_LINT=200 rlint staged --remote
 want remote-other-host 0
-ehas remote-other-host 'not GitHub: origin is not a GitHub repository'
+lacks remote-other-host 'a.txt'
+elacks remote-other-host 'project rules read'
 [ ! -s "$tmp/gh.log" ] || {
 	echo "FAIL (remote-other-host): gh was called for a non-GitHub origin"
 	fail=1
 }
+# The same with no gh on PATH: the origin is read first, so there is no note about gh either.
+rpath=$tmp/nogh
+rlint staged --remote
+want remote-other-host-no-gh 0
+elacks remote-other-host-no-gh 'project rules read'
+rpath=
+# No origin at all.
+rfixture https://example.com/o/r.git
+git -C "$repo" remote remove origin
+git -C "$repo" update-ref -d refs/remotes/origin/main
+GH_LINT=200 rlint staged --remote
+want remote-no-origin 0
+elacks remote-no-origin 'project rules read'
+[ ! -s "$tmp/gh.log" ] || {
+	echo "FAIL (remote-no-origin): gh was called with no origin"
+	fail=1
+}
+rpath=$tmp/nogh
+rlint staged --remote
+want remote-no-origin-no-gh 0
+elacks remote-no-origin-no-gh 'project rules read'
+rpath=
 # Without --remote nothing talks to GitHub, and no note is printed.
 rfixture https://github.com/o/r.git
 GH_LINT=200 rlint staged

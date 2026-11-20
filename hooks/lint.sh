@@ -278,11 +278,8 @@ fi
 # block commits offline, and the pre-push gate is still the boundary.
 remote_got=
 remote_why=
+remote_none=
 remote_layer() {
-	command -v gh >/dev/null 2>&1 || {
-		remote_why="gh is not installed"
-		return 1
-	}
 	[ -r "$here/gate-common.sh" ] || {
 		remote_why="$here/gate-common.sh is missing"
 		return 1
@@ -303,10 +300,17 @@ remote_layer() {
 			;;
 		esac
 	done
+	# No GitHub origin to read (no origin, or one on another host): remote_none, so the caller prints no note. The fallback
+	# is the same local ref order either way, so staying quiet gives up no protection; the note is for a GitHub origin
+	# that couldn't be read. This comes before the gh check so a repo with no GitHub origin never hears about gh.
 	if [ -z "$rslug" ]; then
-		[ -n "$remote_why" ] || remote_why="origin is not a GitHub repository"
+		[ -n "$remote_why" ] || remote_none=1
 		return 1
 	fi
+	command -v gh >/dev/null 2>&1 || {
+		remote_why="gh is not installed"
+		return 1
+	}
 	case $rslug in
 	*[!A-Za-z0-9._/-]*)
 		remote_why="can't use the repository name $rslug"
@@ -356,7 +360,7 @@ if [ -n "$in_git" ]; then
 			fi
 		done
 		shown=${ref#refs/remotes/}
-		[ -z "$remote" ] || echo "lint: project rules read from ${shown:-no ref}, not GitHub: $remote_why" >&2
+		[ -z "$remote" ] || [ -n "$remote_none" ] || echo "lint: project rules read from ${shown:-no ref}, not GitHub: $remote_why" >&2
 		if [ -n "$ref" ]; then
 			listed=$(git ls-tree --full-tree --name-only "$ref" -- .github/claude-ship/lint) || die "can't read $ref"
 			if [ -n "$listed" ]; then

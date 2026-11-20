@@ -682,9 +682,11 @@ built-in defaults and the grammar reference. The design choices:
   GitHub: the slug comes from `remote.origin.url` as configured (else with `insteadOf` applied), read by `github_slugs`, and
   the file from `gh api -i repos/<slug>/contents/.github/claude-ship/lint` with the raw media type and no `?ref`, so GitHub
   serves the default branch (as `hooks/p3-issue.sh` reads its label map). The status is the response's own status line, and
-  a 200 counts only if `gh` exited 0 too. A 200 is the project layer, a 404 means there is none; anything else (no `gh`,
-  offline, a non-GitHub origin, a 5xx, a body cut short, a 20 s timeout) falls back to the local ref order with one note on
-  stderr, `lint: project rules read from <ref>, not GitHub: <why>`. A hygiene lint must not block commits offline, and the
+  a 200 counts only if `gh` exited 0 too. A 200 is the project layer, a 404 means there is none; anything else for a GitHub origin
+  (no `gh`, offline, a 5xx, a body cut short, a 20 s timeout, a URL that can't be read) falls back to the local ref order
+  with one note on stderr, `lint: project rules read from <ref>, not GitHub: <why>`. A repo with no origin, or one that isn't
+  on GitHub, has nothing to read: `remote_layer` reads the origin first and the same fallback runs with no note (it refuses
+  nothing, so staying quiet gives up no protection). A hygiene lint must not block commits offline, and the
   pre-push gate is still the boundary. Limits: `origin`'s URL is itself config the agent can change, which is outside the
   gate's scope (AGENTS.md › Gate scope).
 - **`staged --only <rule>`** reports one rule and ignores the rest, in the hits, the summary and the exit status. The

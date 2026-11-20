@@ -319,8 +319,8 @@ commit and lists the hits; warnings print and the commit goes on; the repo's own
 own commits are never linted. Fix the hits; if one is wrong, commit it yourself with `! git commit --no-verify` (the gate
 denies Claude's own `--no-verify` and `-n`), or add an exclude (for example `debug-leftover off scripts/*`) to the default branch's
 `.github/claude-ship/lint` or to `~/.claude/claude-ship/lint`. `--remote` reads the project file from GitHub's default branch,
-not a local ref, so `git remote set-head` or `update-ref` can't point it at the branch; if GitHub can't be read (offline, no
-`gh`, a non-GitHub origin) it uses the local refs and says so on stderr. During a merge, cherry-pick or revert only
+not a local ref, so `git remote set-head` or `update-ref` can't point it at the branch; if a GitHub origin can't be read (offline, no
+`gh`, a 5xx) it uses the local refs and says so on stderr; a repo with no origin or a non-GitHub origin uses them with no note. During a merge, cherry-pick or revert only
 `conflict-marker` is checked, since the other side's code isn't Claude's. A missing or broken `lint.sh` refuses the commit.
 
 **Default rules.** `hooks/lint-rules` ships these (`~/.claude/hooks/lint.sh rules <path>` shows what applies to a path).
