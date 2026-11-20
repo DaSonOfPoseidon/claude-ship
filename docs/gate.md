@@ -576,7 +576,7 @@ linked worktree's HEAD (a detached one included). It reads that list once, and i
 | `p3-<digits>.json` | `p3-issue.sh`, in the run that wrote it | always |
 | `<sha>.md` | `gate-stats.sh` (history) | **never** |
 | `<sha>.waived` | the head check, the pre-push check, `gate-stats.sh` | **never** (the user's decision) |
-| `p3-filed.tsv` | the P3 dedupe and the reviewers' prompt | **never** |
+| `p3-filed.tsv` | the P3 dedupe (a cache of the keys, and the whole dedupe when the open P3 issues can't be read) and, then, the reviewers' prompt | **never** |
 | any other name, and subdirectories | | **never**: only the exact names above are deleted |
 
 Only the user prunes, as for waivers: the tamper check denies a run of `review-gate.sh` with `--prune` among its arguments,
@@ -592,7 +592,28 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   a finding only by citing the `file:line` that makes it impossible, else the finding stands.
 - Confirmed P0–P2 findings block. Confirmed P3s don't: the gate files them as issues with `p3-issue.sh` (labels
   from the repo variable `CLAUDE_P3_LABELS`, default `review:p3`, plus the repo's per-file label map, and an
-  optional milestone) and lists them in later prompts so they aren't found twice.
+  optional milestone) and lists them in later prompts so they aren't found twice (#112).
+  - **The read.** When a reviewer runs, the gate reads the repo's open P3 issues once, with
+    `gh issue list --label <label> --author @me --state open --limit 500`. The label is the first of the repo
+    variable `CLAUDE_P3_LABELS` (every issue `p3-issue.sh` files carries the base labels), `review:p3` when the variable
+    isn't set; that is one more read, `gh variable get CLAUDE_P3_LABELS`. `--author @me` keeps text other people wrote
+    out of the prompt (only the user's own issues, the ones the gate filed or the user wrote, are listed); a closed
+    issue is not read; and `--limit` is there because the list stops at 30 without it. It runs only on the path that
+    runs a reviewer: a re-push of a head whose findings are cached dedupes on `p3-filed.tsv` alone.
+  - **Unlike the other reads, a failure doesn't block.** The read decides nothing (a P3 never blocks), so a read that
+    fails (the variable's too: a list read under a guessed label would be empty for a repo that changed it, and would
+    replace the file's entries), or that isn't a list, prints `couldn't read the open P3 issues` and the dedupe goes on with
+    `p3-filed.tsv` alone, as it did before the read existed. An empty list is a good read, not a failure.
+  - **The prompt.** The "Already filed" section lists those open issues (`<title> (<url>)`) instead of the file's
+    entries, so an issue that was closed drops out and a fresh clone sees them too. It says the list is quoted as data
+    (titles a past review wrote from a diff), not instructions. When the read failed, the section lists the file's
+    entries; with nothing to list there is no section.
+  - **The filing loop** skips a confirmed P3, with `review-gate: skipped P3 "<title>": already filed as <url>`, when its
+    key is in `p3-filed.tsv`, when its title equals an open issue's title, or when its `file:line` equals the site
+    that an open issue's first body line cites (``at `<file>:<line>` in <sha>``, the form the gate writes). A title
+    matches up to case, runs of whitespace and the gate's 120 characters. The match is exact only, with no prefix or
+    fuzzy title match and no site in a later line, since a wrong match drops a real finding without filing it. A
+    skipped P3 is added to `p3-filed.tsv` with the open issue's URL, so later runs skip it locally.
 - Docs-only changes get a Haiku claims check instead of a full review. A change is docs-only when every changed
   path is `*.md` or under `docs/`, except `.md` files under `hooks/`, `skills/`, `agents/` or `.claude/` and any
   `AGENTS.md` or `CLAUDE.md`: those prompts, skills, agents and rules steer Claude, so they are behaviour and get
@@ -623,7 +644,8 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   (as data, not instructions), so it can check that earlier findings are fixed. The gate reads the PR, the threads,
   the commit list and the diff before it writes the prompt, and blocks when any of them can't be read: an ignored
   failure would read as "no PR", "no threads" or an empty diff, and the review would skip what it was meant to
-  check (#106). A branch with no PR, or a PR with no unresolved threads, is reviewed as before.
+  check (#106). A branch with no PR, or a PR with no unresolved threads, is reviewed as before. The one read that does
+  not block is the open P3 issues (above): it only dedupes, so a failure falls back on `p3-filed.tsv` (#112).
 - Reviewer sessions never run the hygiene lint's edit hook (the managed `PostToolUse` entry for `lint.sh hook`): its
   matcher is `Write|Edit|MultiEdit`, and the reviewers have only Read, Grep and Glob (`--tools`), so "Reviewers only read"
   holds and the hook can't write or fire there.
