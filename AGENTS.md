@@ -68,8 +68,8 @@ or anything CI already checks (shellcheck, actionlint).
   checks and settings, blocks. A GitHub URL the gate can't read blocks too.
 - The gate catches Claude's own slips; it isn't a security boundary (see Gate scope). Its command checks read
   text, and its state is writable by any shell. Branch protection requiring `codex-review` is the server-side
-  backstop for merges. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch
-  skips it.
+  backstop for merges. While the branch protection's `enforce_admins` is off, an admin push to the default branch
+  skips it (check: `gh api repos/<owner>/<repo>/branches/main/protection/enforce_admins`).
 - Only the user changes the opt-in variables, waives a review, allows a Codex round past the cap of 3
   (`! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`; the gate denies Claude that command), prunes the gate's old state
   (`! ~/.claude/hooks/review-gate.sh --prune [--dry-run] [days]`; denied the same way), lifts the immutable flag on the installed files

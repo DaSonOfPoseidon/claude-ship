@@ -40,6 +40,8 @@ git branch -q -D tmp-gone
 c_none=1111111111111111111111111111111111111111
 patch1=2222222222222222222222222222222222222222
 patch2=3333333333333333333333333333333333333333
+# A SHA-256 repo's diff id is 64 hex.
+patch64=4444444444444444444444444444444444444444444444444444444444444444
 
 state=$repo/.git/review-gate
 old=202001010000
@@ -164,6 +166,7 @@ check "missing commit keeps the report" present "$c_none.md" "$c_none.waived"
 reset_state
 put "patch-$patch1.pass" old
 put "patch-$patch2.pass" new
+put "patch-$patch64.pass" old
 put p3-123.json old
 put p3-456.json new
 put p3-filed.tsv old "123	title (url)
@@ -171,6 +174,7 @@ put p3-filed.tsv old "123	title (url)
 run
 want_rc "age-only files" 0
 check "old patch pass and p3 payload go" absent "patch-$patch1.pass" p3-123.json
+check "old 64-hex patch pass goes" absent "patch-$patch64.pass"
 check "new ones stay" present "patch-$patch2.pass" p3-456.json
 check "p3-filed.tsv stays when old" present p3-filed.tsv
 grep -q 'title (url)' "$state/p3-filed.tsv" || {

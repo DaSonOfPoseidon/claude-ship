@@ -244,8 +244,10 @@ if ! tree=$(printf '%s' "$cmd" | "$shfmt" -ln bash --to-json 2>&1); then
 fi
 [ -n "$tree" ] || unreadable "command syntax tree"
 
-# `git push` (also with global options, anywhere in a chain) and `gh pr create`. `/` counts as a boundary before
-# git and gh (`/usr/bin/git`); `.`, `_` and `-` don't (`.git/`, `my-gh`). push_scope allows only `-C`.
+# `git push`, also with global options, anywhere in a chain: git_global is the `git` plus its options, git_push adds
+# `push`. It is used only by the canonical-push checks: the quoting check on a command that holds a push, and push_scope's
+# count of pushes (more than one blocks). `gh pr create` is not matched. `/` counts as a boundary before git and gh
+# (`/usr/bin/git`); `.`, `_` and `-` don't (`.git/`, `my-gh`). push_scope allows only `-C`.
 git_global='(^|[^[:alnum:]_.-])git(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+'
 git_push="${git_global}push([^[:alnum:]_-]|\$)"
 # The command split into words as the shell would, by jq: quotes and backslashes go and what they made literal
@@ -323,7 +325,8 @@ def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 # The command's simple commands and redirects read from its syntax tree, `$tree`, as events, one object each:
 #   {k: "block", p, w}  a literal word p names a protected path and writes (w says how: the writing tool, or the redirect)
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
-#   {k: "gh"}           a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
+#   {k: "gh"}           a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not; not when the command's
+#                       effective command is `echo` or `printf` (its words are data, `def ghev`)
 #   {k: "gapi", r}      a `gh api` call the tree shows; r is true when it is a read (below `def gapi`)
 #   {k: "deny", m}      a `push --no-verify` or `commit --no-verify`/`-n`, a write of core.hooksPath (docs/gate.md › Pre-push check), a `chattr`, or a run of
 #                       the allowance script `codex-allow.sh` or of this script with `--prune`

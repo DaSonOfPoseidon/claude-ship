@@ -44,8 +44,9 @@ Checks that block a literal form today stay (a `cp`, `mv` or `ln` that names a p
 list in Tamper protection); what is out of scope is a finding that a variant of these classes gets past them.
 
 **Layers that don't read text.** Branch protection requiring `codex-review` blocks a merge whatever the command
-was. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch skips it. A way past
-branch protection that a plausible command takes is in scope.
+was. It doesn't bind admins while the branch protection's `enforce_admins` is off (check it with
+`gh api repos/<owner>/<repo>/branches/main/protection/enforce_admins`), and then an admin push to the default branch
+skips it. A way past branch protection that a plausible command takes is in scope.
 
 ## Opt-in
 
@@ -274,7 +275,8 @@ One refused line refuses the whole push. The state is the common directory's, sh
 gate lets through for an opted-in repo therefore leaves a `.pass` for HEAD, including a branch whose diff against the
 default branch is empty (nothing to review counts as passed). The refusal tells
 Claude to run a plain `git push` on its own so the gate reviews HEAD, not to skip the check, and to ask the user to waive
-a wrong review.
+a wrong review. For a tag push (`refs/tags/*`) a waiver doesn't count, so that refusal says instead that a tag is pushed
+only when its commit is already on the remote's default branch, and to ask the user to push the tag if the check is wrong.
 
 **Chaining.** Setting `core.hooksPath` makes git stop running a repo's own `.git/hooks`, so every stub runs the repo's hook
 of the same name (`<common dir>/hooks/<name>`) with git's arguments and stdin, and exits with its status; `pre-push` does
@@ -572,7 +574,7 @@ linked worktree's HEAD (a detached one included). It reads that list once, and i
 | `<sha>.json`, `<sha>.verify.json` | the cache check on a re-push of that head, and the cost line | the commit is on no ref |
 | `<sha>.json.err`, `<sha>.verify.json.err`, `<sha>.json.failed`, `<sha>.verify.json.failed` | nothing | the commit is on no ref |
 | `<sha>.pass` | the head check, the scoping loop, the pre-push check | the commit is on no ref (an old pass could scope a later review) |
-| `patch-<40 hex>.pass` | the diff-id cache, keyed by the branch diff, not a commit | always (losing one only forces a re-review) |
+| `patch-<40 or 64 hex>.pass` | the diff-id cache, keyed by the branch diff, not a commit | always (losing one only forces a re-review) |
 | `p3-<digits>.json` | `p3-issue.sh`, in the run that wrote it | always |
 | `<sha>.md` | `gate-stats.sh` (history) | **never** |
 | `<sha>.waived` | the head check, the pre-push check, `gate-stats.sh` | **never** (the user's decision) |
