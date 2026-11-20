@@ -313,6 +313,43 @@ run
 want 'removed once the ignored files can be read' 0 "removed: $tmp/wt-i4 feat/i4
 deleted-ignored: $tmp/wt-i4 1 path(s): .env"
 gone 'i4' i4
+# The user's status display setting (status.showUntrackedFiles=no) doesn't hide the ignored files from the list.
+unit i5
+pr i5 MERGED 935
+echo secret >"$tmp/wt-i5/.env"
+git -C "$work" config status.showUntrackedFiles no
+run
+want 'ignored files with status.showUntrackedFiles=no' 0 "removed: $tmp/wt-i5 feat/i5
+deleted-ignored: $tmp/wt-i5 1 path(s): .env"
+git -C "$work" config --unset status.showUntrackedFiles
+gone 'i5' i5
+
+# --- a branch being rebased shows as detached in the worktree list; its worktree still holds it (the head-name file).
+# rb: rebased in a linked worktree (merge backend, stopped by an `edit`). ra: named by the main checkout's rebase-apply.
+unit rb
+pr rb MERGED 941
+GIT_SEQUENCE_EDITOR='sed -i s/^pick/edit/' git -C "$tmp/wt-rb" rebase -q -i main >/dev/null 2>&1
+if git -C "$tmp/wt-rb" symbolic-ref -q HEAD >/dev/null; then
+	echo "FAIL: the rebase fixture did not stop with a detached HEAD"
+	fail=1
+fi
+git -C "$work" switch -q -c feat/ra main
+commit "$work" 1
+git -C "$work" switch -q main
+pr ra MERGED 942
+mkdir "$work/.git/rebase-apply"
+echo refs/heads/feat/ra >"$work/.git/rebase-apply/head-name"
+run
+want 'branches of a rebase in progress' 0 "kept: $tmp/wt-rb (none) detached HEAD or no branch"
+alive 'rebasing worktree' rb
+git -C "$work" rev-parse -q --verify refs/heads/feat/ra >/dev/null || { echo "FAIL: the branch named by rebase-apply was deleted"; fail=1; }
+# Once the rebase is over (or aborted) the merged branches go.
+rm -rf "$work/.git/rebase-apply"
+git -C "$tmp/wt-rb" rebase --abort
+run
+want 'rebases over' 0 "removed: $tmp/wt-rb feat/rb
+deleted: feat/ra"
+gone 'rebased rb' rb
 
 # --- a failure stops the sweep before any further removal (fail closed).
 unit f1

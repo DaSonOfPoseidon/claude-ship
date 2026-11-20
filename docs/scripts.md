@@ -236,7 +236,8 @@ never had a worktree. Both passes compare with GitHub's default branch, fetched 
   passes to the user stay few. It costs two `gh` calls per local branch.
 - **Never touched by either pass:** the default branch, and any branch a worktree has checked out (read from
   `git worktree list` after the worktree pass, and before the prune, so a worktree whose directory is gone still holds
-  its branch). A name `unit-state.sh` rejects (exit 2) is skipped.
+  its branch; a branch in the middle of a rebase lists as detached, so each `rebase-merge/head-name` and
+  `rebase-apply/head-name` names one too). A name `unit-state.sh` rejects (exit 2) is skipped.
 - **Fail closed.** A `unit-state.sh`, `gh` or `git` failure is exit 1 and stops the sweep at once: nothing further
   is removed, and no prune; what an earlier pass removed stands (the default branch or the fetch failing, for
   instance, stops it before the branch passes). Exit 0 means it ran to the end, whether or not it removed anything;

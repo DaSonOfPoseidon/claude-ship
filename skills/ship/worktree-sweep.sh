@@ -11,7 +11,7 @@
 # fetched. `worktree-agent-*` branches (made by Claude Code for an isolation: worktree agent) are deleted when their
 # tip is on origin's default branch. Every other branch is deleted only when unit-state.sh says `state: merged`
 # with no `unpushed:` and no `diverged:` line. The default branch and any branch a worktree has checked out (the main
-# checkout's included, and a worktree whose directory is gone) are never touched. A branch in any other state is the
+# checkout's included, a worktree whose directory is gone, and one in the middle of a rebase) are never touched. A branch in any other state is the
 # user's or a live unit's, and prints nothing. The second pass costs two gh calls per local branch.
 # Git-ignored files (build output, a `.env`) are neither a `dirty:` fact nor a reason for `git worktree remove` to refuse,
 # so they go with the worktree; the sweep lists them first (claude-ship #253). If git can't list them, the worktree stays.
@@ -121,8 +121,9 @@ while IFS=$us read -r path branch locked reason; do
 
 	# git refuses to remove a worktree for modified or untracked files, never for ignored ones (build output, a `.env`):
 	# they go with it. List them first, so the loss is told (claude-ship #253). Not being able to read them keeps the
-	# worktree, as `dirty: unknown` does. An ignored directory counts as one entry (--ignored=traditional).
-	if ! git -C "$path" status --porcelain --ignored=traditional >"$tmp/status" 2>"$tmp/err" </dev/null; then
+	# worktree, as `dirty: unknown` does. An ignored directory counts as one entry (--ignored=traditional). The untracked mode
+	# is set, since the user's status.showUntrackedFiles=no would hide the ignored files too.
+	if ! git -C "$path" status --porcelain --untracked-files=normal --ignored=traditional >"$tmp/status" 2>"$tmp/err" </dev/null; then
 		echo "kept: $path $branch ignored files unreadable"
 		continue
 	fi
@@ -169,6 +170,15 @@ git fetch -q origin "+refs/heads/$default:refs/remotes/origin/$default" 2>"$tmp/
 # and before the prune, so a worktree whose directory is gone still holds its branch (it has unfinished work).
 git worktree list --porcelain >"$tmp/porcelain" 2>"$tmp/err" || die "git worktree list failed: no branch was deleted: $(head -n 3 "$tmp/err")"
 awk '/^branch refs\/heads\// { print substr($0, 19) }' "$tmp/porcelain" >"$tmp/checked" || die "reading the worktree list failed: no branch was deleted"
+
+# A worktree in the middle of a rebase lists as detached, but its rebase-merge/rebase-apply directory names the branch
+# (`refs/heads/<branch>`, or `detached HEAD`, which matches nothing here). Both backends, in the main checkout's git
+# directory and in each linked worktree's.
+common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd) || die "cannot find the git directory: no branch was deleted"
+for f in "$common"/rebase-merge/head-name "$common"/rebase-apply/head-name "$common"/worktrees/*/rebase-merge/head-name "$common"/worktrees/*/rebase-apply/head-name; do
+	[ -f "$f" ] || continue
+	sed -n '1s|^refs/heads/||p' "$f" >>"$tmp/checked" || die "reading $f failed: no branch was deleted"
+done
 
 # held <branch>: some worktree has the branch checked out.
 held() {
