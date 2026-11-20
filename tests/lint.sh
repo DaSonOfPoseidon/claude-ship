@@ -1431,6 +1431,13 @@ x=$(date -u -d @0 +%s)
 grep -oP 'a+' "$f"
 readlink -f "$0"
 stat -c %s "$f"
+date -d2026-11-19 +%s
+grep -e foo -P "$f"
+sed -e p -i "$f"
+sed -f s.sed -i "$f"
+stat --format=%s "$f"
+readlink -fn "$0"
+grep --regexp foo -nP "$f"
 EOF
 	cat >"$repo/scripts/posix.sh" <<'EOF'
 #!/bin/sh
@@ -1445,6 +1452,14 @@ grep -E 'a+' "$f"
 grep -- 'a' "$f"
 readlink "$0"
 wc -c <"$f"
+grep -e -P "$f"
+grep -- -P "$f"
+grep --regexp -P "$f"
+grep -eP "$f"
+grep -f -P "$f"
+sed -e -i "$f"
+sed -- -i "$f"
+date -I
 EOF
 	cat >"$repo/tests/fixture.sh" <<'EOF'
 #!/bin/sh
@@ -1460,6 +1475,13 @@ EOF
 	has own-lint 'scripts/gnu.sh:6: gnu-grep-p (error)'
 	has own-lint 'scripts/gnu.sh:7: gnu-readlink-f (error)'
 	has own-lint 'scripts/gnu.sh:8: gnu-stat-c (error)'
+	has own-lint 'scripts/gnu.sh:9: gnu-date-d (error)'
+	has own-lint 'scripts/gnu.sh:10: gnu-grep-p (error)'
+	has own-lint 'scripts/gnu.sh:11: gnu-sed-i (error)'
+	has own-lint 'scripts/gnu.sh:12: gnu-sed-i (error)'
+	has own-lint 'scripts/gnu.sh:13: gnu-stat-c (error)'
+	has own-lint 'scripts/gnu.sh:14: gnu-readlink-f (error)'
+	has own-lint 'scripts/gnu.sh:15: gnu-grep-p (error)'
 	lacks own-lint 'scripts/gnu.sh:1:'
 	lacks own-lint 'scripts/posix.sh:'
 	lacks own-lint 'tests/fixture.sh:'

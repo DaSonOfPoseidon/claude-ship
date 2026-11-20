@@ -285,3 +285,9 @@ review finds a new class.
   notice first looked in `CLAUDE.md` too, so a section there silenced it although the GitHub loop reads settings only from
   `AGENTS.md` (orchestrate.md › Repo settings) and so ran on defaults unannounced (claude-ship #260). Take the file list from
   the code that consumes the setting, and test a section in each file that isn't read.
+- **A flag matched as a word of a command line can be another option's argument.** The lint rule for `grep -P` skipped
+  any run of option words and then took the next `-P` for the flag, so `grep -e -P f` (the pattern is `-P`) and
+  `grep -- -P f` (after `--`, everything is an operand) were refused, and `date -d2026-11-19` (the argument attached to the
+  short option) slipped through (claude-ship #290). A rule that finds an option in a command line must know which of the
+  tool's options take the next word, accept an attached argument, and stop at `--`. Test each with the same word as the
+  pattern, after `--`, attached, and in a cluster (`-nP`, `-Lc`).
