@@ -143,17 +143,58 @@ window() {
 
 # Every PR of the repo, whoever wrote it, listed once (#130): they all compete for every request, so a PR's row
 # can't depend on which authors' PRs are asked for. When each PR ended is also where the work on its author's
-# next one can start. A failed or odd listing is an error, never "no earlier PRs" (the window would then reach
-# back to the session's start). The list has no commit dates, so the other PRs get windows below with `gh pr view`.
-list=$(gh pr list -R "$repo" --state all --limit 200 --json number,author,createdAt,mergedAt,closedAt) || {
-	echo "token-report.sh: gh pr list failed" >&2
+# next one can start. The list is one GraphQL query, newest first, 100 PRs a page and at most two pages (#213). It
+# also gives each PR's first commit's authored date, which `gh pr list` can't, so the upper bound below needs no
+# read per PR. A failed or odd listing is an error, never "no earlier PRs" (the window would then reach back to the
+# session's start). The other PRs get their full windows below with `gh pr view`.
+owner=${repo%%/*}
+name=${repo#*/}
+query='query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { pullRequests(first: 100, after: $after, states: [OPEN, CLOSED, MERGED], orderBy: {field: CREATED_AT, direction: DESC}) { pageInfo { hasNextPage endCursor } nodes { number author { login } createdAt mergedAt closedAt commits(first: 1) { nodes { commit { authoredDate } } } } } } }'
+# listpage <cursor or empty>: one page of the query, as the API returned it.
+listpage() {
+	if [ -n "$1" ]; then
+		gh api graphql -f query="$query" -f owner="$owner" -f name="$name" -f after="$1"
+	else
+		gh api graphql -f query="$query" -f owner="$owner" -f name="$name"
+	fi
+}
+# pagenodes <response>: the page's PRs as {number, author, createdAt, mergedAt, closedAt, first}, `first` being the
+# first commit's authoredDate (null when there is none); a response without the list of PRs is an error.
+pagenodes() {
+	printf '%s\n' "$1" | jq -c '.data.repository.pullRequests.nodes
+		| if type == "array" and all(.[]; type == "object")
+		  then map({number, author: (.author.login // ""), createdAt, mergedAt, closedAt, first: (.commits.nodes[0].commit.authoredDate // null)})
+		  else error("no list of PRs") end'
+}
+page=$(listpage "") || {
+	echo "token-report.sh: gh api graphql failed" >&2
 	exit 1
 }
-printf '%s\n' "$list" | jq -c 'if type == "array" then map({number, author: (.author.login // ""), createdAt, mergedAt, closedAt}) else error("not a list") end' >"$tmp/list" || {
-	echo "token-report.sh: gh pr list returned something other than a list" >&2
+pagenodes "$page" >"$tmp/list1" || {
+	echo "token-report.sh: gh api graphql returned something other than a list of PRs" >&2
 	exit 1
 }
-listed=$(jq 'length' "$tmp/list") || exit 1
+more=$(printf '%s\n' "$page" | jq -r '.data.repository.pullRequests.pageInfo.hasNextPage // false') || exit 1
+cursor=$(printf '%s\n' "$page" | jq -r '.data.repository.pullRequests.pageInfo.endCursor // ""') || exit 1
+cp "$tmp/list1" "$tmp/list.raw"
+if [ "$more" = true ]; then
+	if [ -z "$cursor" ]; then
+		echo "token-report.sh: gh api graphql returned another page but no cursor for it" >&2
+		exit 1
+	fi
+	page=$(listpage "$cursor") || {
+		echo "token-report.sh: gh api graphql failed" >&2
+		exit 1
+	}
+	pagenodes "$page" >"$tmp/list2" || {
+		echo "token-report.sh: gh api graphql returned something other than a list of PRs" >&2
+		exit 1
+	}
+	jq -c -s 'add' "$tmp/list1" "$tmp/list2" >"$tmp/list.raw" || exit 1
+fi
+listed=$(jq 'length' "$tmp/list.raw") || exit 1
+# A PR created between the two calls shifts the second page by one, so it may be listed twice: not an error.
+jq -c 'unique_by(.number)' "$tmp/list.raw" >"$tmp/list" || exit 1
 
 # --since (#249): the repo's PRs created on or after the date, oldest first, added after the PRs given. createdAt
 # is an ISO timestamp, so comparing it as text with the date's midnight orders it by time. A PR with no author
@@ -183,7 +224,7 @@ done
 # A full page may have cut the repo's older PRs short (the list is newest first): they can't compete.
 # (With --since, a selection that reaches the oldest listed PR is an error below, so no PR is silently missing.)
 if [ "$listed" -ge 200 ]; then
-	echo "token-report.sh: gh pr list returned the newest 200 PRs; older PRs don't compete for requests" >&2
+	echo "token-report.sh: the PR list holds the newest 200 PRs; older PRs don't compete for requests" >&2
 	# An asked PR that starts at or before the oldest listed one may have a previous PR the list cut off (or isn't
 	# listed itself): its window would silently reach back to the session's start, so it is an error.
 	oldest=$(jq -r '[.[].createdAt | select(type == "string") | .[0:19]] | min // ""' "$tmp/list") || exit 1
@@ -210,8 +251,9 @@ prevend "$tmp/windows" "$tmp/windows2"
 #   asked PR has no earlier PR ($lo is "").
 # - above: one that starts after the latest end of the asked PRs ($hi; "9999" while one is still open) can't
 #   either. Its start is not only its creation, though: its window widens back to the end of its own author's
-#   previous PR, so a PR created later but whose previous PR ended before $hi is kept. (The list has no commit
-#   dates, so a first commit authored before the creation isn't seen; that window is not widened by it here.)
+#   previous PR, so a PR created later but whose previous PR ended before $hi is kept. Its start is the earlier
+#   of its creation and its first commit (as in `window`), both from the list, so a PR created after $hi whose
+#   first commit was authored before it is kept too (#213).
 # A PR whose author is deleted is left out: its earlier PRs can't be listed, so it has no widened window (an
 # asked one is an error, in `window`).
 jq -r -n --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/list" '
@@ -221,7 +263,7 @@ jq -r -n --slurpfile w "$tmp/windows2" --slurpfile l "$tmp/list" '
 	| $l[0] as $L
 	| [$L[] | select(.author != "") | select(.number as $n | $asked | index($n) == null)
 		| . as $p
-		| ($p.createdAt[0:19]) as $c
+		| ([$p.createdAt[0:19], (if ($p.first | type) == "string" then $p.first[0:19] else empty end)] | min) as $c
 		| ([$L[] | select(.author == $p.author and .number != $p.number)
 			| (.mergedAt // .closedAt) | select(type == "string") | .[0:19] | select(. < $c)] | max // "") as $pe
 		| select((.mergedAt // .closedAt // "9999")[0:19] >= $lo)

@@ -349,7 +349,7 @@ repeated `--since`, an unknown option or `--summary` alone exits 2.
 
 **`--since`** (#249) adds the repo's PRs created on or after the date (the date's midnight UTC, compared with
 `createdAt` as text), whoever wrote them, oldest first, after any PR numbers given; a PR both given and selected
-counts once. They come from the one `gh pr list` (newest 200) that also finds the competing PRs, so a full page warns
+counts once. They come from the one GraphQL list query (newest 200) that also finds the competing PRs, so a full page warns
 as before, and a selection reaching the oldest listed PR is the same error as an asked PR there (its previous PR
 can't be found). A selected PR with no author can't be windowed: it is left out with a warning (an explicitly asked
 one is still an error). A selection of no PR prints a note on stderr and exits 0.
@@ -375,17 +375,17 @@ start. The report shows the widened start. Work after the last merge isn't print
 window goes to the latest-started of those; only a request in none goes to the latest-started widened window, so
 widening never takes work from an overlapping PR. All this is done across every PR that could matter, not just
 the PRs asked for or their authors': the PRs competing for a request are the repo's, whoever wrote them (one
-`gh pr list`, newest 200; a full page prints a warning, since older PRs are then missing, and is an error when
+GraphQL query, newest first, two pages of 100 at most, so the newest 200; a full list prints a warning, since older PRs are then missing, and is an error when
 an asked PR starts at or before the oldest listed one, since its previous PR can't then be found). That is the asked PRs
-plus the others that could overlap an asked window (each read with `gh pr view`, since the list has no commit
-dates; one whose author is deleted is left out), all with the same window rules. "Could overlap" is bounded on
+plus the others that could overlap an asked window (each read with `gh pr view`, since the list has only the
+first commit's date, not the window; one whose author is deleted is left out), all with the same window rules. "Could overlap" is bounded on
 both sides (#129). Below: a PR that ended before the earliest previous-PR end of the asked PRs is left out (no
-bound when an asked PR has no earlier PR). Above: a PR created after the latest end of the asked PRs (no bound
-while one is open) is left out too, unless the end of its own author's previous PR is before that latest end,
-because its window widens back to that end and can take a request from an asked PR. Both bounds come from the
-list alone, so a first commit authored before its PR's creation isn't seen by them. Only the asked PRs' rows are
+bound when an asked PR has no earlier PR). Above: a PR whose start (the earlier of its creation and its first commit) is after the latest end of the asked
+PRs (no bound while one is open) is left out too, unless the end of its own author's previous PR is before that
+latest end, because its window widens back to that end and can take a request from an asked PR (#213). Both bounds
+come from the list alone, which carries each PR's creation and first commit date, so no PR is read to find them. Only the asked PRs' rows are
 printed, and a request won by another PR is dropped, so a PR's row is the same whichever other PRs are asked for (`tests/token-report.sh` checks this directly). A failed or odd
-`gh pr list`, or an asked PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would
+list (the call failing on either page, a response without the PRs, or a next page with no cursor), or an asked PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would
 reach the window back to the session's start. A listed PR with no author that isn't asked for is left out instead: a
 competing PR silently, a PR selected by `--since` with the warning above. A whole subagent transcript belongs to the PR whose window holds its last
 request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
