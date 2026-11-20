@@ -327,3 +327,9 @@ review finds a new class.
   (the branches), with its own proof that each item holds nothing more (the tip on the fetched default branch, a merged PR with
   nothing unpushed), and never touch what another record still holds (a branch a worktree has checked out). Test each kind
   of leftover, and the guard that keeps the live one.
+
+- **`git status --porcelain` does not list ignored files.** The `dirty:` fact and `git worktree remove` both ignore them, so
+  `worktree-sweep.sh` removed a worktree and silently took its ignored `.env` and build output (claude-ship #253), while the
+  docs called the remove a guard of the contents. Say what a guard does not see (`--ignored` shows them), tell the user
+  what a removal deletes, and fail closed when the listing itself fails. Test with an ignored file, with several, and with
+  a listing that fails.

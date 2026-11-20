@@ -13,8 +13,11 @@
 # with no `unpushed:` and no `diverged:` line. The default branch and any branch a worktree has checked out (the main
 # checkout's included, and a worktree whose directory is gone) are never touched. A branch in any other state is the
 # user's or a live unit's, and prints nothing. The second pass costs two gh calls per local branch.
+# Git-ignored files (build output, a `.env`) are neither a `dirty:` fact nor a reason for `git worktree remove` to refuse,
+# so they go with the worktree; the sweep lists them first (claude-ship #253). If git can't list them, the worktree stays.
 # Output, one line each:
 #   removed: <path> <branch>
+#   deleted-ignored: <path> <n> path(s): <up to 5 of them>[ …]   after a `removed:` line whose worktree held ignored files
 #   kept: <path> <branch> <reason>     <branch> is "(none)" for a detached worktree
 #   deleted: <branch>                  a branch with no worktree
 #   kept: - <branch> <reason>          a merged or agent branch that still holds something
@@ -116,6 +119,16 @@ while IFS=$us read -r path branch locked reason; do
 		continue
 	fi
 
+	# git refuses to remove a worktree for modified or untracked files, never for ignored ones (build output, a `.env`):
+	# they go with it. List them first, so the loss is told (claude-ship #253). Not being able to read them keeps the
+	# worktree, as `dirty: unknown` does. An ignored directory counts as one entry (--ignored=traditional).
+	if ! git -C "$path" status --porcelain --ignored=traditional >"$tmp/status" 2>"$tmp/err" </dev/null; then
+		echo "kept: $path $branch ignored files unreadable"
+		continue
+	fi
+	awk '/^!! / { print substr($0, 4) }' "$tmp/status" >"$tmp/ignored" || die "reading the ignored files of $path failed: nothing more was removed"
+	nignored=$(wc -l <"$tmp/ignored" | tr -d ' ')
+
 	if [ -n "$locked" ]; then
 		git worktree unlock "$path" </dev/null || die "git worktree unlock $path failed: nothing more was removed"
 	fi
@@ -132,6 +145,13 @@ while IFS=$us read -r path branch locked reason; do
 	fi
 	git branch -D "$branch" >/dev/null </dev/null || die "git branch -D $branch failed (its worktree $path is already removed)"
 	echo "removed: $path $branch"
+	if [ "$nignored" -gt 0 ]; then
+		# The first five, with anything unprintable dropped from a name (git quotes most of it already).
+		list=$(head -n 5 "$tmp/ignored" | tr '\n' ' ' | tr -d '[:cntrl:]')
+		more=
+		[ "$nignored" -le 5 ] || more=" …"
+		echo "deleted-ignored: $path $nignored path(s): ${list% }$more"
+	fi
 done <"$tmp/records"
 
 # The branch passes below delete local branches that no worktree holds (claude-ship #286): the worktree pass only

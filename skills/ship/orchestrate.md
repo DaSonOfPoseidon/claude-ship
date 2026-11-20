@@ -221,7 +221,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
         `~/.claude/skills/ship/worktree-sweep.sh`: it removes the worktrees and local branches of merged PRs
         that hold nothing more (earlier units' too, e.g. after a lost agent id), deletes the leftover branches
         with no worktree (merged PRs', and agents' `worktree-agent-*` ones whose commits are on the default branch),
-        and prints a `kept:` line for each worktree or branch that still holds something. Pass those lines to
+        and prints a `kept:` line for each worktree or branch that still holds something, and a
+        `deleted-ignored:` line for the git-ignored files a removed worktree took with it. Pass those lines to
         the user in step 7's one-line report. Exit 1 (git or gh failed): tell the user what it printed, and go on.
    - With `merge: no`: tell the user it's ready, then go on to the next unit only if it doesn't depend on
      this one.

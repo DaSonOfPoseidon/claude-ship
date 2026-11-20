@@ -283,6 +283,37 @@ rm "$tmp/shim-fetch-fail"
 run
 want 'the agent branch goes once git and gh work' 0 'deleted: worktree-agent-a5'
 
+# --- the ignored files a swept worktree loses are listed (claude-ship #253).
+unit i1
+pr i1 MERGED 931
+echo secret >"$tmp/wt-i1/.env"
+unit i2
+pr i2 MERGED 932
+unit i3
+pr i3 MERGED 933
+for k in 1 2 3 4 5 6 7; do echo x >"$tmp/wt-i3/junk$k"; done
+run
+want 'ignored files are listed' 0 "removed: $tmp/wt-i1 feat/i1
+deleted-ignored: $tmp/wt-i1 1 path(s): .env
+removed: $tmp/wt-i2 feat/i2
+removed: $tmp/wt-i3 feat/i3
+deleted-ignored: $tmp/wt-i3 7 path(s): junk1 junk2 junk3 junk4 junk5 …"
+for n in i1 i2 i3; do gone "ignored $n" "$n"; done
+# An unreadable status keeps the worktree, unlocked state untouched, and its files.
+unit i4
+pr i4 MERGED 934
+echo secret >"$tmp/wt-i4/.env"
+: >"$tmp/shim-ignored-fail"
+run
+want 'ignored files unreadable' 0 "kept: $tmp/wt-i4 feat/i4 ignored files unreadable"
+alive 'unreadable ignored files' i4
+[ -f "$tmp/wt-i4/.env" ] || { echo "FAIL: the ignored file was lost"; fail=1; }
+rm "$tmp/shim-ignored-fail"
+run
+want 'removed once the ignored files can be read' 0 "removed: $tmp/wt-i4 feat/i4
+deleted-ignored: $tmp/wt-i4 1 path(s): .env"
+gone 'i4' i4
+
 # --- a failure stops the sweep before any further removal (fail closed).
 unit f1
 pr f1 MERGED 201
