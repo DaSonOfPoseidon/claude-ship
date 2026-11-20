@@ -291,3 +291,18 @@ review finds a new class.
   short option) slipped through (claude-ship #290). A rule that finds an option in a command line must know which of the
   tool's options take the next word, accept an attached argument, and stop at `--`. Test each with the same word as the
   pattern, after `--`, attached, and in a cluster (`-nP`, `-Lc`).
+- **A verdict checked first hides a later state.** `codex-status.sh` returned `failure` for open Codex threads before it
+  looked at the request for the head, so with threads left by an earlier round, a review that was running for this head
+  read as a failure: `codex-wait.sh` returned at once, and `codex-request.sh` (which treats only the plain pending as "already
+  asked") posted a second request for the same head, spending a round (claude-ship #280, #282). When a verdict ranks
+  states, put the one that says "an answer is still to come" ahead of the ones that describe an earlier answer, and test each
+  pair in the order (open threads with and without an unanswered request, answered, and none since the push).
+- **A limit an agent can lift from its own environment is not a limit.** `CODEX_ROUND_CAP` raised the Codex round cap, and the
+  orchestrator that hit the cap set it itself (claude-ship #280). A cap that belongs to the user is a file or setting only
+  the user writes (`! codex-allow.sh`, which the gate denies Claude, under the protected `~/.claude/claude-ship/`), read
+  fail-closed: a missing, empty or malformed value leaves the default (claude-ship #282).
+- **A deny matched on a file's name also blocks the work done on that file.** The first form of the `codex-allow.sh` deny was a
+  text match on the name, so `git add`, `git update-index --chmod=+x` (which a new script needs), `shellcheck`, `cat` and a commit
+  message that named it were all refused, and so was the script's own test (claude-ship #282). When a script is the thing to
+  protect from a run, deny the run: the command word, or the script a shell runs, read from the syntax tree after the wrappers
+  (`cmdev` in the gate's tamper check), and test the maintenance commands as passes next to every spelling of the run.

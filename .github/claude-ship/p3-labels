@@ -18,6 +18,7 @@ tests/agent-context.sh   area:skill
 tests/ci-failures.sh     area:skill
 tests/codex-findings.sh  area:skill
 tests/codex-round.sh     area:skill
+tests/codex-allow.sh     area:skill
 tests/codex-bash.sh      area:skill
 tests/codex-request.sh   area:skill
 tests/codex-triage.sh    area:skill

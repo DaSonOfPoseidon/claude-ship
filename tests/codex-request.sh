@@ -43,6 +43,11 @@ jq -r "\$expr" "$tmp/\$f"
 EOF
 chmod +x "$tmp/bin/gh" "$tmp/bin/sleep"
 fail=0
+# The allowance file is read from the Claude home: a home of its own, and no CLAUDE_HOME.
+HOME=$tmp/home
+export HOME
+mkdir -p "$HOME"
+unset CLAUDE_HOME CODEX_ROUND_CAP
 
 # The script runs from a copy next to the real codex-round.sh and a fake codex-status.sh, which prints the line in
 # status.out and exits with status.rc, and records how it was called.
@@ -236,15 +241,98 @@ setup "$sha" 600 '5000 OWNER
 3000 OWNER'
 answer 4900 3900
 run 'cap, with an unacknowledged request' 0 1 1 o/r "$sha"
-# The user may allow a later round.
+# The cap is the user's to lift (claude-ship #282): `! codex-allow.sh <pr> <slug>` leaves the number of rounds it
+# allows in a file under the Claude home. Three rounds used, no allowance: refused, with the command that lifts it.
 setup "$sha" 600 '5000 OWNER
 4000 OWNER
 3000 OWNER'
 answer 4900 3900 2900
-CODEX_ROUND_CAP=4
+run 'cap, no allowance' 4 0 1 o/r "$sha"
+case $(cd "$tmp/repo" && PATH=$tmp/bin:$PATH sh "$tmp/skill/codex-request.sh" 1 o/r "$sha" 2>&1) in
+*'used 3 Codex rounds (cap 3)'*'! ~/.claude/skills/ship/codex-allow.sh 1 o/r'*) ;;
+*) echo "FAIL: the exit-4 message doesn't name the cap and codex-allow.sh"; fail=1 ;;
+esac
+# allow <file name> <content>: what codex-allow.sh leaves for a repo and PR.
+allow() {
+	mkdir -p "$tmp/home/.claude/claude-ship/codex-allow"
+	printf '%s' "$2" >"$tmp/home/.claude/claude-ship/codex-allow/$1"
+}
+# cap_case: three rounds used, each answered.
+cap_case() {
+	setup "$sha" 600 '5000 OWNER
+4000 OWNER
+3000 OWNER'
+	answer 4900 3900 2900
+}
+# An allowance of 4 lets the fourth round be asked for...
+allow o+r-1 4
+cap_case
+run 'allowance 4, three rounds used' 0 1 1 o/r "$sha"
+# ...but not a fifth: four used and the allowance is 4.
+setup "$sha" 600 '6000 OWNER
+5000 OWNER
+4000 OWNER
+3000 OWNER'
+answer 5900 4900 3900 2900
+run 'allowance 4, four rounds used' 4 0 1 o/r "$sha"
+# A larger allowance covers more rounds.
+allow o+r-1 5
+run 'allowance 5, four rounds used' 0 1 1 o/r "$sha"
+# An allowance for another PR or another repo doesn't apply.
+rm -f "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+allow o+r-2 9
+allow x+r-1 9
+allow o+r-11 9
+cap_case
+run 'allowance for other PRs and repos' 4 0 1 o/r "$sha"
+# A missing, empty or malformed file is the default cap (fail closed).
+for bad in '' x 4x -1 ' 4' '4 4' '0' '3' '2' '4.0' '+4' '99999999999999999999'; do
+	allow o+r-1 "$bad"
+	cap_case
+	run "malformed allowance '$bad'" 4 0 1 o/r "$sha"
+done
+allow o+r-1 '4
+x'
+cap_case
+run 'two-line allowance' 4 0 1 o/r "$sha"
+# A trailing newline is what codex-allow.sh writes.
+allow o+r-1 '4
+'
+cap_case
+run 'allowance with a newline' 0 1 1 o/r "$sha"
+# A directory where the file should be reads as no allowance.
+rm -f "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+mkdir "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+cap_case
+run 'allowance is a directory' 4 0 1 o/r "$sha"
+rmdir "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+# CLAUDE_HOME moves the allowance directory.
+allow o+r-1 9
+cap_case
+mkdir -p "$tmp/ch/claude-ship/codex-allow"
+printf '4\n' >"$tmp/ch/claude-ship/codex-allow/o+r-1"
+CLAUDE_HOME=$tmp/ch
+export CLAUDE_HOME
+run 'allowance under CLAUDE_HOME' 0 1 1 o/r "$sha"
+rm -f "$tmp/ch/claude-ship/codex-allow/o+r-1"
+cap_case
+run 'CLAUDE_HOME without an allowance' 4 0 1 o/r "$sha"
+unset CLAUDE_HOME
+rm -f "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+# The environment no longer lifts the cap: an agent could set it itself.
+cap_case
+CODEX_ROUND_CAP=9
 export CODEX_ROUND_CAP
-run 'cap raised' 0 1 1 o/r "$sha"
+run 'CODEX_ROUND_CAP is ignored' 4 0 1 o/r "$sha"
 unset CODEX_ROUND_CAP
+# #280: a request after the head's push, with Codex's eyes and no receipt or review yet, is pending (codex-status.sh
+# says so even with unresolved threads), so it is not asked again, at or past the cap.
+setup "$sha" 600 '5000 OWNER
+4000 OWNER
+3000 OWNER
+300 OWNER'
+answer 4900 3900 2900
+run 'cap, fourth request pending' 0 0 1 o/r "$sha"
 
 # Misuse exits 2.
 setup "$sha" 600 ''

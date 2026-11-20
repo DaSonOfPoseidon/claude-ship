@@ -6,8 +6,8 @@
 # came after the head's push, nothing from Codex followed it, and codex-status.sh, run as a dry run, still says
 # it is waiting for Codex), it posts nothing and exits 0, so repeating the call is safe; a stalled, unacknowledged
 # or answered request may be asked again (docs/scripts.md), and a failing codex-status.sh exits 2. Otherwise, if
-# the PR has already used CODEX_ROUND_CAP rounds (default 3, counted by codex-round.sh), it posts nothing and
-# exits 4: the ship skill allows no fourth review unless the user asks.
+# the PR has already used 3 rounds (counted by codex-round.sh), it posts nothing and exits 4: the ship skill allows
+# no fourth review unless the user runs `! ~/.claude/skills/ship/codex-allow.sh <pr> <slug>` (see below).
 # Usage: codex-request.sh <pr> [owner/repo] [sha]   (CODEX_REQUEST_TRIES sets how many 10s checks to make,
 # default 18)
 set -eu
@@ -97,10 +97,19 @@ if [ "$head_repo" != - ]; then
 		fi
 	fi
 fi
-# No request for this head is pending, so this would start a new round: not past the cap.
+# No request for this head is pending, so this would start a new round: not past the cap. The cap is 3, and only the
+# user raises it, with `! codex-allow.sh <pr> <slug>`, which leaves the number of rounds it allows in a file under
+# the Claude home (the gate denies Claude that command and writes there). A missing, empty or malformed file, or one
+# not above 3, leaves the cap at 3 (fail closed). The environment can't raise it: an agent could set that itself.
 rounds=$("$(dirname "$0")/codex-round.sh" "$pr" "$slug")
-if [ "$rounds" -ge "${CODEX_ROUND_CAP:-3}" ]; then
-	echo "PR #$pr has used $rounds Codex rounds (cap ${CODEX_ROUND_CAP:-3}); not asking again." >&2
+cap=3
+allowed=$(cat "${CLAUDE_HOME:-${HOME:-}/.claude}/claude-ship/codex-allow/$(printf '%s' "$slug" | tr / +)-$pr" 2>/dev/null || true)
+case $allowed in
+'' | *[!0-9]*) ;;
+*) [ "${#allowed}" -le 9 ] && [ "$allowed" -gt "$cap" ] && cap=$allowed ;;
+esac
+if [ "$rounds" -ge "$cap" ]; then
+	echo "PR #$pr has used $rounds Codex rounds (cap $cap); not asking again. The user allows one more with: ! ~/.claude/skills/ship/codex-allow.sh $pr $slug" >&2
 	exit 4
 fi
 gh pr comment "$pr" -R "$slug" -b "@codex review"

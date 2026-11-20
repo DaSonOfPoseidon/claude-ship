@@ -70,7 +70,8 @@ or anything CI already checks (shellcheck, actionlint).
   text, and its state is writable by any shell. Branch protection requiring `codex-review` is the server-side
   backstop for merges. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch
   skips it.
-- Only the user changes the opt-in variables, waives a review, lifts the immutable flag on the installed files
+- Only the user changes the opt-in variables, waives a review, allows a Codex round past the cap of 3
+  (`! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`; the gate denies Claude that command), lifts the immutable flag on the installed files
   (`! sudo chattr -i <path>`), or edits the installed gate, its state, the lint config (`~/.claude/claude-ship/`) or the settings that register it. `install.sh`
   deploys only `origin/main`; it lifts the flag itself while it reinstalls and sets it again.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,

@@ -396,12 +396,18 @@ def writer($c; $a):
 	($c | test("^(cp|mv|rm|rmdir|ln|install|tee|touch|truncate|dd|rsync|unlink|shred|mkdir|chmod|chown|chgrp|tar|unzip|patch)$"))
 	or ($c == "sed" and ($a | any(test("^-[^-efl]*i|^--in-place"))))
 	or ($c == "perl" and ($a | any(test("^-[^-eEMmIxdDCV]*i"))));
+# Is the word the Codex round allowance script, run (docs/gate.md › Waivers and opt-in flags)? The test of it in this
+# repo, tests/codex-allow.sh, runs the script against a stub in a temp home and is not the user call. Only a command or
+# the script a shell runs counts, so `git add`, `cat`, `shellcheck` and a commit message that name the file pass.
+def allowrun($w): ($w | bn) == "codex-allow.sh" and ($w | test("(^|/)tests/codex-allow\\.sh$") | not);
 # What an effective command $e does (its words, after wrappers; $all are the words of the whole simple command): a denial, a
 # string it runs as shell, or a write of a protected path.
 def cmdev($e; $all; $cd):
 	($e.w[0] | bn) as $c | $e.w[1:] as $a
 	| if $c == "chattr" then
 		{k: "deny", m: "chattr sets and lifts the immutable flag that locks the installed review gate (hooks, skill, ship agents, shfmt, git hooks and the managed settings drop-in). Only the user changes it: ask them to run `! sudo chattr -i <path>`."}
+	elif allowrun($e.w[0]) or (($c | test("^(sh|bash|dash|zsh|ksh|ash|source|\\.)$")) and allowrun(($a | map(select(startswith("-") | not)) | first // ""))) then
+		{k: "deny", m: "only the user can allow a Codex round past the cap. Ask them to run `! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`."}
 	elif $c == "git" then gitdeny($a)
 	elif ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x then empty else shellstr($a) | select(.k == "str") end)
 	elif $c == "eval" then (if $e.x or ($a | length) == 0 then empty else {k: "str", v: ($a | join(" "))} end)

@@ -14,7 +14,7 @@ it; `HEAD_SHA` checks another commit, to test against past reviews.
 | State | When |
 |---|---|
 | `success` | Codex completed a review of the head commit after it was pushed, and every Codex review thread is resolved |
-| `failure` | a Codex thread is unresolved, or Codex's review failed (on a fork PR, with a message that a retry won't help) |
+| `failure` | a Codex thread is unresolved (unless a request for the head is still unanswered, below), or Codex's review failed (on a fork PR, with a message that a retry won't help) |
 | `pending` | no completed review of the head yet, or the review stalled, was never acknowledged, or can't be tied to a request, or Codex's summary says it finished with findings and the review carrying them hasn't posted (stalled if it never does) |
 
 On a fork PR the owner can also set `success` without a Codex review (below).
@@ -25,6 +25,18 @@ the summary's last edit, and a request in the same second counts as before it. R
 the summary still shows the failed row, and `codex-wait.sh` used to return that stale failure at once.
 
 Resolve a thread once its finding is fixed, or answered with why it doesn't apply.
+
+**An unanswered request outranks open threads (#282).** The verdicts are decided in this order: an unanswered request
+for the head, then an unresolved Codex thread, then the rest (an owner's fork approval, findings still posting, a
+completed review, a failed one, a stall, finished more than once, not acknowledged, waiting). A request is
+*unanswered* when the latest trusted request came at or after the head's push and no Codex receipt or review follows
+it (strictly after, to the second, as `codex-request.sh` counts them). Then the status is `pending` whatever threads
+are open: findings still posting, then stalled, then not acknowledged, else "Waiting for Codex to review …". Without
+this, threads left by an earlier round hid a running review behind `failure`: `codex-wait.sh` returned at once, and
+`codex-request.sh` asked a second time for the same head, which spent a round (#280). The receipts and reviews are
+read only with threads open and a request for the head, so a normal run makes no extra call. Once Codex answers
+(any receipt or review after the request), the threads fail it as before; with no request since the head's push,
+they fail it too.
 
 **Push time.** Codex's summary names commits by a 7-character SHA, which someone could forge a collision for, so
 a review counts only if it finished after the head was last pushed. The push time comes from GitHub's own
@@ -43,7 +55,7 @@ request and the head's push (times to the second, as text; an unsubmitted review
 The review event re-runs the status, which then fails on its open threads, or succeeds if they are all resolved.
 A review of another commit, or of the head from before the latest request (a re-review), doesn't end the wait. A
 `has_any_findings` that is false or null, a state that names another commit or none, and a state that isn't JSON
-change nothing. An unresolved Codex thread still fails first, an owner's fork approval still wins over the wait,
+change nothing. An unresolved Codex thread still fails first (unless a request for the head is unanswered, above), an owner's fork approval still wins over the wait,
 and the reviews are read only in this case. `codex-wait.sh` keeps waiting on it, as on any plain `pending`.
 When the summary's last edit, the latest trusted request and the push are all `CODEX_STALL_SECS` old and the review
 still hasn't posted (#231), the status stays `pending` but says so ("... its review never posted (stalled, no update in N min);
@@ -238,11 +250,30 @@ minute ago (#139). If the status script fails, the call exits 2 and posts nothin
 record there is nothing to tie a request to, so it asks (the old behaviour).
 
 **Round cap.** When it would post, it first counts the rounds with `codex-round.sh` (next to it); at
-`CODEX_ROUND_CAP` (default 3) or more it posts nothing and exits 4. The check comes after the repeat check on
+the cap or more it posts nothing and exits 4. The cap is 3, and only the user raises it, with
+`codex-allow.sh` (next section): when `<Claude home>/claude-ship/codex-allow/<owner>+<repo>-<pr>` holds a plain
+positive integer above 3 (digits only, nine at most, one line), that is the cap for the PR. A missing, empty or
+malformed file, or a number of 3 or less, leaves the cap at 3 (fail closed: no extra round). The environment no
+longer raises it: `CODEX_ROUND_CAP` is gone, since an agent could set it itself (the #280 orchestrator did). The
+exit-4 message names the cap and the command that lifts it. The check comes after the repeat check on
 purpose: a request already pending for this head is round 3's own review, which must still be waited for, so it
 exits 0, not 4. Putting the cap in the script lets `ship-codex` hand a retry after an exit 3 to the same call and
-learn the cap and the new round from it, instead of every caller counting first. The user lifts it for a later
-round by setting `CODEX_ROUND_CAP`.
+learn the cap and the new round from it, instead of every caller counting first.
+
+## `skills/ship/codex-allow.sh`
+
+The user's way past the round cap (#282). Usage: `! ~/.claude/skills/ship/codex-allow.sh <pr> [owner/repo]`, run
+by the user with `!`; the repository defaults to the one `gh` sees in the cwd. It counts the PR's rounds with
+`codex-round.sh` (next to it; a failed count exits 1 and writes nothing) and writes that count plus one to
+`<Claude home>/claude-ship/codex-allow/<owner>+<repo>-<pr>` (`CLAUDE_HOME`, else `$HOME/.claude`; the file is
+written beside itself and moved into place), then prints `Allowed one more Codex round on <slug>#<pr> (cap <n>).`
+Each run grants exactly one round beyond those already used, so allowing a fifth round takes a second run after
+the fourth. A `pr` that is not digits, or a slug that is not `owner/repo` (two parts, no `.` or `..`), exits 2
+and writes nothing. `codex-request.sh` reads the file (above).
+
+The gate denies Claude a run of `codex-allow.sh` in every repo (`docs/gate.md` › Waivers and opt-in flags), and the directory is under
+`~/.claude/claude-ship/`, which the tamper check already protects from Write, Edit and shell writes. So no agent can
+grant itself a round. `ship-codex`'s allowlist (`hooks/codex-bash.sh`) does not include the script either.
 
 ## `skills/ship/codex-triage.sh`
 
