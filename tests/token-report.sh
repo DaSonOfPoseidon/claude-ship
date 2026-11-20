@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests skills/ship/token-report.sh: per-PR usage and cost from Claude Code transcripts. The fake gh serves
-# `repo view` and `pr view <n>` from fixture files; transcripts are built under a fake projects dir whose
+# `repo view`, `pr view <n>` and the GraphQL PR list from fixture files; transcripts are built under a fake projects dir whose
 # slug the script must derive from the repo (and from a worktree of it, via the git common dir).
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -17,10 +17,38 @@ case "$1 $2" in
 	echo "$3" >>"$GH_DIR/views"
 	cat "$GH_DIR/pr-$3.json"
 	;;
-"pr list")
-	[ -f "$GH_DIR/list.json" ] || { echo "pr list failed" >&2; exit 1; }
-	[ "$3 $4 $5 $6 $7 $8 $9 ${10}" = "-R acme/app --state all --limit 200 --json number,author,createdAt,mergedAt,closedAt" ] || { echo "gh pr list with wrong arguments: $*" >&2; exit 1; }
-	cat "$GH_DIR/list.json"
+"api graphql")
+	# The repo's PR list as GitHub's GraphQL API serves it (#213): newest first, 100 a page, each PR with its first
+	# commit's authored date. list.json is the whole list, an array of PR nodes (a node without `commits` gets its
+	# first commit from pr-<n>.json); anything else in it is served as the first response, as it is. Each call is
+	# logged in `lists` (its `after` cursor, "-" for none); a fixture file `page2-fails` makes the second page fail.
+	[ -f "$GH_DIR/list.json" ] || { echo "graphql failed" >&2; exit 1; }
+	[ "$3" = -f ] && [ "$5 $6 $7 $8" = "-f owner=acme -f name=app" ] || { echo "gh api graphql with wrong arguments: $*" >&2; exit 1; }
+	for want in 'query=' 'first: 100' 'states: [OPEN, CLOSED, MERGED]' 'orderBy: {field: CREATED_AT, direction: DESC}' 'commits(first: 1)' 'authoredDate'; do
+		case "$4" in *"$want"*) ;; *) echo "gh api graphql without $want: $*" >&2; exit 1 ;; esac
+	done
+	after=
+	if [ $# -gt 8 ]; then
+		[ $# = 10 ] && [ "$9" = -f ] || { echo "gh api graphql with wrong arguments: $*" >&2; exit 1; }
+		after=${10#after=}
+	fi
+	echo "${after:--}" >>"$GH_DIR/lists"
+	if [ "$(jq -r 'type' "$GH_DIR/list.json")" != array ]; then
+		cat "$GH_DIR/list.json"
+		exit 0
+	fi
+	[ -z "$after" ] || [ ! -f "$GH_DIR/page2-fails" ] || { echo "page 2 failed" >&2; exit 1; }
+	[ -z "$after" ] || [ "$after" = c100 ] || { echo "unexpected cursor: $after" >&2; exit 1; }
+	set -- "$GH_DIR"/pr-*.json
+	[ -e "$1" ] || set -- /dev/null
+	jq -n -c --arg after "$after" --slurpfile all "$GH_DIR/list.json" '
+		[inputs | {n: (input_filename | capture("pr-(?<n>[0-9]+)[.]json").n | tonumber), f: (.commits[0].authoredDate // null)}] as $f
+		| ($all[0] | map(. as $p | if has("commits") then . else . + {commits: {nodes: (
+			([$f[] | select(.n == $p.number and .f != null) | .f] | .[0]) as $d
+			| if $d == null then [] else [{commit: {authoredDate: $d}}] end)}} end)) as $L
+		| (if $after == "" then 0 else 100 end) as $o
+		| {data: {repository: {pullRequests: {pageInfo: {hasNextPage: (($L | length) > ($o + 100)),
+			endCursor: (if ($L | length) > ($o + 100) then "c\($o + 100)" else null end)}, nodes: $L[$o:$o + 100]}}}}' "$@"
 	;;
 *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
@@ -48,7 +76,7 @@ fresh() {
 	echo '[]' >"$GH_DIR/list.json"
 }
 
-# plist <n|created|merged|closed[|author]>...: what `gh pr list` returns for the repo (an empty field is null;
+# plist <n|created|merged|closed[|author]>...: the repo's PR list, as list.json (an empty field is null;
 # the author is "me" unless given, and "none" is a deleted account: a null author).
 plist() {
 	printf '%s\n' "$@" | jq -R -s -c 'split("\n") | map(select(. != "") | split("|") as $f
@@ -533,7 +561,7 @@ peak main context: 250000 tokens'
 # A full list (200 PRs) may have cut the repo's older PRs: a warning, not a failure.
 pr 1199 'z' 2026-09-02T00:00:00Z 2026-09-02T01:00:00Z
 pauthor 1199 alice
-jq -n -c '[range(1000; 1199) | {number: ., author: {login: "alice"}, createdAt: "2026-09-01T00:00:00Z", mergedAt: "2026-09-01T01:00:00Z", closedAt: "2026-09-01T01:00:00Z"}]
+jq -n -c '[range(1000; 1198) | {number: ., author: {login: "alice"}, createdAt: "2026-09-01T00:00:00Z", mergedAt: "2026-09-01T01:00:00Z", closedAt: "2026-09-01T01:00:00Z"}]
 	+ [{number: 1199, author: {login: "alice"}, createdAt: "2026-09-02T00:00:00Z", mergedAt: "2026-09-02T01:00:00Z", closedAt: "2026-09-02T01:00:00Z"}]
 	+ [{number: 100, author: {login: "alice"}, createdAt: "2026-10-01T10:00:00Z", mergedAt: "2026-10-01T12:00:00Z", closedAt: "2026-10-01T12:00:00Z"}]' >"$GH_DIR/list.json"
 run 100
@@ -616,19 +644,131 @@ total 1 250000 0 0 0 $1.00
 peak main context: 250000 tokens'
 same 205 206
 
-# `gh pr list` failing exits 1 with its message and prints no table (it is not read as "no earlier PRs").
+# A PR created after every asked window ends can still compete (#213): its window starts at its first commit when
+# that is earlier than its creation, and widens back from there. Alice's PR 300 (10:00..12:00) is asked. Bob's PR
+# 301 is created at 14:00, but its first commit was authored at 11:30, and his previous PR 299 ended at 13:00
+# (after 300), so only his first commit puts 301 in the competing set. Session: 09:00 ($4), 10:15 ($1), 12:15 ($1).
+# 301 widens back to 09:00 (PR 298, his one before it, ended at 08:00) and takes that request from 300, so 300's
+# row is the same whether or not 301 is asked, and 301 is read with `gh pr view` though only 300 is asked.
+fresh
+pr 298 'x' 2026-10-01T07:00:00Z 2026-10-01T08:00:00Z
+pr 299 'y' 2026-10-01T12:40:00Z 2026-10-01T13:00:00Z
+pr 300 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 301 'c' 2026-10-01T14:00:00Z 2026-10-01T15:00:00Z 2026-10-01T11:30:00Z
+pauthor 298 bob
+pauthor 299 bob
+pauthor 300 alice
+pauthor 301 bob
+plist '298|2026-10-01T07:00:00Z|2026-10-01T08:00:00Z|2026-10-01T08:00:00Z|bob' '299|2026-10-01T12:40:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z|bob' '300|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z|alice' '301|2026-10-01T14:00:00Z|2026-10-01T15:00:00Z|2026-10-01T15:00:00Z|bob'
+line "$D/s.jsonl" f0 2026-10-01T09:00:00.000Z claude-opus-5-5 1000000 0 0 0
+line "$D/s.jsonl" f1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s.jsonl" f2 2026-10-01T12:15:00.000Z claude-opus-5-5 250000 0 0 0
+run 300
+check 'a PR whose first commit is before the asked window ends' 0 'PR #300 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+grep -qx 301 "$GH_DIR/views" || { echo 'FAIL: want PR 301 read when its first commit is before the asked PR ends'; cat "$GH_DIR/views"; fail=1; }
+same 300 301
+
+# A first commit authored after the creation (a rebase) doesn't move the bound: the start is the creation, so PR
+# 301 (created 14:00) is not read for PR 300.
+pr 301 'c' 2026-10-01T14:00:00Z 2026-10-01T15:00:00Z 2026-10-01T16:00:00Z
+pauthor 301 bob
+: >"$GH_DIR/views"
+run 300
+check 'a first commit after the creation' 0 'PR #300 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 1250000 0 0 0 $5.00
+total 2 1250000 0 0 0 $5.00
+peak main context: 1000000 tokens'
+grep -qx 301 "$GH_DIR/views" && { echo 'FAIL: PR 301 read although it starts at its creation, after the asked PR ends'; cat "$GH_DIR/views"; fail=1; }
+
+# A PR with no commits (its `commits` list is empty) and one with a null author in the list don't break the bound.
+pr 301 'c' 2026-10-01T14:00:00Z 2026-10-01T15:00:00Z
+pauthor 301 bob
+plist '298|2026-10-01T07:00:00Z|2026-10-01T08:00:00Z|2026-10-01T08:00:00Z|bob' '299|2026-10-01T12:40:00Z|2026-10-01T13:00:00Z|2026-10-01T13:00:00Z|bob' '300|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z|2026-10-01T12:00:00Z|alice' '301|2026-10-01T14:00:00Z|2026-10-01T15:00:00Z|2026-10-01T15:00:00Z|bob' '302|2026-10-01T13:00:00Z|2026-10-01T13:30:00Z|2026-10-01T13:30:00Z|none'
+run 300
+check 'no commits, and a null author, in the list' 0 'PR #300 a (2026-10-01T09:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 2 1250000 0 0 0 $5.00
+total 2 1250000 0 0 0 $5.00
+peak main context: 1000000 tokens'
+
+# The list is read in as many calls as it has pages (100 PRs each), at most two. biglist <total> makes alice's PR
+# 100 and 1199 (the one PR she had before it) first, then fillers of hers from before 1199 that never compete.
+biglist() {
+	jq -n -c --argjson n "$1" '[{number: 100, author: {login: "alice"}, createdAt: "2026-10-01T10:00:00Z", mergedAt: "2026-10-01T12:00:00Z", closedAt: "2026-10-01T12:00:00Z"},
+		{number: 1199, author: {login: "alice"}, createdAt: "2026-09-02T00:00:00Z", mergedAt: "2026-09-02T01:00:00Z", closedAt: "2026-09-02T01:00:00Z"}]
+		+ [range(1000; 1000 + $n - 2) | {number: ., author: {login: "alice"}, createdAt: "2026-09-01T00:00:00Z", mergedAt: "2026-09-01T01:00:00Z", closedAt: "2026-09-01T01:00:00Z"}]' >"$GH_DIR/list.json"
+}
+# lists_n: how many pages the last run asked for (the fake gh logs one line a call).
+lists_n() { wc -l <"$GH_DIR/lists" | tr -d ' '; }
+fresh
+pr 100 'a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 1199 'z' 2026-09-02T00:00:00Z 2026-09-02T01:00:00Z
+pauthor 100 alice
+pauthor 1199 alice
+line "$D/s.jsonl" g1 2026-10-01T10:15:00.000Z claude-opus-5-5 250000 0 0 0
+want100='PR #100 a (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens'
+biglist 100
+: >"$GH_DIR/lists"
+run 100
+check '100 PRs in the list' 0 "$want100"
+[ "$(lists_n)" = 1 ] || { echo 'FAIL: want one page of the list for 100 PRs'; cat "$GH_DIR/lists"; fail=1; }
+! grep -q 'newest 200' "$tmp/err" || { echo 'FAIL: warning for a list of 100'; cat "$tmp/err"; fail=1; }
+biglist 101
+: >"$GH_DIR/lists"
+run 100
+check '101 PRs in the list' 0 "$want100"
+[ "$(lists_n)" = 2 ] || { echo 'FAIL: want two pages of the list for 101 PRs'; cat "$GH_DIR/lists"; fail=1; }
+! grep -q 'newest 200' "$tmp/err" || { echo 'FAIL: warning for a list of 101'; cat "$tmp/err"; fail=1; }
+biglist 250
+: >"$GH_DIR/lists"
+run 100
+check 'more than 200 PRs in the list' 0 "$want100"
+[ "$(lists_n)" = 2 ] || { echo 'FAIL: want two pages of the list for 250 PRs, never a third'; cat "$GH_DIR/lists"; fail=1; }
+grep -q 'newest 200' "$tmp/err" || { echo 'FAIL: no warning for the cut list'; cat "$tmp/err"; fail=1; }
+# A PR listed on both pages (one was created between the two calls) is not an error.
+biglist 101
+jq -c '.[100] = .[99]' "$GH_DIR/list.json" >"$GH_DIR/list.tmp" && mv "$GH_DIR/list.tmp" "$GH_DIR/list.json"
+run 100
+check 'a PR listed twice' 0 "$want100"
+
+# The second page failing is an error, not a shorter list.
+touch "$GH_DIR/page2-fails"
+run 100
+check 'the second page of the list fails' 1 ''
+grep -q 'gh api graphql failed' "$tmp/err" || { echo 'FAIL: no message for the failed second page'; cat "$tmp/err"; fail=1; }
+rm "$GH_DIR/page2-fails"
+
+# The list call failing exits 1 with its message and prints no table (it is not read as "no earlier PRs").
 fresh
 pr 67 'y' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
 rm "$GH_DIR/list.json"
 run 67
-check 'gh pr list fails' 1 ''
-grep -q 'gh pr list' "$tmp/err" || { echo 'FAIL: no message for the failed pr list'; cat "$tmp/err"; fail=1; }
+check 'the list call fails' 1 ''
+grep -q 'gh api graphql failed' "$tmp/err" || { echo 'FAIL: no message for the failed list call'; cat "$tmp/err"; fail=1; }
 
-# `gh pr list` returning something that isn't a list fails the same way.
+# A response without the list of PRs (an error object, or a repository that came back null), or with a next page
+# but no cursor for it, fails the same way: never an empty list.
 echo '{"message":"oops"}' >"$GH_DIR/list.json"
 run 67
-check 'gh pr list returns an object' 1 ''
-grep -q 'gh pr list' "$tmp/err" || { echo 'FAIL: no message for the odd pr list'; cat "$tmp/err"; fail=1; }
+check 'the list response is an object without PRs' 1 ''
+grep -q 'something other than a list of PRs' "$tmp/err" || { echo 'FAIL: no message for the odd list'; cat "$tmp/err"; fail=1; }
+echo '{"data":{"repository":null}}' >"$GH_DIR/list.json"
+run 67
+check 'a null repository' 1 ''
+grep -q 'something other than a list of PRs' "$tmp/err" || { echo 'FAIL: no message for the null repository'; cat "$tmp/err"; fail=1; }
+echo '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":true,"endCursor":null},"nodes":[]}}}}' >"$GH_DIR/list.json"
+run 67
+check 'a next page with no cursor' 1 ''
+grep -q 'no cursor' "$tmp/err" || { echo 'FAIL: no message for the missing cursor'; cat "$tmp/err"; fail=1; }
 
 # A PR without an author (a deleted account) can't be matched against the list: an error, not "no earlier PRs".
 echo '[]' >"$GH_DIR/list.json"
@@ -913,8 +1053,9 @@ sed -n '/^costliest/,/^peak/p' "$tmp/out" >"$tmp/top"
 peak main context: mean 892857 tokens, max 1500000 tokens' ] || { echo 'FAIL: top 5 costliest'; cat "$tmp/top"; fail=1; }
 grep -q '^cost per PR: mean \$3.57, median \$4.00, max \$6.00$' "$tmp/out" || { echo 'FAIL: mean/median of 7 PRs'; cat "$tmp/out"; fail=1; }
 
-# An unpriced row (a model with no price) makes its PR's cost ?: the PR is left out of the cost sums, and its row
-# of the role table with it, with a count of the PRs affected. Its tokens still count for the peak context.
+# An unpriced row (a model with no price) makes its PR's cost ?, and exclusion is per row (#261): a ? row is left out
+# of the role table and its total, a PR whose total is ? is left out of the per-PR figures with a count of them, and
+# the PR's priced rows still count in the role table. Its tokens still count for the peak context.
 fresh
 pr 20 'feat: a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
 pr 22 'feat: c' 2026-10-03T10:00:00Z 2026-10-03T12:00:00Z
@@ -938,7 +1079,7 @@ Summary: usage found for 2 of 2 PRs
 role model cost share
 main claude-opus-5-5 $1.00 100.0%
 total $1.00 100.0%
-left out of the cost sums: 1 PR(s) with a ? cost
+left out of the per-PR figures below: 1 PR(s) with a ? cost (their priced rows still count in the cost by role and model)
 cost per PR: mean $1.00, median $1.00, max $1.00
 costliest PRs:
 #20 $1.00 feat: a
@@ -955,10 +1096,46 @@ total 1 100000 0 0 0 ?
 peak main context: 100000 tokens
 
 Summary: usage found for 1 of 1 PRs
-left out of the cost sums: 1 PR(s) with a ? cost
+left out of the per-PR figures below: 1 PR(s) with a ? cost (their priced rows still count in the cost by role and model)
 cost per PR: no priced PR
 peak main context: mean 100000 tokens, max 100000 tokens
 implementer cache read: no implementer requests'
+# A PR with a priced main row and a ? subagent row: its main row counts in the role table and the grand total, the
+# per-PR figures (mean, median, max, top 5) leave the PR out, and the line says which.
+fresh
+pr 20 'feat: a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 24 'feat: e' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
+line "$D/s20.jsonl" m1 2026-10-01T10:30:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s24.jsonl" m4 2026-10-05T10:30:00.000Z claude-opus-5-5 500000 0 0 0
+A=$D/s24/subagents/agent-mys.jsonl
+line "$A" m5 2026-10-05T10:40:00.000Z claude-mystery-1 100000 0 0 0
+meta "$A" '{"agentType":"mys"}'
+plist '20|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z' '24|2026-10-05T10:00:00Z|2026-10-05T12:00:00Z'
+run --summary 20 24
+check '--summary, a PR with a priced and an unpriced row' 0 'PR #20 feat: a (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens
+
+PR #24 feat: e (2026-10-05T10:00:00 → 2026-10-05T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+mys claude-mystery-1 1 100000 0 0 0 ?
+total 2 600000 0 0 0 ?
+peak main context: 500000 tokens
+
+Summary: usage found for 2 of 2 PRs
+role model cost share
+main claude-opus-5-5 $3.00 100.0%
+total $3.00 100.0%
+left out of the per-PR figures below: 1 PR(s) with a ? cost (their priced rows still count in the cost by role and model)
+cost per PR: mean $1.00, median $1.00, max $1.00
+costliest PRs:
+#20 $1.00 feat: a
+peak main context: mean 375000 tokens, max 500000 tokens
+implementer cache read: no implementer requests'
+
 fresh
 pr 23 'feat: d' 2026-10-04T10:00:00Z 2026-10-04T12:00:00Z
 run --summary 23
