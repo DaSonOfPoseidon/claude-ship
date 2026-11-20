@@ -235,7 +235,39 @@ if [ "$review_state" = completed ] && [ "$review_any" = true ] && echo "$row" | 
 	fi
 fi
 
-if [ "$findings" -gt 0 ]; then
+# An unanswered request for the head (#282): the latest trusted request came at or after the head's push and no
+# receipt or review of Codex's follows it. Open threads from an earlier review would hide it behind a failure, and
+# codex-request.sh would then ask again (a second review of the same head) instead of waiting. Read only with
+# threads open: without them the verdicts below already say pending. `req` is the request's time, from above.
+open_request=
+if [ "$findings" -gt 0 ] && [ -n "$req" ] && [ -n "$pushed_at" ] && { [ "$req" = "$pushed_at" ] || later "$req" "$pushed_at"; }; then
+	req_receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+		--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
+	req_reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+		--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
+	# Strictly after, as codex-request.sh counts (times compare as text, to the second).
+	req_answers=$(printf '%s\n%s\n' "$req_receipts" "$req_reviews" | grep . | cut -c1-19 |
+		awk -v r="$req" '$0 > r' | grep -c . || true)
+	if [ "$req_answers" -eq 0 ]; then
+		open_request=1
+	fi
+fi
+
+if [ -n "$open_request" ]; then
+	# The pending verdicts below, in their usual order; the threads wait until Codex answers the request.
+	state=pending
+	if [ "$posting" = stalled ]; then
+		description="Codex finished $short with findings but its review never posted (stalled, no update in $((stall_secs / 60)) min); ask again with @codex review"
+	elif [ -n "$posting" ]; then
+		description="Codex finished $short with findings; waiting for its review to post"
+	elif [ -n "$stalled" ]; then
+		description="Codex's review of $short stalled (no update in $((stall_secs / 60)) min, openai/codex#55890); ask again with @codex review"
+	elif [ -n "$unacked" ]; then
+		description="Codex hasn't acknowledged the request for $short in $((ack_secs / 60)) min; ask again with @codex review"
+	else
+		description="Waiting for Codex to review $short"
+	fi
+elif [ "$findings" -gt 0 ]; then
 	state=failure
 	description="$findings unresolved Codex thread(s); fix or answer each, then resolve it"
 elif [ -n "$approved" ]; then
