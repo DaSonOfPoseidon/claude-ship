@@ -543,5 +543,135 @@ review docs-kind
 errhas docs-kind 'review-gate: docs-check (haiku)'
 errlacks docs-kind 'review-gate: finder'
 
+# The branch-diff pass cache (claude-ship #298) is keyed on the diff and on the review rules it passed under. The
+# patch-id survives a rebase, so a pass made under rules the default branch has since changed must not carry over.
+# new_default [rules]: moves the default branch past the branch's base with a commit of its own, then rebases the branch
+# onto it (the same patch-id, a new HEAD). With "rules" as the argument, the text on stdin becomes the default branch's
+# rules (heading added); without it the rules stay as they are.
+new_default() {
+	base=$(git -C "$repo" rev-parse HEAD~1)
+	g checkout -q -b newbase "$base"
+	if [ "${1:-}" = rules ]; then
+		{
+			printf '## Code Review Rules\n\n'
+			cat
+		} >"$repo/AGENTS.md"
+	fi
+	echo moved >"$repo/moved.txt"
+	git -C "$repo" add -A
+	g commit -q -m moved
+	publish
+	g checkout -q feat
+	g rebase -q newbase
+}
+
+# patch_pass_branch <name>: a branch that changes b.sh passes review under rules with a `*.lock skip` rule, and leaves
+# its patch pass behind. The fake reviewer fails from here on, so a review shows as exit 2 and $tmp/claude-ran.
+patch_pass_branch() {
+	fixture
+	rules_on_origin <<'EOT'
+- P0: a rule
+
+### Path rules
+
+```
+*.lock  skip
+```
+EOT
+	change b.sh
+	FAKE_CLAUDE=finding
+	run_gate
+	if [ "$rc" != 0 ]; then
+		echo "FAIL ($1): the first review exited $rc (want 0)"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+	rm -f "$tmp/claude-ran"
+	FAKE_CLAUDE=fail
+}
+
+# reviewed_again <name>: the gate ran the reviewer (which fails) instead of hitting the cache.
+reviewed_again() {
+	run_gate
+	if [ "$rc" != 2 ] || [ ! -e "$tmp/claude-ran" ]; then
+		echo "FAIL ($1): the gate exited $rc (want 2) or the reviewer did not run"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+	errlacks "$1" 'this branch diff already passed review'
+	errlacks "$1" 'Blocked: couldn'
+}
+
+# 1. Same rules after the rebase: the cache hits, no reviewer runs.
+patch_pass_branch same-rules
+new_default
+run_gate
+if [ "$rc" != 0 ] || [ -e "$tmp/claude-ran" ]; then
+	echo "FAIL (same-rules): the gate exited $rc (want 0) or the reviewer ran"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+fi
+errhas same-rules 'this branch diff already passed review'
+
+# 2. The #298 repro: every file skipped under `*.lock skip`, then the default branch drops the rule and the branch is
+# rebased. The lockfile change is reviewed now.
+fixture
+rules_on_origin <<'EOT'
+### Path rules
+
+```
+*.lock  skip
+```
+EOT
+change a.lock
+run_gate
+if [ "$rc" != 0 ] || [ -e "$tmp/claude-ran" ]; then
+	echo "FAIL (skip-dropped): the first run exited $rc (want 0) or the reviewer ran"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+fi
+new_default rules <<'EOT'
+- P0: a rule
+EOT
+reviewed_again skip-dropped
+
+# 3. A rules edit that is not a skip rule: no hit either.
+patch_pass_branch rules-edit
+new_default rules <<'EOT'
+- P0: a changed rule
+
+### Path rules
+
+```
+*.lock  skip
+```
+EOT
+reviewed_again rules-edit
+
+# 4. An old-format (empty) pass file: no hit, so each cached branch is reviewed once more.
+patch_pass_branch old-format
+for f in "$repo"/.git/review-gate/patch-*.pass; do : >"$f"; done
+new_default
+reviewed_again old-format
+
+# 5. A pass file that can't be read is a miss (a review), not a block. A directory in its place can't be read by anyone,
+# root included.
+patch_pass_branch unreadable-dir
+for f in "$repo"/.git/review-gate/patch-*.pass; do
+	rm -f "$f"
+	mkdir "$f"
+done
+new_default
+reviewed_again unreadable-dir
+
+# The same with chmod 000. Root reads such a file anyway, so the case is skipped when this runs as root (the directory
+# case above covers an unreadable file there).
+if [ "$(id -u)" != 0 ]; then
+	patch_pass_branch unreadable-mode
+	chmod 000 "$repo"/.git/review-gate/patch-*.pass
+	new_default
+	reviewed_again unreadable-mode
+fi
+
 [ "$fail" = 0 ] && echo "gate-path-rules: ok"
 exit "$fail"
