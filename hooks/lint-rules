@@ -7,6 +7,7 @@
 # Only lines a diff adds are checked, so existing code never fails. One directive per line; `#` starts a comment only
 # at the start of a line; blank lines are skipped. A malformed line is reported on stderr and skipped.
 # Globs are shell patterns that match the repo-relative path; `*` spans `/`. They can't contain spaces (use `?`).
+# A backslash makes the next character literal (`\*`, `\?`, `\[`, `\\`).
 #
 #   <rule|*> <off|warn|error> [glob | !glob ...]
 #       Sets the level of a rule (`*` is every rule). The last line that applies to a path wins. No globs: every path.
@@ -35,7 +36,8 @@
 #   --  sql lua hs
 #
 # Two rules are coded, not written as ban lines, so they only take a level here:
-#   conflict-marker  merge-conflict markers at the start of a line (and a bare ======= when the file adds a <<<<<<< too)
+#   conflict-marker  merge-conflict markers at the start of a line (an opener needs no label; and a bare ======= when
+#                    the file adds a <<<<<<< too)
 #   invisible-char   zero-width, bidi-control and mid-file byte-order-mark characters
 # `./lint.sh rules <path>` shows the effective level of every rule for a path and the file:line that set it.
 
@@ -73,17 +75,24 @@ ban new-suppression warn * 'shellcheck[[:space:]]+disable|(^|[^[:alnum:]_])nolin
 new-suppression off *.md *.mdx *.txt *.rst *.adoc
 
 # skipped-test: a test left skipped or focused, including the parameterized form (it.only.each(...), test.skip.each`...`).
-# The receiver must be a test declaration (it, test, describe, context, suite, specify, with modifiers such as
-# test.concurrent.only), so a pagination call like cursor.skip(n) isn't flagged.
+# The receiver must be a test declaration (it, test, describe, context, suite, specify, QUnit, Deno, with modifiers such
+# as test.concurrent.only, QUnit.module.skip, Deno.test.only), so a pagination call like cursor.skip(n) isn't flagged.
+# ava's t.skip.is(...) skips an assertion inside a test, not a test, and isn't flagged.
 # Conditional skips (skipIf, skipUnless) are deliberate and not flagged.
-ban skipped-test warn *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])(it|test|describe|context|suite|specify)(\.[[:alnum:]_]+)*\.(skip|only)(\.each)?[(`]|(^|[^[:alnum:]_$.])(xit|xdescribe|fit|fdescribe)\(' -- Make the test pass or delete it; a skipped test checks nothing and a focused one silently skips the rest.
+# xit, xdescribe, fit and fdescribe (Jasmine, Mocha, Jest) count only as a statement of their own (first on the line, or
+# after ; { }), so `model = fit(data)` in ordinary code isn't flagged; fit also needs a quoted title, since `fit(X, y)`
+# as a statement is a common name outside tests.
+ban skipped-test warn *.js,*.jsx,*.ts,*.tsx,*.mjs,*.cjs '(^|[^[:alnum:]_$.])(it|test|describe|context|suite|specify|QUnit|Deno)(\.[[:alnum:]_]+)*\.(skip|only)(\.each)?[(`]|(^|[;{}])[[:space:]]*(await[[:space:]]+)?((xit|xdescribe|fdescribe)\(|fit\([[:space:]]*["''`])' -- Make the test pass or delete it; a skipped test checks nothing and a focused one silently skips the rest.
 ban skipped-test warn *.py '@pytest\.mark\.skip([^[:alnum:]_]|$)|@unittest\.skip([^[:alnum:]_]|$)' -- Make the test pass or delete it; a skipped test checks nothing.
 ban skipped-test warn *.go '(^|[^[:alnum:]_])t\.Skip(f|Now)?\(' -- Make the test pass or delete it; a skipped test checks nothing.
 ban skipped-test warn *.rs '#\[ignore(\]|[[:space:]]*=)' -- Make the test pass or delete it; an ignored test checks nothing.
 ban skipped-test warn *.java,*.kt '@Disabled([^[:alnum:]_]|$)' -- Make the test pass or delete it; a disabled test checks nothing.
 
 # todo-no-issue: work promised with no issue to track it. TODO(#12), TODO(PROJ-12) and a link are fine.
-ban todo-no-issue warn * comment '(^|[^[:alnum:]_])(TODO|FIXME|XXX|HACK)([^[:alnum:]_]|$)' unless '#[0-9]+|(^|[^[:alnum:]_])[A-Z][A-Z0-9]+-[0-9]+|https?://' -- Link the work to an issue (TODO(#123) or a URL), or do it now.
+# A tracker key counts only right after the marker (TODO(PROJ-12) or TODO PROJ-12), not anywhere in the text or after
+# a colon: upper-case word-number tokens such as UTF-8 and SHA-256 are everywhere in comments, and an ERE has no
+# lookahead to exclude a list of words, so position is the test.
+ban todo-no-issue warn * comment '(^|[^[:alnum:]_])(TODO|FIXME|XXX|HACK)([^[:alnum:]_]|$)' unless '#[0-9]+|https?://|(TODO|FIXME|XXX|HACK)(\(([^)]*[^[:alnum:]_])?|[[:space:]]+)[A-Z][A-Z0-9]+-[0-9]+' -- Link the work to an issue (TODO(#123) or a URL), or do it now.
 
 # new-comment: off by default. Turn it on (new-comment warn) to flag every added comment except a shebang. A shebang is
 # only a comment in the # languages, so only those exempt text that starts with ! (a Rust //! doc comment is a comment).

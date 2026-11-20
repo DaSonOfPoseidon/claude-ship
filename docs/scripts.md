@@ -674,12 +674,13 @@ built-in defaults and the grammar reference. The design choices:
   with `[!…]` negation, `\` escapes); the result matches what `case` does under `set -f`.
 - **awk finishes by writing a status file**, not an exit code: busybox awk exits 1 on its own errors, which would read as
   an error-level hit.
-- **conflict-marker reads the diff twice** (`diff` and a copy): the first pass notes which files add a `<<<<<<<`, so the
-  second can report a bare `=======` in order, without buffering hits.
+- **conflict-marker reads the diff twice** (`diff` and a copy): the first pass notes which files add a `<<<<<<<` (with
+  or without git's label, and a bare one is a hit too), so the second can report a bare `=======` in order, without
+  buffering hits.
 - **invisible-char finds UTF-8 byte sequences** (U+200B–200F, 202A–202E, 2060–2064, 2066–2069, FEFF) with `index()` on
   octal-escaped literals, so no awk's regex dialect or locale matters. A byte order mark at the start of the file's
-  first line is ordinary. Hits print with control characters replaced by `?`, so an added escape sequence can't act on
-  the terminal.
+  first line is ordinary. Hits print with control characters replaced by `?` (in the path as well as the line, a tab
+  aside), so an added escape sequence or a newline in a file name can't act on the terminal or forge a hit line.
 - **Comment text is approximate.** The leader comes from the extension (`#`, `//` plus `/*` block lines, `--`); a line is
   a comment if it starts with the leader or has the leader after whitespace, which a string literal can fool. It is
   enough for rules like "no TODO without an issue", and a rule that needs more can match the whole line.
