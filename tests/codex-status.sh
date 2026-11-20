@@ -15,7 +15,10 @@ prev=
 for a in "\$@"; do
 	[ "\$prev" = --jq ] && expr=\$a
 	prev=\$a
+	# One line per call: its endpoint (the repos/ path, or graphql).
+	case \$a in repos/*) echo "\$a" >>"$tmp/calls" ;; esac
 done
+case "\$*" in *graphql*) echo graphql >>"$tmp/calls" ;; esac
 case "\$*" in
 *'graphql'*)
 	# No unresolved threads unless a test writes threads.json (the response's shape, not the script's filter).
@@ -33,6 +36,8 @@ case "\$*" in
 *'/issues/1/comments'*) f=comments ;;
 *) echo "unexpected gh call: \$*" >&2; exit 1 ;;
 esac
+# A test makes one endpoint fail by creating fail.<name> (pr, comments or reviews).
+[ ! -f "$tmp/fail.\$f" ] || { echo "gh: HTTP 502 (\$f)" >&2; exit 1; }
 jq -r "\$expr" "$tmp/\$f.json"
 EOF
 chmod +x "$tmp/bin/gh"
@@ -40,6 +45,7 @@ fail=0
 
 # check <state> <label>: runs the script on the fixtures in $tmp.
 check() {
+	: >"$tmp/calls"
 	out=$(REPO=o/r DRY_RUN=1 PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
 	# GitHub rejects a commit status description over 140 characters.
 	desc=${out#*: }
@@ -96,6 +102,8 @@ expect() {
 				+ (if $st == "" then "" else "<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":" + (if $ss == "" then "null" else "\"" + $ss + "\"" end) + ",\"status\":\"" + $st + "\"" + (if $any == "" then "" else ",\"has_any_findings\":" + $any end) + "}} -->\n" end)
 				+ $r)}]'
 	} | jq -s 'add' >"$tmp/comments.json"
+	# RAW_COMMENTS replaces the generated comments (a test of its own comments).
+	[ -z "${RAW_COMMENTS:-}" ] || printf '%s\n' "$RAW_COMMENTS" >"$tmp/comments.json"
 	check "$1" "$2"
 }
 
@@ -512,5 +520,116 @@ with_msg 'unresolved Codex thread' expect failure 'threads, request before the p
 with_msg 'unresolved Codex thread' expect failure 'threads, no request' '`7ca1cc3`' $p $c '' ''
 rm -f "$tmp/threads.json"
 ROW=
+
+# claude-ship #111: one run reads each endpoint at most once, so every value comes from one snapshot (a push or an
+# edit between two reads would pair values from different moments). The fake gh logs one line per call.
+# count <endpoint>: how many calls the last run made to repos/o/r/<endpoint> (graphql: its own).
+count() { grep -c -x "$1" "$tmp/calls" || true; }
+# reads <label> <max reviews>: the last run read the PR once, the comments once and the reviews at most <max> times.
+reads() {
+	for ep in repos/o/r/pulls/1 repos/o/r/issues/1/comments; do
+		if [ "$(count "$ep")" -ne 1 ]; then
+			echo "FAIL: $(count "$ep") reads of $ep (want 1): $1"
+			fail=1
+		fi
+	done
+	if [ "$(count repos/o/r/pulls/1/reviews)" -gt "$2" ]; then
+		echo "FAIL: $(count repos/o/r/pulls/1/reviews) reads of the reviews (want at most $2): $1"
+		fail=1
+	fi
+}
+# A normal run: the named commit needs no review list at all...
+expect success 'reads: commit named' '`7ca1cc3`' $p $c '' ''
+reads 'commit named' 0
+# ...a blank row reads receipts and reviews to find the one that follows the request...
+expect success 'reads: blank row' '—' $p $c "$r1" "$m"
+reads 'blank row' 1
+# ...a request nobody acknowledged looks at both again...
+AGE=7200
+with_msg 'acknowledged' expect pending 'reads: unacknowledged' "$other" "$pushed" $c "$(ago 360) OWNER" ''
+reads 'unacknowledged' 1
+AGE=0
+# ...so does findings that are still posting, with an open request and the threads (three paths, one read).
+echo "$unresolved" >"$tmp/threads.json"
+ROW='| 📝 **Code Review** | ⏳ **Running** | `7ca1cc3` | Manual request |'
+SUMMARY_AT=2026-10-21T15:20:00Z
+with_msg 'acknowledged' expect pending 'reads: open request' '`7ca1cc3`' $p $c "$r1" ''
+reads 'open request' 1
+if [ "$(count graphql)" -ne 1 ]; then
+	echo "FAIL: $(count graphql) threads reads (want 1): open request"
+	fail=1
+fi
+SUMMARY_AT=
+rm -f "$tmp/threads.json"
+ROW=
+summary completed "$sha" true expect success 'reads: posted findings' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
+reads 'posted findings' 1
+# A fork PR also reads the owner's approvals from the same comments.
+fork f/r "$after|OWNER|User|Okay to merge" expect success 'reads: fork approval' '`7ca1cc3`' $p $c '' ''
+reads 'fork approval' 0
+ROW=$failed
+with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'reads: fork, failed' '`7ca1cc3`' $p $c '' ''
+reads 'fork failed' 0
+ROW=
+
+# A failed read stops the run before any status is set, whichever endpoint it was (set -e on each read).
+# The fixtures of a blank row with a request, which reads the reviews too.
+expect success 'reads: fixtures for the failing reads' '—' $p $c "$r1" "$m"
+for ep in pr comments reviews; do
+	: >"$tmp/calls"
+	: >"$tmp/fail.$ep"
+		out=$(REPO=o/r PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
+	rc=$?
+	if [ "$rc" -eq 0 ]; then
+		echo "FAIL: the run succeeded with $ep failing"
+		fail=1
+	fi
+	case $out in
+	*success:* | *pending:* | *failure:*)
+		echo "FAIL: a state was printed with $ep failing: $out"
+		fail=1
+		;;
+	esac
+	if grep -q statuses "$tmp/calls"; then
+		echo "FAIL: a status was posted with $ep failing"
+		fail=1
+	fi
+	rm -f "$tmp/fail.$ep"
+done
+
+# The summary's body and its edit time come from one comment, however the body is written: a newline, a tab and a
+# quote inside it must not move the row or the time (the body goes through the tagged line as JSON).
+okrow='| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-10-21T15:41:21Z">x</relative-time> | `7ca1cc3` | Manual request |'
+ROW=$(printf 'A "quoted" line\twith a tab\nand a second line\n%s\nand a last one' "$okrow")
+with_msg 'Codex reviewed 7ca1cc3 with no findings' expect success 'summary body with newline, tab and quote' '`7ca1cc3`' $p $c '' ''
+# ...and the edit time is the same comment's: a running review whose summary was edited an hour ago is stalled.
+ROW=$(printf 'A "quoted" line\twith a tab\n| 📝 **Code Review** | ⏳ **Running** | `7ca1cc3` | Manual request |\nlast')
+STATE=running
+STATE_SHA=$sha
+SUMMARY_AT=$(ago 3600)
+with_msg 'stalled' expect pending 'summary body with newline, edit time kept' '`7ca1cc3`' $p $c '' ''
+STATE=
+STATE_SHA=
+SUMMARY_AT=
+ROW=
+
+# One comment that several filters select (a login that is the bot's but typed User, from the owner, whose body is a
+# request, a receipt and a summary at once) yields every line the separate filters did.
+both() {
+	jq -n --arg r "$1" --arg c "$2" --arg u "$3" '[{id:999,user:{login:"chatgpt-codex-connector[bot]",type:"User"},author_association:"OWNER",
+		created_at:$c,updated_at:$u,reactions:{eyes:0},
+		body:("@codex review\n<!-- codex-pull-request-review-summary -->\n" + $r + "\ncodex-review-receipt")}]'
+}
+# As a request (threads open, the request for the head unanswered by anything strictly after it): pending, not failure.
+echo "$unresolved" >"$tmp/threads.json"
+RAW_COMMENTS=$(both '' "$(ago 3000)" "$(ago 3600)")
+with_msg 'Waiting for Codex' expect pending 'one comment: request, threads open' '`7ca1cc3`' "$(ago 3500)" $c '' ''
+rm -f "$tmp/threads.json"
+# As a receipt: it answers its own request (the same second counts as a sign of life), so the request is acknowledged.
+with_msg 'Waiting for Codex to review' expect pending 'one comment: request answered by its receipt' '`7ca1cc3`' "$(ago 3500)" $c '' ''
+# As a summary: a running state in its body, edited long ago, is a stall.
+RAW_COMMENTS=$(both '<!-- codex-review-state:v1 {"code_review":{"commit_sha":"'"$sha"'","status":"running"}} -->' "$(ago 3000)" "$(ago 3600)")
+with_msg 'stalled' expect pending 'one comment: summary stalled' '`7ca1cc3`' "$(ago 3500)" $c '' ''
+RAW_COMMENTS=
 
 exit $fail
