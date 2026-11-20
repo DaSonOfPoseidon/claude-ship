@@ -166,7 +166,9 @@ net_git() {
 # on_default_branch <remote URL> <commit>: is the commit on the remote's default branch, as the remote reports it now?
 # Local refs are state Claude controls (`git update-ref refs/remotes/origin/main` proves nothing), so the tip comes from
 # `ls-remote` against the URL the push goes to, and its commit is fetched from there if this clone lacks it. Anything it
-# can't tell (no URL, the network, output it can't read, a missing object, a shallow clone) fails; $tag_why says why.
+# can't tell (no URL, the network, output it can't read, a missing object, a shallow clone) fails; $tag_why says why. When
+# the ancestry check fails in a shallow clone the reason names the clone (its history may stop before a merged commit), and
+# a `merge-base` error (not "not an ancestor") is reported as that, not as "isn't on the default branch".
 tag_why=
 on_default_branch() {
 	odb_url=$1
@@ -190,10 +192,20 @@ on_default_branch() {
 			return 1
 		}
 	fi
-	git merge-base --is-ancestor "$odb_commit" "$odb_tips" 2>/dev/null || {
+	# Only an exit of 0 passes. merge-base's own status says why it didn't: 1 is "not an ancestor", anything else (128) is an
+	# error, and a shallow clone's cut-off history can make either of them wrong about a commit that is merged.
+	odb_st=0
+	git merge-base --is-ancestor "$odb_commit" "$odb_tips" 2>/dev/null || odb_st=$?
+	[ "$odb_st" != 0 ] || return 0
+	odb_shallow=$(git rev-parse --is-shallow-repository 2>/dev/null) || odb_shallow=
+	if [ "$odb_shallow" = true ]; then
+		tag_why="this clone is shallow, so its history may not reach the default branch's tip of $odb_url and it couldn't be checked (fetch the full history with \`git fetch --unshallow\` and push the tag again)"
+	elif [ "$odb_st" = 1 ] && [ "$odb_shallow" = false ]; then
 		tag_why="it isn't on the default branch of $odb_url"
-		return 1
-	}
+	else
+		tag_why="it couldn't be checked against the default branch of $odb_url (\`git merge-base\` failed)"
+	fi
+	return 1
 }
 
 # Every pushed ref's commit needs a pass or a waiver in the common directory's state (shared by the worktrees).

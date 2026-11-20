@@ -526,6 +526,53 @@ git -C "$tmp/other$n" push -q --no-verify origin HEAD:refs/heads/main
 gpush "$repo" origin v-behind
 want_push "a tag when the remote's tip is a commit this clone lacks" yes
 
+# A shallow clone can't always see that a commit is merged: the refusal says so, not "isn't on the default branch". Only the
+# reason changes (the check still fails closed), and a shallow clone that can see the ancestry is accepted.
+mkrepo
+commit second
+commit third
+land
+shallow=$tmp/shallow$n
+git clone -q --depth 1 "file://$bare" "$shallow"
+git -C "$shallow" config url."$bare".insteadOf https://github.com/o/r.git
+git -C "$shallow" remote set-url origin https://github.com/o/r.git
+# The tip itself: merge-base succeeds, so being shallow alone refuses nothing.
+git -C "$shallow" tag v-shallow-tip
+gpush "$shallow" origin refs/tags/v-shallow-tip
+want_push "a shallow clone tagging the remote's tip" yes
+# A merged commit older than the cut: it is on the remote's main, but this clone's history stops before it.
+old=$(git -C "$repo" rev-parse HEAD~1)
+git -C "$shallow" fetch -q --depth 1 "file://$bare" "$old"
+git -C "$shallow" tag v-shallow-old "$old"
+gpush "$shallow" origin refs/tags/v-shallow-old
+want_push "a shallow clone tagging a merged commit older than its cut" no
+grep -q 'this clone is shallow' "$tmp/out" || {
+	echo "FAIL: the refusal in a shallow clone doesn't name the shallow clone"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+grep -q "isn't on the default branch" "$tmp/out" && {
+	echo "FAIL: a shallow clone was told its merged commit isn't on the default branch"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+on_remote refs/tags/v-shallow-old && {
+	echo "FAIL: a tag refused in a shallow clone reached the remote"
+	fail=1
+}
+# A full clone with an unmerged commit keeps its reason.
+mkrepo
+land
+commit second
+git -C "$repo" tag v-unmerged
+gpush "$repo" origin refs/tags/v-unmerged
+want_push "a full clone tagging an unmerged commit" no
+grep -q "isn't on the default branch" "$tmp/out" || {
+	echo "FAIL: a full clone's unmerged tag isn't refused as not on the default branch"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+
 # The remote can't say: refused, whatever the reason. A fake git answers `ls-remote`, as $LS_OUT and $LS_RC say.
 mkdir -p "$tmp/fakegit"
 real_git=$(command -v git)
@@ -534,6 +581,9 @@ cat >"$tmp/fakegit/git" <<EOT
 if [ "\$1" = ls-remote ]; then
 	printf '%b' "\$LS_OUT"
 	exit "\${LS_RC:-0}"
+fi
+if [ "\$1" = merge-base ] && [ -n "\${MB_RC:-}" ]; then
+	exit "\$MB_RC"
 fi
 exec "$real_git" "\$@"
 EOT
@@ -570,6 +620,28 @@ fakels "$tip\tHEAD\n" 128
 want_push "ls-remote that fails" no
 hook origin "$tmp/missing.git" "$tagline"
 want_push "a remote that can't be reached" no
+# A `git merge-base` that errors (128, not 1) is a refusal that says so, even for a merged commit; only 0 passes.
+# fakemb <status>: the same tag, with merge-base answering that status.
+fakemb() {
+	printf '%s' "$tagline" | (cd "$repo" && env MB_RC="$1" LS_OUT="ref: refs/heads/main\tHEAD\n$tip\tHEAD\n" CLAUDE_CODE_CHILD_SESSION=1 FAKE_ANCESTRY=none GH_MODE=$mode PATH=$tmp/fakegit:$tmp/bin:$PATH sh "$root/hooks/git-hook.sh" pre-push origin "$bare" >"$tmp/out" 2>&1)
+	rc=$?
+}
+fakemb 128
+want_push "a merge-base that fails with 128" no
+grep -q 'merge-base. failed' "$tmp/out" || {
+	echo "FAIL: the refusal of a merge-base error doesn't say it failed"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+fakemb 1
+want_push "a merge-base that says not an ancestor" no
+grep -q "isn't on the default branch" "$tmp/out" || {
+	echo "FAIL: the refusal of a commit that is not an ancestor doesn't say so"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
+fakemb 0
+want_push "a merge-base that says 0" yes
 
 # --- the repo's own hooks ---
 # pre-push runs with the same arguments and stdin, for Claude's push and the user's; its failure fails the push.
