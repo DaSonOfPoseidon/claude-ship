@@ -210,7 +210,9 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    - **Nothing to fix:** the script has already rechecked the status (`gh workflow run codex-review.yml`).
 
    Then wait again. Rounds are capped at 3 as in the ship skill.
-6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries).
+6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries). Check
+   `codex-review` with `gh pr view <pr> --json statusCheckRollup`, or `~/.claude/skills/ship/codex-status.sh <pr>`, which
+   outside GitHub Actions only prints the status and never sets it (on the bootstrap PR it prints `success` but sets nothing).
    - With `merge: yes`:
      1. Remove the implementer's worktree (as in **Replacing an implementer**, step 2). Git won't delete a
         branch that a worktree still has checked out.

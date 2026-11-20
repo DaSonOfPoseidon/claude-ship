@@ -31,6 +31,15 @@ case "\$*" in
 	[ -f "$tmp/reactions.json" ] || { echo "unexpected reactions call: \$*" >&2; exit 1; }
 	f=reactions
 	;;
+*'/statuses/'*)
+	# Setting the status: log the state and context sent, and succeed.
+	st=; cx=
+	for a in "\$@"; do
+		case \$a in state=*) st=\${a#state=} ;; context=*) cx=\${a#context=} ;; esac
+	done
+	echo "statuses state=\$st context=\$cx" >>"$tmp/calls"
+	exit 0
+	;;
 *'/pulls/1/reviews'*) f=reviews ;;
 *'/pulls/1'*) f=pr ;;
 *'/issues/1/comments'*) f=comments ;;
@@ -46,7 +55,7 @@ fail=0
 # check <state> <label>: runs the script on the fixtures in $tmp.
 check() {
 	: >"$tmp/calls"
-	out=$(REPO=o/r DRY_RUN=1 PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
+	out=$(REPO=o/r DRY_RUN=1 GITHUB_ACTIONS='' PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
 	# GitHub rejects a commit status description over 140 characters.
 	desc=${out#*: }
 	desc=${desc% (*}
@@ -572,13 +581,14 @@ with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'reads: fork, 
 reads 'fork failed' 0
 ROW=
 
-# A failed read stops the run before any status is set, whichever endpoint it was (set -e on each read).
+# A failed read stops the run before any status is set, whichever endpoint it was (set -e on each read). Run as in
+# Actions, which is the path that posts.
 # The fixtures of a blank row with a request, which reads the reviews too.
 expect success 'reads: fixtures for the failing reads' '—' $p $c "$r1" "$m"
 for ep in pr comments reviews; do
 	: >"$tmp/calls"
 	: >"$tmp/fail.$ep"
-		out=$(REPO=o/r PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
+	out=$(REPO=o/r GITHUB_ACTIONS=true PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
 	rc=$?
 	if [ "$rc" -eq 0 ]; then
 		echo "FAIL: the run succeeded with $ep failing"
@@ -631,5 +641,63 @@ with_msg 'Waiting for Codex to review' expect pending 'one comment: request answ
 RAW_COMMENTS=$(both '<!-- codex-review-state:v1 {"code_review":{"commit_sha":"'"$sha"'","status":"running"}} -->' "$(ago 3000)" "$(ago 3600)")
 with_msg 'stalled' expect pending 'one comment: summary stalled' '`7ca1cc3`' "$(ago 3500)" $c '' ''
 RAW_COMMENTS=
+
+# Where the status is set (#291): only in GitHub Actions (GITHUB_ACTIONS is exactly true) or with CODEX_STATUS_SET=1,
+# never under DRY_RUN=1. Anywhere else the script prints the status and says so on stderr, and sets nothing (run by
+# hand, it would post as the user and block the merge). The fixtures are the failing reads' success fixture above.
+# run_status <VAR=value>...: runs the script with those variables, stdout in $out, stderr in $err, calls in $tmp/calls.
+run_status() {
+	: >"$tmp/calls"
+	out=$(env REPO=o/r PATH="$tmp/bin:$PATH" "$@" sh "$root/scripts/codex-status.sh" 1 2>"$tmp/err")
+	rc=$?
+	err=$(cat "$tmp/err")
+}
+# want_calls <label> <count>: the number of statuses calls.
+want_calls() {
+	n=$(grep -c '^statuses ' "$tmp/calls")
+	if [ "$n" -ne "$2" ]; then
+		echo "FAIL: $1: $n statuses calls (want $2)"
+		fail=1
+	fi
+}
+want_exit() {
+	if [ "$rc" -ne 0 ]; then
+		echo "FAIL: $1: exit $rc"
+		fail=1
+	fi
+}
+note='not in GitHub Actions, so the status was printed, not set'
+expect success 'set: fixture' '—' $p $c "$r1" "$m"
+run_status DRY_RUN=1 GITHUB_ACTIONS=
+dry_out=$out
+case $dry_out in "success: "*" ($sha)") ;; *) echo "FAIL: set: dry run output: $dry_out"; fail=1 ;; esac
+
+# (a) by hand: the dry run's line, a note on stderr, nothing set, exit 0
+for ga in '' false True 1; do
+	run_status GITHUB_ACTIONS="$ga"
+	want_exit "set: GITHUB_ACTIONS=$ga"
+	want_calls "set: GITHUB_ACTIONS=$ga" 0
+	[ "$out" = "$dry_out" ] || { echo "FAIL: set: GITHUB_ACTIONS=$ga printed: $out"; fail=1; }
+	case $err in *"$note"*) ;; *) echo "FAIL: set: GITHUB_ACTIONS=$ga stderr lacks the note: $err"; fail=1 ;; esac
+done
+# (b) in Actions: one call with the state and context, the state and description on stdout
+run_status GITHUB_ACTIONS=true
+want_exit 'set: in Actions'
+want_calls 'set: in Actions' 1
+grep -q '^statuses state=success context=codex-review$' "$tmp/calls" || { echo "FAIL: set: in Actions sent: $(cat "$tmp/calls")"; fail=1; }
+[ "$out" = "${dry_out% ($sha)}" ] || { echo "FAIL: set: in Actions printed: $out"; fail=1; }
+[ -z "$err" ] || { echo "FAIL: set: in Actions wrote to stderr: $err"; fail=1; }
+# (c) CODEX_STATUS_SET=1 by hand: one call, no note
+run_status GITHUB_ACTIONS= CODEX_STATUS_SET=1
+want_exit 'set: override'
+want_calls 'set: override' 1
+[ -z "$err" ] || { echo "FAIL: set: override wrote to stderr: $err"; fail=1; }
+# (d) DRY_RUN=1 wins, in Actions or with the override
+run_status DRY_RUN=1 GITHUB_ACTIONS=true CODEX_STATUS_SET=1
+want_calls 'set: dry run in Actions' 0
+[ "$out" = "$dry_out" ] || { echo "FAIL: set: dry run in Actions printed: $out"; fail=1; }
+# (e) a dry run by hand says nothing on stderr
+run_status DRY_RUN=1 GITHUB_ACTIONS=
+[ -z "$err" ] || { echo "FAIL: set: dry run by hand wrote to stderr: $err"; fail=1; }
 
 exit $fail

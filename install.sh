@@ -1,7 +1,7 @@
 #!/bin/sh
 # Deploys claude-ship's origin/main into ~/.claude: the gate, its prompts and the orchestrate hint (hooks/), the
-# ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh for local DRY_RUN
-# checks), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh, run first: a gate without shfmt blocks every Bash call, so a
+# ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh, which only prints
+# the status outside GitHub Actions), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh, run first: a gate without shfmt blocks every Bash call, so a
 # failure there stops the install before anything is changed, #189), and the git hook
 # stubs in git-hooks/, which it points git's global core.hooksPath at when that is unset (any other value makes the exit
 # non-zero; docs/gate.md › Pre-push check). Only main
