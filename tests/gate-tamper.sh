@@ -660,6 +660,39 @@ expect 2 'bash ~/.claude/skills/ship/codex-allow.sh -n'
 expect 2 'bash -x -c ~/.claude/skills/ship/codex-allow.sh'
 expect 0 '~/.claude/skills/ship/codex-request.sh 1 o/r 1111111111111111111111111111111111111111'
 
+# --- Pruning the review state (claude-ship #107) ---------------------------------------------------------------------
+# Only the user prunes the gate's state, with `! ~/.claude/hooks/review-gate.sh --prune`: Claude's own run of it, directly or
+# as the script of a shell, is denied...
+expect 2 '~/.claude/hooks/review-gate.sh --prune'
+expect 2 '~/.claude/hooks/review-gate.sh --prune --dry-run 7'
+expect 2 '~/.claude/hooks/review-gate.sh --dry-run --prune'
+expect 2 'sh ~/.claude/hooks/review-gate.sh --prune'
+expect 2 'bash -x ~/.claude/hooks/review-gate.sh --prune 7'
+expect 2 'cd /x && review-gate.sh --prune 7'
+expect 2 "$tmp/home/.claude/hooks/review-gate.sh --prune"
+expect 2 'bash -c "~/.claude/hooks/review-gate.sh --prune"'
+expect 2 'env X=1 ~/.claude/hooks/review-gate.sh --prune'
+expect 2 'timeout 60 ~/.claude/hooks/review-gate.sh --prune'
+expect 2 'git status && ~/.claude/hooks/review-gate.sh --prune 30'
+expect 2 '. ~/.claude/hooks/review-gate.sh --prune'
+expect_err 2 '~/.claude/hooks/review-gate.sh --prune'
+grep -q 'only the user can prune' "$tmp/err" || {
+	echo "FAIL: the --prune denial should say that only the user prunes"
+	cat "$tmp/err"
+	fail=1
+}
+# ...while the work done on the script, its test, and a message that names the option are not the run.
+expect 0 'grep -n -- --prune hooks/review-gate.sh'
+expect 0 'git commit -m "review-gate.sh: add --prune"'
+expect 0 'sh tests/gate-prune.sh'
+expect 0 'sh -n hooks/review-gate.sh'
+expect 0 'bash -n ~/.claude/hooks/review-gate.sh --prune'
+expect 0 'shellcheck --shell=sh hooks/review-gate.sh'
+expect 0 'git add hooks/review-gate.sh tests/gate-prune.sh'
+expect 0 'cat hooks/review-gate.sh'
+expect 0 'echo "ask the user to run review-gate.sh --prune"'
+expect 0 'diff -u hooks/review-gate.sh ~/.claude/hooks/review-gate.sh'
+
 # --- The Write tool --------------------------------------------------------------------------------------------------
 # write <exit code> <path> [text]: the Write tool on the path.
 write() {

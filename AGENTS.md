@@ -71,7 +71,8 @@ or anything CI already checks (shellcheck, actionlint).
   backstop for merges. It doesn't bind admins (`enforce_admins` is off), so an admin push to the default branch
   skips it.
 - Only the user changes the opt-in variables, waives a review, allows a Codex round past the cap of 3
-  (`! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`; the gate denies Claude that command), lifts the immutable flag on the installed files
+  (`! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`; the gate denies Claude that command), prunes the gate's old state
+  (`! ~/.claude/hooks/review-gate.sh --prune [--dry-run] [days]`; denied the same way), lifts the immutable flag on the installed files
   (`! sudo chattr -i <path>`), or edits the installed gate, its state, the lint config (`~/.claude/claude-ship/`) or the settings that register it. `install.sh`
   deploys only `origin/main`; it lifts the flag itself while it reinstalls and sets it again.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,

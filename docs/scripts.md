@@ -446,6 +446,11 @@ it can call a thread caught because the gate flagged something else nearby, or m
 A commit id from `gh` is used as a file name only when it is 40 to 64 hex digits. Reports are read by their
 `## <severity>[ (rejected by the verifier)]: <file>:<line>` headings (`hooks/review-gate.sh` writes them).
 
+### The review-gate state
+
+The files the gate and `gate-stats.sh` keep in `.git/review-gate/`, who reads each, and what `review-gate.sh --prune` deletes
+are in `docs/gate.md` › Pruning old state; `gate-stats.sh` reads only `<sha>.md` and `<sha>.waived` from it.
+
 ## `hooks/p3-issue.sh`
 
 Files a finding as an issue. The finding goes in a JSON file rather than on the command line because the gate

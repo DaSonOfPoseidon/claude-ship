@@ -40,6 +40,95 @@ if [ "${1:-}" = --waive ]; then
 	exit 0
 fi
 
+# The user (not Claude) can also delete the old review state (docs/gate.md › Waivers and opt-in flags):
+#   ! ~/.claude/hooks/review-gate.sh --prune [--dry-run] [days]
+# It deletes the per-commit files older than `days` (30 by default) whose commit is on no ref and no worktree's HEAD, and the
+# old patch-id passes and P3 payloads (which belong to no commit). It never deletes <sha>.md (gate-stats.sh's history),
+# <sha>.waived (the user's decision), p3-filed.tsv or a name it doesn't know. It reads no stdin and needs no jq, so it comes
+# before both.
+if [ "${1:-}" = --prune ]; then
+	shift
+	prune_usage() {
+		echo "Usage: review-gate.sh --prune [--dry-run] [days]   (days: a whole number, 30 by default; nothing was deleted)" >&2
+		exit 2
+	}
+	dry=0
+	if [ "${1:-}" = --dry-run ]; then
+		dry=1
+		shift
+	fi
+	days=30
+	if [ $# -gt 0 ]; then
+		case $1 in
+		'' | *[!0-9]* | 0[0-9]*) prune_usage ;;
+		esac
+		days=$1
+		shift
+	fi
+	[ $# -eq 0 ] || prune_usage
+	state=$(git rev-parse --path-format=absolute --git-common-dir) || exit 2
+	state=$state/review-gate
+	if [ ! -d "$state" ]; then
+		echo "Nothing to prune: $state doesn't exist."
+		exit 0
+	fi
+	prune_tmp=$(mktemp -d) || exit 2
+	trap 'rm -rf "$prune_tmp"' EXIT
+	# The commits that count as reachable: every ref (branches, remote-tracking refs, tags, stash) and every worktree's HEAD.
+	# A failed read deletes nothing: an empty list would make every commit look unreachable.
+	git rev-list --all >"$prune_tmp/reachable" || {
+		echo "Blocked: couldn't list the commits on any ref (git rev-list --all failed); nothing was deleted." >&2
+		exit 2
+	}
+	# Plain files directly in the state directory, older than `days`, as ./name (no -maxdepth: it isn't POSIX).
+	(cd "$state" && find . ! -name . -prune -type f -mtime +"$days") >"$prune_tmp/old" || {
+		echo "Blocked: couldn't list the files in $state; nothing was deleted." >&2
+		exit 2
+	}
+	# The names to delete, by exact pattern. The reachable list is read in BEGIN, since an empty first file would make a
+	# two-file awk read the candidates as shas.
+	REACHABLE=$prune_tmp/reachable awk '
+		BEGIN {
+			while ((getline line < ENVIRON["REACHABLE"]) > 0) seen[line] = 1
+			ndot = split("prompt.md verify.md json verify.json json.err verify.json.err json.failed verify.json.failed pass", ext, " ")
+			for (i = 1; i <= ndot; i++) del[ext[i]] = 1
+		}
+		function sha(h) { return h ~ /^[0-9a-f]+$/ && (length(h) == 40 || length(h) == 64) }
+		substr($0, 1, 2) != "./" { next }
+		{
+			n = substr($0, 3)
+			if (n ~ /^p3-[0-9]+\.json$/) { print n; next }
+			if (n ~ /^patch-[0-9a-f]+\.pass$/) {
+				if (sha(substr(n, 7, length(n) - 11))) print n
+				next
+			}
+			dot = index(n, ".")
+			if (dot == 0) next
+			h = substr(n, 1, dot - 1)
+			if (sha(h) && (substr(n, dot + 1) in del) && !(h in seen)) print n
+		}' "$prune_tmp/old" >"$prune_tmp/todo" || {
+		echo "Blocked: couldn't pick the files to delete; nothing was deleted." >&2
+		exit 2
+	}
+	count=0
+	failed=0
+	while IFS= read -r name; do
+		if [ "$dry" = 1 ]; then
+			echo "$name"
+		elif rm -f "$state/$name"; then
+			:
+		else
+			echo "Couldn't delete $state/$name." >&2
+			failed=1
+			continue
+		fi
+		count=$((count + 1))
+	done <"$prune_tmp/todo"
+	if [ "$dry" = 1 ]; then verb="Would prune"; else verb=Pruned; fi
+	echo "$verb $count file(s) from $state (older than $days days, commits not on any branch); kept .md, .waived and p3-filed.tsv."
+	exit "$failed"
+fi
+
 # The default branch comes from GitHub: a local origin/HEAD is state an agent can point at its own branch
 # (docs/gate.md). Fails if GitHub can't say.
 default_branch() {
@@ -236,7 +325,8 @@ def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 #   {k: "str", v}       a string run as shell (`sh -c`, `eval`), parsed again by the caller
 #   {k: "gh"}           a literal word `gh` (or PATH/gh) among the words of a simple command, wrapper or not
 #   {k: "gapi", r}      a `gh api` call the tree shows; r is true when it is a read (below `def gapi`)
-#   {k: "deny", m}      a `push --no-verify` or `commit --no-verify`/`-n`, a write of core.hooksPath (docs/gate.md › Pre-push check) or a `chattr`
+#   {k: "deny", m}      a `push --no-verify` or `commit --no-verify`/`-n`, a write of core.hooksPath (docs/gate.md › Pre-push check), a `chattr`, or a run of
+#                       the allowance script `codex-allow.sh` or of this script with `--prune`
 # A word is literal when its parts are all literal text or quoted text without expansions (escapes resolved, a leading `~`
 # kept as text, `$HOME` and `${HOME}` on their own the home directory); anything else is dynamic and is not read: a variable,
 # a substitution, a glob, `$'...'`. The output, for the loop below: the verdict (deny, block, pass, or bad when the input is
@@ -404,6 +494,13 @@ def allowrun($w): ($w | bn) == "codex-allow.sh" and ($w | test("(^|/)tests/codex
 def synchk($c; $a): ($c | test("^(sh|bash|dash|zsh|ksh|ash)$"))
 	and ((first(range(0; $a | length) | select($a[.] | startswith("-") | not)) // ($a | length)) as $i
 		| $a[:$i] | any(test("^-[a-zA-Z]*n")));
+# Is it the gate script run with --prune among the words after it (docs/gate.md › Waivers and opt-in flags)? $w is the script
+# word, $r the words after it. As for the allowance script above, only a run counts: `grep -- --prune review-gate.sh`, a commit
+# message and `sh -n` of the script do not, and the text match on --waive above is the older, stricter way.
+def prunerun($w; $r): ($w | bn) == "review-gate.sh" and ($r | any(. == "--prune"));
+# The script a shell runs and the words after it: the first word that is no option, and the rest.
+def shscript($a): (first(range(0; $a | length) | select($a[.] | startswith("-") | not)) // null) as $i
+	| if $i == null then {w: "", r: []} else {w: $a[$i], r: $a[$i + 1:]} end;
 # What an effective command $e does (its words, after wrappers; $all are the words of the whole simple command): a denial, a
 # string it runs as shell, or a write of a protected path.
 def cmdev($e; $all; $cd):
@@ -412,6 +509,8 @@ def cmdev($e; $all; $cd):
 		{k: "deny", m: "chattr sets and lifts the immutable flag that locks the installed review gate (hooks, skill, ship agents, shfmt, git hooks and the managed settings drop-in). Only the user changes it: ask them to run `! sudo chattr -i <path>`."}
 	elif allowrun($e.w[0]) or (($c | test("^(sh|bash|dash|zsh|ksh|ash|source|\\.)$")) and allowrun(($a | map(select(startswith("-") | not)) | first // "")) and (synchk($c; $a) | not)) then
 		{k: "deny", m: "only the user can allow a Codex round past the cap. Ask them to run `! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`."}
+	elif prunerun($e.w[0]; $a) or (($c | test("^(sh|bash|dash|zsh|ksh|ash|source|\\.)$")) and (shscript($a) as $s | prunerun($s.w; $s.r)) and (synchk($c; $a) | not)) then
+		{k: "deny", m: "only the user can prune the review gate\u0027s state. Ask them to run `! ~/.claude/hooks/review-gate.sh --prune [--dry-run] [days]` from the repo."}
 	elif $c == "git" then gitdeny($a)
 	elif ($c | test("^(sh|bash|dash|zsh|ksh|ash)$")) then (if $e.x then empty else shellstr($a) | select(.k == "str") end)
 	elif $c == "eval" then (if $e.x or ($a | length) == 0 then empty else {k: "str", v: ($a | join(" "))} end)
