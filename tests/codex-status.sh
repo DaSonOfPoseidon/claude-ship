@@ -308,10 +308,11 @@ with_msg "$posting" summary completed "$sha" true expect pending 'findings, blan
 # 2. The review for the head, after the request, ends the wait: success while its threads are resolved...
 summary completed "$sha" true expect success 'findings, review posted' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
 summary completed "$sha" true expect success 'findings, blank row, review posted' '—' $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
-# ...and failure while a thread is open (an open thread always outranks it).
+# ...and failure while a thread is open (an open thread outranks it, unless the request for the head is still
+# unanswered, #282: then the review is still to come and the status waits for it).
 echo "$unresolved" >"$tmp/threads.json"
 with_msg 'unresolved Codex thread' summary completed "$sha" true expect failure 'findings, review posted, thread open' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
-with_msg 'unresolved Codex thread' summary completed "$sha" true expect failure 'findings, no review, thread open' "$h" $p $c "$r1" ''
+with_msg "$posting" summary completed "$sha" true expect pending 'findings, no review, thread open' "$h" $p $c "$r1" ''
 rm -f "$tmp/threads.json"
 # 3. A review of the head from before the latest request (a re-review of the same head) doesn't answer it...
 with_msg "$posting" summary completed "$sha" true expect pending 'findings, review before the request' "$h" $p $c "$r1
@@ -352,9 +353,10 @@ with_msg "$posting" summary completed "$sha" true expect pending 'findings, rece
 $(jq -nr 'now - 60 | todate') OWNER" ''
 # A review that did post ends it, however old the summary is (success while its threads are resolved)...
 summary completed "$sha" true expect success 'findings, review posted, 16 min old' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
-# ...and an open thread still fails first.
+# ...and an open thread still fails first, once the request is answered (an unanswered one keeps it stalled, #282).
 echo "$unresolved" >"$tmp/threads.json"
-with_msg 'unresolved Codex thread' summary completed "$sha" true expect failure 'findings, thread open, 16 min old' "$h" $p $c "$r1" ''
+with_msg 'unresolved Codex thread' summary completed "$sha" true expect failure 'findings, review posted, thread open, 16 min old' "$h" $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
+with_msg "$stalled_posting" summary completed "$sha" true expect pending 'findings, thread open, 16 min old' "$h" $p $c "$r1" ''
 rm -f "$tmp/threads.json"
 AGE=0
 # A state that isn't completed adds nothing here (a running state of the head is a stall, above).
@@ -456,11 +458,59 @@ with_msg 'ask for another' expect failure 'failed, member request' '`7ca1cc3`' "
 with_msg 'Waiting for Codex' fork f/r '' expect pending 'fork, failed, request after' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
 with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'fork, failed, no request' '`7ca1cc3`' "$push" $c '' ''
 with_msg 'Owner approved 7ca1cc3 for merge (fork PR)' fork f/r "$(ago 3500)|OWNER|User|Okay to merge" expect success 'fork, failed, request and approval' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
-# Unresolved Codex threads still fail it.
+# Unresolved Codex threads still fail it once the request is answered; while it waits for Codex, the retry is
+# what the status says (#282).
 echo "$unresolved" >"$tmp/threads.json"
-with_msg 'unresolved Codex thread' expect failure 'failed, request after, findings' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
+with_msg 'unresolved Codex thread' expect failure 'failed, request answered, findings' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" "receipt $(ago 60)"
+with_msg 'Waiting for Codex' expect pending 'failed, request after, findings' '`7ca1cc3`' "$push" $c "$(ago 90) OWNER" ''
 rm -f "$tmp/threads.json"
 SUMMARY_AT=
+ROW=
+
+# claude-ship #282: an unanswered request for the head (made at or after its push, with no receipt or review of
+# Codex's after it) outranks open threads from an earlier review: the verdict is the pending one, so
+# codex-request.sh waits for the running review instead of asking again. The threads count again once it answers.
+echo "$unresolved" >"$tmp/threads.json"
+ROW='| 📝 **Code Review** | ⏳ **Running** | `7ca1cc3` | Manual request |'
+# The summary was edited after the request (a sign of life): plain wait.
+with_msg 'Waiting for Codex to review 7ca1cc3' expect pending 'threads, request for the head, summary edited' '`7ca1cc3`' $p $c "$r1" ''
+# Codex's own 👀 on the request, summary older than it: still plain wait.
+SUMMARY_AT=2026-10-21T15:20:00Z
+echo '[{"content":"eyes","user":{"login":"chatgpt-codex-connector[bot]"}}]' >"$tmp/reactions.json"
+EYES=1
+with_msg 'Waiting for Codex to review 7ca1cc3' expect pending 'threads, request for the head, 👀' '`7ca1cc3`' $p $c "$r1" ''
+rm -f "$tmp/reactions.json"
+EYES=
+# No sign of life from Codex since the request: not acknowledged (codex-wait.sh exits 3 and the loop asks again).
+with_msg 'acknowledged' expect pending 'threads, request for the head, nothing from Codex' '`7ca1cc3`' $p $c "$r1" ''
+# A running review that is quiet: stalled.
+STATE=running
+with_msg 'stalled' expect pending 'threads, request for the head, stalled' '`7ca1cc3`' $p $c "$r1" ''
+STATE=
+SUMMARY_AT=
+# A request tied with the push belongs to this head.
+with_msg 'Waiting for Codex to review 7ca1cc3' expect pending 'threads, request in the push second' '`7ca1cc3`' $p $c "$p OWNER" ''
+# An untrusted request is no request.
+with_msg 'unresolved Codex thread' expect failure 'threads, untrusted request' '`7ca1cc3`' $p $c '2026-10-21T15:26:03Z NONE' ''
+# A review after the request answers it: the threads fail it, as before.
+with_msg 'unresolved Codex thread' expect failure 'threads, request answered by a review' '`7ca1cc3`' $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
+# ...and so does a receipt.
+with_msg 'unresolved Codex thread' expect failure 'threads, request answered by a receipt' '`7ca1cc3`' $p $c "$r1" "$m"
+# A review that failed after the request answers it with a failure, not a wait (Codex round 1 on #292): the
+# retry is the user's to ask for, so the verdict is the failed one, not "Waiting" (which would block a retry).
+ROW=$failed
+SUMMARY_AT=$(ago 120)
+with_msg 'ask for another' expect failure 'threads, request failed' '`7ca1cc3`' "$(ago 7200)" $c "$(ago 150) OWNER" ''
+# ...a retry after the failure is a wait again...
+with_msg 'Waiting for Codex' expect pending 'threads, request after failure' '`7ca1cc3`' "$(ago 7200)" $c "$(ago 90) OWNER" ''
+# ...and on a fork PR the failure keeps its own message.
+with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'threads, fork, request failed' '`7ca1cc3`' "$(ago 7200)" $c "$(ago 150) OWNER" ''
+SUMMARY_AT=
+ROW='| 📝 **Code Review** | ⏳ **Running** | `7ca1cc3` | Manual request |'
+# No request since the head's push (it was for an earlier head): the threads fail it.
+with_msg 'unresolved Codex thread' expect failure 'threads, request before the push' '`7ca1cc3`' 2026-10-21T15:30:00Z $c "$r1" ''
+with_msg 'unresolved Codex thread' expect failure 'threads, no request' '`7ca1cc3`' $p $c '' ''
+rm -f "$tmp/threads.json"
 ROW=
 
 exit $fail

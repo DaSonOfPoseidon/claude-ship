@@ -59,16 +59,20 @@ no request, so they read CI once, without waiting).
 
 1. `codex-request.sh <pr> <slug> <sha>` (Bash timeout 300000). It waits until GitHub shows `<sha>` as the PR's
    head, then posts `@codex review`, unless a request for this head is already out (it says so and posts
-   nothing), or the PR has already used 3 rounds and none is pending (exit 4, nothing posted). The request
+   nothing), or the PR has already used 3 rounds (more, if the user allowed them with `codex-allow.sh`) and none is
+   pending (exit 4, nothing posted). The request
    doesn't wait for CI: the review runs alongside it, and step 5 reads CI after the review. Exit 0: a request
-   for this head is pending, whether just posted or already there. Exit 4: no review is coming, so skip steps 2 to
-   4 and 6; do step 5 for `ci:`, then report `outcome: round-cap` (`round: 3   reviewed: -`). Any
-   other failure: `outcome: error` with its message (never post the comment by hand).
+   for this head is pending, whether just posted or already there. Exit 4: no review is coming, so skip steps 2 and
+   4 and 6; do step 3 (resolve `replied`: the round's fix replies are answered and would stay open otherwise,
+   #280), then step 5 for `ci:`, then report `outcome: round-cap` (`round: <the n in its message "has used n
+   Codex rounds">   reviewed: -`). Never run `codex-allow.sh`: only the user does, and the gate denies it.
+   Any other failure: `outcome: error` with its message (never post the comment by hand).
 2. `codex-round.sh <pr> <slug>` prints how many rounds the PR has used, the pending one included. That number is
    this review's round, and the **Outcomes** table's column. Take it after every request step, never before:
    a pending third round is still processed, and a round isn't "the count plus one".
 3. If `replied` has thread ids, resolve them now, before waiting: open threads keep the status at `failure`, so
-   the wait would return at once. Write the triage file (see **Triage file**) with one
+   the wait would return at once (and after an exit 4 there is no wait, but the answered threads still need to be
+   resolved). Write the triage file (see **Triage file**) with one
    `{"thread": "<id>", "outcome": "resolve"}` entry per id, and run `codex-triage.sh`. If that is denied or
    fails, report `outcome: error` with the `denied:` and `done:` lines (see **Report**) and stop.
 4. Wait, in the foreground, in chunks: `CODEX_WAIT_SECS=300 ~/.claude/skills/ship/codex-wait.sh <pr> <slug>` (Bash
@@ -160,7 +164,7 @@ anything first.
 
 Sort every thread by its priority and round (`P?` counts as P1). Nothing else decides.
 
-| Priority | Round 1 or 2 | Round 3 |
+| Priority | Round 1 or 2 | Round 3 or later |
 |---|---|---|
 | P0, P1, P? | `fix` | `stop` |
 | P2 | `fix` | `issue` |
@@ -170,7 +174,7 @@ A P3 rides along with the round's other `fix` threads: a valid P0-P2 finding mea
 anyway, and a P3 fixed in that push costs no round. A P3 beside a `P?` thread rides along too, since `P?` counts as
 P1. A P3 with no `fix` thread beside it is filed, as before. You don't judge validity, so every P3 of a `fix` round
 goes to the implementer in a `fix:` line. It judges the P0-P2 threads first. If none gets a commit it leaves the P3s
-untouched and starts `resolve-only`, which files them (above). In round 3 nothing rides along: no review follows.
+untouched and starts `resolve-only`, which files them (above). In round 3 or later nothing rides along: no review follows unless the user allows one.
 
 `issue` threads you triage yourself (below). Then the outcome is: `stop` if any thread is `stop`; else `fix` if
 any is `fix`; else `clean` (no thread, or only issue threads, now triaged). A `clean` with `ci: pending` after step

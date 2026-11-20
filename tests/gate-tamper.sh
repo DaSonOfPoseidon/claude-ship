@@ -614,6 +614,52 @@ expect 2 "echo 'x"
 expect 2 'if then fi'
 expect 0 ''
 
+# --- The Codex round allowance (claude-ship #282) -------------------------------------------------------------------
+# Only the user allows a Codex round past the cap, with `! ~/.claude/skills/ship/codex-allow.sh`: Claude's own run of the
+# script, in any repo and under the spellings the docs use, is denied...
+expect 2 '~/.claude/skills/ship/codex-allow.sh 290'
+expect 2 'sh ~/.claude/skills/ship/codex-allow.sh 290 o/r'
+expect 2 'cd /x && codex-allow.sh 1'
+expect 2 "$tmp/home/.claude/skills/ship/codex-allow.sh 290 o/r"
+expect 2 'bash -c "~/.claude/skills/ship/codex-allow.sh 1"'
+expect 2 'cd tests && ../skills/ship/codex-allow.sh 1'
+expect 2 'sh ~/.claude/skills/ship/mytests/codex-allow.sh 1'
+expect 2 'bash -x ~/.claude/skills/ship/codex-allow.sh 1 o/r'
+expect 2 'sh -e -u ~/.claude/skills/ship/codex-allow.sh 1'
+expect 2 'env X=1 ~/.claude/skills/ship/codex-allow.sh 1'
+expect 2 'timeout 60 ~/.claude/skills/ship/codex-allow.sh 1'
+expect 2 'nohup ~/.claude/skills/ship/codex-allow.sh 1 &'
+expect 2 '. ~/.claude/skills/ship/codex-allow.sh'
+expect 2 'source ~/.claude/skills/ship/codex-allow.sh 1'
+expect 2 'echo 1 | xargs ~/.claude/skills/ship/codex-allow.sh'
+expect 2 'git status && ~/.claude/skills/ship/codex-allow.sh 1'
+# ...and so is writing the allowance file it leaves (under ~/.claude/claude-ship/, which the gate protects whole)...
+expect 2 'echo 9 > ~/.claude/claude-ship/codex-allow/o+r-1'
+expect 2 "echo 9 > $tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+expect 2 "printf 9 | tee $tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+# ...while the rest of what Claude does with the file in the repo, a commit message that names it and reading the allowance
+# are fine: the denial is of running it, not of mentioning it.
+expect 0 'sh tests/codex-allow.sh'
+expect 0 'sh ./tests/codex-allow.sh'
+expect 0 "sh $tmp/repo/tests/codex-allow.sh"
+expect 0 'git add skills/ship/codex-allow.sh'
+expect 0 'git update-index --chmod=+x skills/ship/codex-allow.sh'
+expect 0 'git commit -m "fix(ship): codex-allow.sh reads the home"'
+expect 0 'shellcheck --shell=sh skills/ship/codex-allow.sh tests/codex-allow.sh'
+expect 0 'cat skills/ship/codex-allow.sh'
+expect 0 'grep -n cap skills/ship/codex-allow.sh docs/scripts.md'
+expect 0 'chmod +x skills/ship/codex-allow.sh'
+expect 0 'diff -u skills/ship/codex-allow.sh ~/.claude/skills/ship/codex-allow.sh'
+expect 0 'echo "ask the user to run codex-allow.sh"'
+expect 0 'cat ~/.claude/claude-ship/codex-allow/o+r-1'
+# ...and a syntax check only reads the script (bash -n runs nothing), so it passes; flags after the script name are its own.
+expect 0 'bash -n skills/ship/codex-allow.sh'
+expect 0 'sh -n ~/.claude/skills/ship/codex-allow.sh'
+expect 0 'bash -nv skills/ship/codex-allow.sh'
+expect 2 'bash ~/.claude/skills/ship/codex-allow.sh -n'
+expect 2 'bash -x -c ~/.claude/skills/ship/codex-allow.sh'
+expect 0 '~/.claude/skills/ship/codex-request.sh 1 o/r 1111111111111111111111111111111111111111'
+
 # --- The Write tool --------------------------------------------------------------------------------------------------
 # write <exit code> <path> [text]: the Write tool on the path.
 write() {
@@ -635,6 +681,9 @@ write 2 "$tmp/home/.claude/./claude-ship/lint"
 write 2 "$tmp/home/.claude/claude-ship"
 write 0 "$tmp/home/.claude/claude-ship-notes.md"
 write 0 "$tmp/home/.claude/state/claude-ship/triage-o+r-1.json"
+# The Codex round allowance (claude-ship #282) is gate state too.
+write 2 "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+write 2 "$tmp/home/.claude/./claude-ship/codex-allow/o+r-1"
 # The git hook stubs run the pre-push check; replacing one would switch it off while the executable-file check passed.
 write 2 "$tmp/home/.claude/git-hooks/pre-push"
 write 2 "$tmp/home/.claude/./git-hooks/pre-push"

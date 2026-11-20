@@ -546,6 +546,17 @@ mentions `review-gate.sh … --waive`, or `gh variable set|delete|remove` on `CL
 The waiver is a `<head>.waived` file in the gate's state directory, shared by every worktree of the repository
 and keyed by commit.
 
+The Codex round cap is the user's to lift in the same way (#282). The tamper check, which reads the command's syntax tree,
+denies a run of `codex-allow.sh` in every repo: the script as a command word (by any path, behind the wrappers it unwraps:
+`env`, `timeout`, `nohup`, `xargs` and the rest), or as the script a shell (`sh`, `bash`, `source`, `.`) runs, also inside
+an `sh -c` string. So only the user's own `! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>` allows one more round
+past the 3 the ship skill allows. A command that only names the file (`git add`, `cat`, `shellcheck`, a commit message)
+passes, since Claude maintains it in this repo; so does a shell syntax check (`bash -n skills/ship/codex-allow.sh`: `-n` among the shell's flags before the script, which only reads it); so does `sh tests/codex-allow.sh`, the test of it, which runs the script against
+a stub in a temp home. The script leaves the allowance in `~/.claude/claude-ship/codex-allow/<owner>+<repo>-<pr>`, which the
+tamper check protects with the rest of `~/.claude/claude-ship/` (no extra pattern: the Write and Edit tools and the
+shell-write checks already cover it), and `codex-request.sh` reads it (`docs/scripts.md`). Literal words only, as for every
+check here: a script name built at run time is out of scope (`AGENTS.md` › Gate scope).
+
 ## Reviewer pipeline
 
 Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer uses Opus.

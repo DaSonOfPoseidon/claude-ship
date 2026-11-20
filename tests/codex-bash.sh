@@ -108,6 +108,10 @@ rm x"
 expect 2 "$ship/codex-round.sh 12	o/r"
 expect 2 "$ship/codex-round.sh {1,2}"
 expect 2 "$ship/codex-round.sh 12 \\"
+# The user's alone (claude-ship #282): the round allowance script, and a cap raised through the environment.
+expect 2 "$ship/codex-allow.sh 12"
+expect 2 "$ship/codex-allow.sh 12 o/r"
+expect 2 "CODEX_ROUND_CAP=9 $ship/codex-request.sh 12 o/r $sha"
 # Denied: arguments that aren't what the script takes.
 expect 2 "$ship/codex-round.sh"
 expect 2 "$ship/codex-round.sh abc"
