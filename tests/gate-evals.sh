@@ -408,6 +408,70 @@ done
 	exit 0
 ) || fail=1
 
+# Path rules (claude-ship #115): the runner applies the base's `### Path rules` as the gate does, so the prompt has the
+# rules section and the skipped line, its diff leaves the skipped file out, and the kind is judged on the files that stay.
+repo2=$tmp/repo2
+git init -q -b main "$repo2"
+printf '## Code Review Rules\n\n- P0: x\n\n### Path rules\n\n```\n*.lock  skip\nx.sh  Treat as P0.\n```\n\n## Other\n' >"$repo2/AGENTS.md"
+cp "$repo/x.sh" "$repo2/x.sh"
+git -C "$repo2" add -A
+git -C "$repo2" -c user.name=t -c user.email=t@t commit -q -m base
+base2=$(git -C "$repo2" rev-parse HEAD)
+cp "$tmp/x.new" "$repo2/x.sh"
+echo lock >"$repo2/a.lock"
+git -C "$repo2" add -N a.lock
+git -C "$repo2" diff >"$tmp/path-code.diff"
+git -C "$repo2" checkout -q -- x.sh
+git -C "$repo2" reset -q
+rm "$repo2/a.lock"
+echo docs >"$repo2/README.md"
+echo lock >"$repo2/a.lock"
+git -C "$repo2" add -N README.md a.lock
+git -C "$repo2" diff >"$tmp/path-docs.diff"
+mkdir "$tmp/cases2"
+mkpath() {
+	mkdir "$tmp/cases2/$1"
+	jq -n --arg b "$base2" --arg k "$2" '{base: $b, kind: $k, expect: []}' >"$tmp/cases2/$1/case.json"
+	cp "$3" "$tmp/cases2/$1/change.diff"
+}
+mkpath pcode code "$tmp/path-code.diff"
+mkpath pdocs docs "$tmp/path-docs.diff"
+cat >"$tmp/bin/claude" <<EOT
+#!/bin/sh
+p=\$(cat)
+case \$p in
+*'change: pcode'*) printf '%s\n' "\$p" >"$tmp/pp.code" ;;
+*'change: pdocs'*) printf '%s\n' "\$p" >"$tmp/pp.docs" ;;
+esac
+printf '{"structured_output":{"findings":[]}}'
+EOT
+TMPDIR=$tmp/tmpdir PATH=$tmp/bin:$PATH sh "$root/tests/evals/run.sh" --repo "$repo2" --cases-dir "$tmp/cases2" --json >"$tmp/out.json" 2>"$tmp/err"
+rc=$?
+if [ "$rc" != 0 ] || [ "$(jq -r '[.rows[] | select(.status == "ok")] | length' "$tmp/out.json")" != 3 ]; then
+	echo "FAIL (path rules): the runner exited $rc, or a case didn't run"
+	sed 's/^/  /' "$tmp/err"
+	jq -r '.rows[] | "  \(.case) \(.stage) \(.status) \(.error)"' "$tmp/out.json"
+	fail=1
+fi
+jq -e 'any(.rows[]; .case == "pdocs" and .stage == "docs-check")' "$tmp/out.json" >/dev/null || {
+	echo "FAIL (path rules): the docs case didn't get the docs check"
+	fail=1
+}
+for want in '## Path rules for this diff' '- `x.sh` (x.sh): Treat as P0.' 'Left out of this diff by a skip rule (not reviewed): a.lock.' 'diff --git a/x.sh'; do
+	grep -qF -- "$want" "$tmp/pp.code" || {
+		echo "FAIL (path rules): the eval prompt lacks '$want'"
+		fail=1
+	}
+done
+if grep -qF 'diff --git a/a.lock' "$tmp/pp.code" || grep -qF '`*.lock`' "$tmp/pp.code" || grep -qF '### Path rules' "$tmp/pp.code"; then
+	echo "FAIL (path rules): the eval prompt has the skipped file's diff or the rules subsection"
+	fail=1
+fi
+if grep -qF 'diff --git a/a.lock' "$tmp/pp.docs"; then
+	echo "FAIL (path rules): the docs case's prompt has the skipped file's diff"
+	fail=1
+fi
+
 # An interrupted run stops its reviewer at once and cleans up: the slow case holds the runner in a reviewer that would
 # run for a minute, and a TERM has to end it and the runner within seconds, leaving no worktree or temp directory.
 mkcase slow code "$want_x5"

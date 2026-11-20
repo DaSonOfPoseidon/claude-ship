@@ -8,7 +8,7 @@
 #
 # Each case (cases/<name>/case.json and change.diff) is a diff applied on a commit of this repo (`base`), with the
 # findings a reviewer should report. The runner makes a temporary detached worktree at `base`, commits the diff there,
-# builds the prompt as the gate would at that base (hooks/review-lib.sh: the rules, checklist, pitfalls and false positives are read from
+# builds the prompt as the gate would at that base (hooks/review-lib.sh: the rules, with their path rules applied, checklist, pitfalls and false positives are read from
 # `base`, not from the working tree), and runs the gate's stages with the gate's flags: the Sonnet finder, then the
 # Haiku verifier (a docs case gets the Haiku claims check and no verifier). --prompt-dir takes the lib and the prompts
 # from another directory, so a changed prompt can be measured before it is deployed. Cost rows go to a temporary file,
@@ -267,8 +267,6 @@ run_case() (
 	filed_list=
 	branch_stat=
 	changed=$(git diff --name-only --no-renames "$range") || broken "couldn't list the changed files"
-	kind=$(kind_of "$changed")
-	[ "$kind" = "$declared" ] || broken "case.json says kind $declared but the change is $kind to the gate"
 	if rules=$(rules_of "$upstream"); then
 		rules_rc=0
 	else
@@ -276,6 +274,13 @@ run_case() (
 	fi
 	[ "$rules_rc" != 2 ] || broken "couldn't read AGENTS.md at $case_base"
 	[ -n "$rules" ] || broken "no ## Code Review Rules in AGENTS.md at $case_base"
+	# The path rules of the base's rules, as the gate applies them: `skip` counts (the rules come from the default branch).
+	path_rules=$(path_rules_of "$rules" 2>/dev/null) || broken "couldn't read the path rules at $case_base"
+	path_skip=1
+	apply_path_rules || broken "couldn't match the changed files against the path rules"
+	[ -z "$skipped" ] || [ -n "$reviewed" ] || broken "every changed file matches a skip rule, so the gate would not review it"
+	kind=$(kind_of "$reviewed")
+	[ "$kind" = "$declared" ] || broken "case.json says kind $declared but the change is $kind to the gate"
 	checklist=
 	pitfalls=
 	if [ "$kind" = code ]; then
@@ -299,7 +304,7 @@ run_case() (
 		false_positives_src="docs/false-positives.md on refs/remotes/origin/$main"
 	fi
 	commits=$(git log --format='%h %s' "$upstream"..HEAD) || broken "couldn't list the commits"
-	diff_text=$(git diff "$range") || broken "couldn't read the diff"
+	diff_text=$(diff_range "$range") || broken "couldn't read the diff"
 	prompt=$work/$name.prompt.md
 	build_prompt "$prompt" || broken "couldn't write the prompt"
 	# Each expected finding points at a line of a file the change leaves in place.

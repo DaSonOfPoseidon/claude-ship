@@ -1753,7 +1753,33 @@ changed=$(git diff --name-only --no-renames "$range") || {
 	echo "Blocked: couldn't list the files changed in $range." >&2
 	exit 2
 }
-kind=$(kind_of "$changed")
+
+# Per-path rules from the rules' `### Path rules` subsection (docs/gate.md › Path rules): the instructions for the paths this
+# review covers, and the paths a `skip` rule leaves out of it. `skip` counts only in the default branch's rules: a branch that
+# wrote the rules itself (the bootstrap fallback) could skip its own files. AGENTS.md, CLAUDE.md, .claude, .github and the
+# gate's context files are never skipped (never_skipped). The kind is judged on the paths that stay, and the pass cache above
+# stays keyed on the whole branch diff.
+path_rules=$(path_rules_of "$rules") || {
+	echo "Blocked: couldn't read the path rules in AGENTS.md on $rules_ref. Retry the push." >&2
+	exit 2
+}
+path_skip=1
+if [ "$rules_ref" = HEAD ]; then
+	path_skip=
+	if printf '%s\n' "$path_rules" | grep -Eq '^[^ ]+ skip$'; then
+		echo "review-gate: ignoring skip rules from the branch's own AGENTS.md (the default branch has none)." >&2
+	fi
+fi
+apply_path_rules || {
+	echo "Blocked: couldn't match the changed files against the path rules. Retry the push." >&2
+	exit 2
+}
+if [ -z "$reviewed" ] && [ -n "$skipped" ]; then
+	echo "review-gate: every changed file matches a skip rule in AGENTS.md › Path rules; nothing to review." >&2
+	pass
+	exit 0
+fi
+kind=$(kind_of "$reviewed")
 
 # Runs a headless reviewer: run_reviewer <stage> <model> <prompt file> <schema> <output file>. It reads only:
 # no shell, no MCP or plugin tools, and the branch's own CLAUDE.md, hooks and settings don't load (docs/gate.md ›
@@ -1922,7 +1948,7 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 			exit 2
 		}
 	fi
-	diff_text=$(git diff "$range") || {
+	diff_text=$(diff_range "$range") || {
 		echo "Blocked: couldn't read the diff of $range for the reviewer." >&2
 		exit 2
 	}
@@ -1949,7 +1975,7 @@ verified="$state/$head.verify.json"
 if [ "$kind" = code ] && [ "$(printf '%s' "$findings" | jq length)" -gt 0 ] &&
 	! jq -e '.structured_output.verdicts' "$verified" >/dev/null 2>&1; then
 	vprompt="$state/$head.verify.md"
-	vdiff=$(git diff "$range") || {
+	vdiff=$(diff_range "$range") || {
 		echo "Blocked: couldn't read the diff of $range for the verifier." >&2
 		exit 2
 	}
