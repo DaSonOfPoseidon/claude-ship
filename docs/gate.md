@@ -266,8 +266,11 @@ when its commit is an ancestor of the default branch's tip **as the remote repor
 against the URL the push goes to (`$2`), exactly one `HEAD` line with a full object name, the tip fetched from that URL if
 the clone lacks it, then `git merge-base --is-ancestor`. Local refs are not evidence (`refs/remotes/origin/main` is
 whatever `git update-ref` says), so they are never read. Anything it can't tell refuses, naming the reason: no URL, the
-network (a 60 s bound, no credential prompt, no stdin), output it can't read, a tip it can't fetch, a shallow clone. A commit
-only on another remote branch, or only local, is refused. Branch lines keep the table's rule: a merged commit pushed to a
+network (a 60 s bound, no credential prompt, no stdin), output it can't read, a tip it can't fetch. When `merge-base` doesn't
+say yes, the reason follows its status and the clone: a shallow clone is named as the reason (its history may stop before a
+commit that is merged; `git fetch --unshallow` fixes it), a `merge-base` error (status other than 1) is named as one, and
+only a full clone's "not an ancestor" says the commit isn't on the default branch. Only the reason differs: just a status of
+0 lets the tag through. A commit only on another remote branch, or only local, is refused. Branch lines keep the table's rule: a merged commit pushed to a
 branch still needs its own review. Redirecting the remote itself (`url.<x>.insteadOf`, `remote.origin.url`) is outside the
 gate's scope (AGENTS.md › Gate scope).
 
