@@ -91,14 +91,17 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 ## 3. Request the Codex round
 
 1. Open the PR if there isn't one (Conventional Commit title, `Fixes #N` in the body, the repo's template).
-2. `round=$(~/.claude/skills/ship/codex-round.sh <pr>)`. If it's already 3, don't request another; go to 5.
+2. `round=$(~/.claude/skills/ship/codex-round.sh <pr>)`. If it's already 3 (or the cap the user has allowed, below), don't request another; go to 5.
    If it fails, stop and fix the cause: a failed count isn't round 0.
 3. `~/.claude/skills/ship/codex-request.sh <pr>` from the checkout that pushed (Bash timeout 300000). It
    waits until GitHub shows HEAD as the PR's head, then posts `@codex review`; posted earlier, Codex
    reviews the previous commit and the round is wasted. This is round `round+1`, unless it posted nothing because that head's request was already out: then it is round `round`.
    Handle its failures by cause, in this order:
-   - **Exit 4:** 3 rounds are already used (`CODEX_ROUND_CAP`), and it posted nothing. Don't request again, and don't
-     look for a head mismatch: go to step 5 and ask the user before any further round.
+   - **Exit 4:** the cap (3 rounds, unless the user has allowed more) is already used, and it posted nothing. Don't
+     request again, and don't look for a head mismatch: go to step 5 and ask the user before any further round. If
+     they want one, they run `! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>` (it allows exactly one more
+     round, and the gate denies you that command), and you then run `codex-request.sh` again. No environment
+     variable raises the cap.
    - **Any other failure:** don't post the comment by hand. Find out why the PR's head isn't HEAD. From any other
      checkout, name the commit instead: `codex-request.sh <pr> <owner/repo> <sha>` (the full SHA that was pushed)
      waits for that head, not for the checkout's HEAD.

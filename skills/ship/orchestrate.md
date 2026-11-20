@@ -148,9 +148,13 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      doesn't run in round 3 or later, so a PR is handed off at most twice. Then read its report as this step says.
    - It stopped (`stopped because:`), or `codex:` is `stop`, `stalled`, `timeout`, `ci-timeout`, `round-cap` or
      `error`: handle it as the stop table below says. A `stop:` line is a P0/P1 finding in round 3 or later: ask
-     the user. `stalled` is Codex stalling (or never acknowledging a request) twice on one head: tell the user.
+     the user. If they want the fix reviewed, ask them to run `! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`
+     (one more round; the gate denies you that command) **before** you send the implementer the fix, so its
+     `ship-codex` requests normally. `stalled` is Codex stalling (or never acknowledging a request) twice on one head: tell the user.
      `ci-timeout` is a finished review that was clean, with checks still pending after 20 minutes and no fix round
-     run: tell the user (a stuck runner). `round-cap` and `timeout` need no new request unless the user asks.
+     run: tell the user (a stuck runner). `round-cap` and `timeout` need no new request unless the user asks. If they ask for a round after a `round-cap`
+     report, they run the same `codex-allow.sh` command, and you start a fresh `ship-codex` as **Resuming** step 2's
+     first bullet says (it requests, since no request for the head is out).
    - `denied:` lines: the agent's triage write or call was denied, or `codex-triage.sh` failed part-way (auto
      mode denies subagents some calls, #100). `file:` names the triage file, `done:` the threads the script
      finished, and `denied:` quotes its `failed:` line (the thread and step that failed). If that line is
@@ -258,7 +262,7 @@ is the plan file's `- **Branch:**` field) and take the first row of this table t
 |---|---|
 | The work needs hardware, a car or device session, or a design decision | the user's call |
 | A safety or policy change, or a gate finding you or the implementer judge wrong (a waiver) | only the user waives |
-| A P0/P1 Codex finding in round 3 or later | the ship skill's outcome table |
+| A P0/P1 Codex finding in round 3 or later, or a wish for a round past the cap (the user runs `! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`) | the ship skill's outcome table; only the user lifts the cap |
 | CI fails for a reason outside the PR, CI stays pending for 20 minutes (`ci-timeout`), or Codex stalls twice on one head | not fixable in the PR |
 | The implementer reports the plan is wrong, and fixing it changes what the user approved | re-approval |
 
