@@ -277,7 +277,8 @@ skip <glob> ...
 - A settings line sets a rule's level (`*` is every rule) for the paths its globs match, or every path with no globs. The
   last line that applies to a path wins. A path that matches a `!glob` gets `off` from that line.
 - A `ban` line is a rule of your own: a line matching the ERE is a hit unless it also matches the `unless` ERE. Its level
-  and globs also work as a settings line for `<id>`, and `ban` lines with one id are one rule with several patterns. With
+  and globs also work as a settings line for `<id>`, and `ban` lines with one id are one rule with several patterns. Its
+  globs may include `!glob` as a settings line's do (`*.sh,!tests/*` is every shell script but the tests). With
   `comment` the EREs match the comment text only. POSIX ERE has no `\b`; write `(^|[^[:alnum:]_])`.
 - `skip` names paths that are never linted, and adds up across layers. The default list is `*.lock`,
   `package-lock.json`, `*.min.js`, `*.min.css`, `vendor/*`, `node_modules/*` and `*.svg`.
