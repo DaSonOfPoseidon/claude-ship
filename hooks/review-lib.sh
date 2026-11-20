@@ -44,6 +44,182 @@ kind_of() {
 	fi
 }
 
+# The `### Path rules` subsection of the rules text (docs/gate.md › Path rules): the lines after a `### Path rules` line up
+# to the next `### ` line (or the end). Only the lines inside its first fenced block (from a line starting with three
+# backticks to the next such line) are rules. path_rules_of and strip_path_rules use the same boundaries.
+
+# path_rules_of <rules text>: prints the path rules, one `<glob> <instruction>` per line, in file order. Blank lines, lines
+# whose first field starts with `#` and lines with a glob but no instruction are skipped. A subsection with no fenced block
+# has no rules, and a note on stderr says so. Fails only when the text can't be read.
+path_rules_of() {
+	pr_lines=$(printf '%s\n' "$1" | awk '
+		{ sub(/\r$/, "") }
+		state == 0 && /^### Path rules[ \t]*$/ { state = 1; found = 1; next }
+		state > 0 && /^### / { state = 3 }
+		state == 1 && /^```/ { state = 2; fenced = 1; next }
+		state == 2 && /^```/ { state = 3; next }
+		state == 2 { print }
+		END {
+			if (found && !fenced)
+				print "review-gate: AGENTS.md'"'"'s ### Path rules has no fenced block, so no path rules apply." > "/dev/stderr"
+		}') || return 1
+	printf '%s\n' "$pr_lines" | while read -r pr_glob pr_instr; do
+		case $pr_glob in
+		'' | '#'*) continue ;;
+		esac
+		[ -n "$pr_instr" ] || continue
+		printf '%s %s\n' "$pr_glob" "$pr_instr"
+	done
+}
+
+# strip_path_rules <rules text>: prints the text without its `### Path rules` subsections, so the prompt doesn't show rules
+# for paths outside the diff. The text before and after stays, line for line. Fails when the text can't be processed.
+strip_path_rules() {
+	printf '%s\n' "$1" | awk '
+		/^### Path rules[ \t\r]*$/ { skipping = 1; next }
+		skipping && /^### / { skipping = 0 }
+		!skipping { print }'
+}
+
+# path_matches <glob> <path>: succeeds when the path matches the glob, a shell `case` pattern where `*` also spans `/` (the
+# semantics of p3-issue.sh's p3-labels).
+path_matches() {
+	# shellcheck disable=SC2254 # the rule's glob is a pattern
+	case $2 in
+	$1) return 0 ;;
+	esac
+	return 1
+}
+
+# never_skipped <path>: succeeds for the paths a skip rule can't leave out: the files that steer the gate or Claude from the
+# repo (AGENTS.md and CLAUDE.md anywhere, .claude/, .github/, and the context files the gate reads: docs/pitfalls.md,
+# docs/false-positives.md, the contributing guides), and any path git prints C-quoted (it starts with a double quote), which
+# an exclude pathspec can't name.
+never_skipped() {
+	case $1 in
+	'"'* | AGENTS.md | */AGENTS.md | CLAUDE.md | */CLAUDE.md | .claude/* | .github/*) return 0 ;;
+	docs/pitfalls.md | docs/false-positives.md | docs/CONTRIBUTING.md | CONTRIBUTING.md) return 0 ;;
+	esac
+	return 1
+}
+
+# path_list <max> [<glob>]: prints the first <max> paths of $reviewed that match the glob (of $skipped when there is no
+# glob), comma-separated, then `and <n> more` for the rest. Prints nothing when none match.
+path_list() {
+	pl_nl='
+'
+	if [ $# -ge 2 ]; then
+		pl_rest=$reviewed
+	else
+		pl_rest=$skipped
+	fi
+	pl_n=0
+	pl_out=
+	while [ -n "$pl_rest" ]; do
+		pl_path=${pl_rest%%"$pl_nl"*}
+		case $pl_rest in
+		*"$pl_nl"*) pl_rest=${pl_rest#*"$pl_nl"} ;;
+		*) pl_rest= ;;
+		esac
+		[ -n "$pl_path" ] || continue
+		if [ $# -ge 2 ]; then
+			path_matches "$2" "$pl_path" || continue
+		fi
+		pl_n=$((pl_n + 1))
+		[ "$pl_n" -gt "$1" ] || pl_out=${pl_out:+$pl_out, }$pl_path
+	done
+	[ "$pl_n" -le "$1" ] || pl_out="$pl_out, and $((pl_n - $1)) more"
+	printf '%s\n' "$pl_out"
+}
+
+# apply_path_rules: matches the changed paths against the path rules. Reads $changed (paths, one per line), $path_rules
+# (path_rules_of's lines) and $path_skip (non-empty when `skip` rules may count). Sets $reviewed (the paths that stay),
+# $skipped (the paths a skip rule leaves out), $path_section (one prompt line per instruction rule that matches a reviewed
+# path) and $skipped_line (the prompt line naming the skipped paths). With no rules, $reviewed is $changed and the rest is
+# empty. A path is skipped when any matching rule is `skip`; every matching instruction rule counts for the paths that stay.
+apply_path_rules() {
+	reviewed=
+	skipped=
+	path_section=
+	skipped_line=
+	if [ -z "${path_rules:-}" ]; then
+		reviewed=$changed
+		return 0
+	fi
+	ap_nl='
+'
+	ap_rest=$changed
+	while [ -n "$ap_rest" ]; do
+		ap_path=${ap_rest%%"$ap_nl"*}
+		case $ap_rest in
+		*"$ap_nl"*) ap_rest=${ap_rest#*"$ap_nl"} ;;
+		*) ap_rest= ;;
+		esac
+		[ -n "$ap_path" ] || continue
+		ap_skip=
+		if [ -n "${path_skip:-}" ] && ! never_skipped "$ap_path"; then
+			ap_rules=$path_rules
+			while [ -n "$ap_rules" ] && [ -z "$ap_skip" ]; do
+				ap_rule=${ap_rules%%"$ap_nl"*}
+				case $ap_rules in
+				*"$ap_nl"*) ap_rules=${ap_rules#*"$ap_nl"} ;;
+				*) ap_rules= ;;
+				esac
+				[ "${ap_rule#* }" = skip ] || continue
+				! path_matches "${ap_rule%% *}" "$ap_path" || ap_skip=1
+			done
+		fi
+		if [ -n "$ap_skip" ]; then
+			skipped=${skipped:+$skipped$ap_nl}$ap_path
+		else
+			reviewed=${reviewed:+$reviewed$ap_nl}$ap_path
+		fi
+	done
+	# One line per instruction rule, in file order, with the first 10 reviewed paths it matches. A `skip` rule has nothing
+	# to tell the reviewer.
+	ap_rules=$path_rules
+	while [ -n "$ap_rules" ]; do
+		ap_rule=${ap_rules%%"$ap_nl"*}
+		case $ap_rules in
+		*"$ap_nl"*) ap_rules=${ap_rules#*"$ap_nl"} ;;
+		*) ap_rules= ;;
+		esac
+		ap_glob=${ap_rule%% *}
+		ap_instr=${ap_rule#* }
+		[ "$ap_instr" != skip ] || continue
+		ap_list=$(path_list 10 "$ap_glob") || return 1
+		[ -z "$ap_list" ] || path_section=${path_section:+$path_section$ap_nl}"- \`$ap_glob\` ($ap_list): $ap_instr"
+	done
+	if [ -n "$skipped" ]; then
+		ap_list=$(path_list 20) || return 1
+		skipped_line="Left out of this diff by a skip rule (not reviewed): $ap_list."
+	fi
+}
+
+# diff_range <range>: git diff <range> without the paths in $skipped (an exclude pathspec for each, literal and from the top
+# of the repo, whatever directory the gate runs in). With nothing skipped it is plain `git diff <range>`.
+diff_range() {
+	if [ -z "${skipped:-}" ]; then
+		git diff "$1"
+		return
+	fi
+	dr_nl='
+'
+	dr_range=$1
+	set -- ':/'
+	dr_rest=$skipped
+	while [ -n "$dr_rest" ]; do
+		dr_path=${dr_rest%%"$dr_nl"*}
+		case $dr_rest in
+		*"$dr_nl"*) dr_rest=${dr_rest#*"$dr_nl"} ;;
+		*) dr_rest= ;;
+		esac
+		[ -n "$dr_path" ] || continue
+		set -- "$@" ":(exclude,top,literal)$dr_path"
+	done
+	git diff "$dr_range" -- "$@"
+}
+
 # false_positives_section <instruction>: prints the known-false-positives section with the instruction as its first
 # line, or nothing when $false_positives is empty. The gate reads the text from the default branch only.
 false_positives_section() {
@@ -55,7 +231,8 @@ false_positives_section() {
 }
 
 # build_prompt <out file>: writes the finder's prompt (the docs check's when $kind is docs). Reads $dir (the prompts'
-# directory), $kind, $rules, $scoped, $base, $range, $checklist, $checklist_src, $pitfalls, $pitfalls_src,
+# directory), $kind, $rules (its path rules subsection is left out: $path_section and $skipped_line, both optional, say
+# what matches this diff), $scoped, $base, $range, $checklist, $checklist_src, $pitfalls, $pitfalls_src,
 # $false_positives, $false_positives_src, $filed_list (text), $threads, $pr, $commits, $branch_stat, $main and $diff_text,
 # and runs `git rev-parse` in the current directory when $scoped is set.
 build_prompt() {
@@ -67,11 +244,18 @@ build_prompt() {
 	# The status of the group below is its last echo's, so a template that can't be read would leave a prompt without
 	# the reviewer's instructions and a status of 0. It fails the build instead.
 	[ -r "$template" ] || return 1
+	shown_rules=$(strip_path_rules "$rules") || return 1
 	{
 		cat "$template" || return 1
 		echo
 		echo "## Project review rules (AGENTS.md › Code Review Rules)"
-		printf '%s\n' "$rules"
+		printf '%s\n' "$shown_rules"
+		if [ -n "${path_section:-}${skipped_line:-}" ]; then
+			echo
+			echo "## Path rules for this diff (AGENTS.md › Code Review Rules › Path rules)"
+			[ -z "${path_section:-}" ] || printf '%s\n' "$path_section"
+			[ -z "${skipped_line:-}" ] || printf '%s\n' "$skipped_line"
+		fi
 		if [ -n "$scoped" ]; then
 			echo
 			echo "## Scope of this review"

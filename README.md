@@ -129,7 +129,15 @@ issue goes in the milestone of the branch's open PR, else of the one milestone i
 share, else none.
 
 The repo then needs `AGENTS.md` › `## Code Review Rules` (the skill's bootstrap writes it). Codex reads the
-same section.
+same section. An optional `### Path rules` subsection of it gives per-path instructions in a fenced block, one
+`<glob> <instruction>` per line (`*` spans `/`); an instruction of `skip` leaves the path out of the reviewed diff
+(`docs/gate.md` › Path rules):
+
+```
+hooks/*        Treat any way a push could pass without review as P0.
+*.lock         skip
+generated/*    skip
+```
 
 ## Install
 

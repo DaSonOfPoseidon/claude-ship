@@ -626,7 +626,8 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
 - The project's review rules come from the default branch's `AGENTS.md` (a branch can't weaken its own review),
   else from the branch's own, which is how the bootstrap PR that adds them gets reviewed. The fallback is for a
   default branch with no `AGENTS.md` or no `## Code Review Rules` section only: an `AGENTS.md` that exists but
-  can't be read blocks, on either ref (#152), as the context files below do.
+  can't be read blocks, on either ref (#152), as the context files below do. The rules may hold a `### Path rules`
+  subsection (below, › Path rules).
 - The rest of the reviewer's context comes the same way: the checklist (the `## Reviews` section of
   `docs/CONTRIBUTING.md`, else `CONTRIBUTING.md`) and `docs/pitfalls.md` are read from the default branch, and from
   the branch only when the default branch has none of that file (the bootstrap PR). A branch that edits them could
@@ -668,6 +669,44 @@ hooks, skills and plugins, and `--restricted` ignores the user and project setti
 tools inside the repo (`--bare` would too, but needs an API key). Managed settings and policy hooks still load
 under both; they're the machine owner's, not the branch's. The prompt carries the diff and log, and the working
 tree is the commit being pushed (the gate refuses a dirty tree and pushes of anything but HEAD).
+
+### Path rules
+
+An optional `### Path rules` subsection of `## Code Review Rules` gives per-path instructions (#115). The gate puts only
+the rules that match the reviewed files into the prompt, and `skip` rules leave paths out of the diff.
+
+- **Format.** The subsection is the lines after a `### Path rules` line up to the next `### ` line or the end of the
+  rules. Only the lines inside its first fenced block (from a line that starts with three backticks to the next such
+  line) are rules; prose outside the fence is ignored. With no fence there are no path rules, and the gate says so on
+  stderr. Inside the fence, blank lines and lines whose first field starts with `#` are skipped, and every other line is
+  `<glob><whitespace><instruction>` (a glob with no instruction is ignored). The instruction is the rest of the line.
+  Codex reads the section as plain prose; the gate is what enforces `skip`.
+- **Globs** are shell `case` patterns matched against each path as `git diff --name-only` prints it, so `*` spans `/` and
+  `?` and `[...]` work (the same semantics as `p3-labels`, `hooks/p3-issue.sh`). A path git prints C-quoted (a tab or a
+  non-ASCII byte in its name) starts with a double quote, so a glob written for its plain name won't match it.
+- **Instructions.** An instruction that is exactly `skip` marks the path skipped; any other text is an instruction for
+  the reviewer. Every matching rule counts, and a path is skipped when any matching rule is `skip` (`skip` beats an
+  instruction on the same path).
+- **In the prompt.** The `### Path rules` subsection is cut out of the `## Project review rules` section, so rules for
+  paths outside the diff aren't shown; the rest of the rules stays. A `## Path rules for this diff` section follows it
+  with one line per instruction rule that matches a reviewed path (the first 10 paths, then `and <n> more`), and, when
+  something was skipped, a line naming the skipped paths (the first 20). With no subsection the prompt is the same as
+  before.
+- **Skipped paths** are left out of the finder's and the verifier's diff (an exclude pathspec for each, literal and from
+  the repo's top, so a name with a space or `[` works from any directory). `$changed`, the commit list and the branch
+  stat are unchanged. The review's kind (docs or code) is judged on the paths that stay. When nothing stays, the gate
+  prints `every changed file matches a skip rule` and passes, like an empty diff. The patch-id pass cache is still keyed
+  on the whole branch diff.
+- **Never skipped**, whatever a rule says (instructions still apply to them): any `AGENTS.md` or `CLAUDE.md`, `.claude/*`,
+  `.github/*`, `docs/pitfalls.md`, `docs/false-positives.md`, `docs/CONTRIBUTING.md`, `CONTRIBUTING.md`, and any path
+  git prints C-quoted. These steer the gate (the rules, the checklist, the pitfalls, the false positives) or Claude from
+  the repo, so a skip rule that hid them would let a change to what steers the review go unreviewed.
+- **`skip` comes from the default branch only.** When the rules fall back to the branch's own `AGENTS.md` (the
+  bootstrap PR), the gate ignores its `skip` rules, with a note on stderr, because the branch wrote them itself and could
+  skip the files it wants unreviewed. Its instruction rules still apply: they only add scrutiny.
+- **Placement.** The subsection must come before the template's `<!-- Optional ... -->` comment
+  (`skills/ship/templates/AGENTS.md`), whose `## PR loop` line ends the rules section; the template stays without an
+  example, since one inside the comment would still be parsed.
 
 ## Changing prompts or models
 
