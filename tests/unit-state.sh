@@ -107,6 +107,13 @@ run feat/local
 want 'local with an untracked file' 0 "state: local 2
 worktree: $tmp/wt
 dirty: yes"
+# The user's status display setting doesn't hide an untracked file from the check.
+git -C "$work" config status.showUntrackedFiles no
+run feat/local
+want 'an untracked file with status.showUntrackedFiles=no' 0 "state: local 2
+worktree: $tmp/wt
+dirty: yes"
+git -C "$work" config --unset status.showUntrackedFiles
 rm "$tmp/wt/untracked"
 
 # A worktree whose directory is gone (still registered): its path, and its state is unknown.

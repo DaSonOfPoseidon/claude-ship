@@ -15,7 +15,13 @@ case "\$*" in
 'repo view --json nameWithOwner --jq .nameWithOwner')
 	[ -f "$tmp/repo.err" ] && { cat "$tmp/repo.err" >&2; exit 1; }
 	echo o/r ;;
-'repo view o/r --json defaultBranchRef --jq .defaultBranchRef.name') echo main ;;
+'repo view o/r --json defaultBranchRef --jq .defaultBranchRef.name')
+	# default.err fails the calls after the first default.after ones (unit-state.sh asks too, once per worktree).
+	if [ -f "$tmp/default.err" ] && [ "\$(grep -c defaultBranchRef "$tmp/calls")" -gt "\$(cat "$tmp/default.after")" ]; then
+		cat "$tmp/default.err" >&2
+		exit 1
+	fi
+	if [ -f "$tmp/default.val" ]; then cat "$tmp/default.val"; else echo main; fi ;;
 'pr list -R o/r --head '*' --state all --json number,state,isCrossRepository --limit 30')
 	head=\${*#*--head }
 	head=\${head%% --state*}
@@ -27,11 +33,20 @@ case "\$*" in
 *) echo "unexpected gh call: \$*" >&2; exit 1 ;;
 esac
 EOF
-# A git that can be told to fail `worktree remove`, to see the lock put back.
+# A git that can be told to fail `worktree remove` (to see the lock put back), the read of a worktree's ignored files
+# or a fetch.
 cat >"$tmp/bin/git" <<EOF
 #!/bin/sh
 if [ "\$1 \$2" = "worktree remove" ] && [ -f "$tmp/shim-fail" ]; then
 	echo "fatal: shim says no" >&2
+	exit 1
+fi
+case " \$* " in
+*" --ignored=traditional "*)
+	if [ -f "$tmp/shim-ignored-fail" ]; then echo "fatal: shim says no ignored" >&2; exit 1; fi ;;
+esac
+if [ "\$1" = fetch ] && [ -f "$tmp/shim-fetch-fail" ]; then
+	echo "fatal: shim says no fetch" >&2
 	exit 1
 fi
 exec "$realgit" "\$@"
@@ -54,6 +69,8 @@ echo base >"$work/f"
 git -C "$work" add f
 git -C "$work" commit -q -m base
 git -C "$work" push -q origin main
+# Files the worktrees ignore (build output, secrets): git status lists them only with --ignored.
+printf '.env\njunk*\n' >>"$work/.git/info/exclude"
 
 # run [args]...: runs the script from <dir> (default: the main checkout); sets out (sorted stdout), err and rc.
 dir=$work
@@ -191,8 +208,148 @@ grep -qxF "removed: $tmp/wt-m3 feat/m3" "$tmp/stdout" || { echo "FAIL: m3 was no
 grep -qxF "removed: $tmp/wt-m3b feat/m3b" "$tmp/stdout" || { echo "FAIL: m3b was not removed once clean"; fail=1; }
 [ "$rc" = 0 ] || { echo "FAIL: exit $rc after settling"; fail=1; }
 for n in m2 m3 m3b; do gone "settled $n" "$n"; done
-# Clear the rest of the main fixture, so the cases below see only their own worktrees.
+# Clear the worktrees of the rest of the main fixture; their branches stay, as branches without a worktree.
 for n in po pc none pushed mdiv det; do git -C "$work" worktree remove --force "$tmp/wt-$n"; done
+
+# --- branches without a worktree: merged PRs' and agents' (claude-ship #286).
+# bm: merged, tip = the PR head. bx: merged, plus a later local commit. bl: local only.
+for n in bm bx bl; do
+	git -C "$work" switch -q -c "feat/$n" main
+	commit "$work" 1
+	git -C "$work" switch -q main
+done
+pr bm MERGED 911
+git -C "$work" branch -q -f feat/bx feat/bm
+pr bx MERGED 912
+git -C "$work" switch -q feat/bx
+commit "$work" 1
+git -C "$work" switch -q main
+# Agent branches: a1 sits on origin/main, a2 has a commit of its own, a3 is checked out in a worktree.
+git -C "$work" branch -q worktree-agent-a1 main
+git -C "$work" branch -q worktree-agent-a2 main
+git -C "$work" switch -q worktree-agent-a2
+commit "$work" 1
+git -C "$work" switch -q main
+git -C "$work" worktree add -q -b worktree-agent-a3 "$tmp/wt-a3" main
+run
+want 'branches without a worktree' 0 "deleted: feat/bm
+deleted: worktree-agent-a1
+kept: - feat/bx commits the merged PR lacks
+kept: - feat/mdiv local and origin diverged
+kept: - worktree-agent-a2 commits not on origin/main
+kept: $tmp/wt-a3 worktree-agent-a3 state: none"
+for b in feat/bm worktree-agent-a1; do
+	! git -C "$work" rev-parse -q --verify "refs/heads/$b" >/dev/null || { echo "FAIL: branch $b is still there"; fail=1; }
+done
+for b in feat/bx feat/bl feat/mdiv feat/po feat/pc feat/none feat/pushed worktree-agent-a2 worktree-agent-a3 main; do
+	git -C "$work" rev-parse -q --verify "refs/heads/$b" >/dev/null || { echo "FAIL: branch $b was deleted"; fail=1; }
+done
+[ -d "$tmp/wt-a3" ] || { echo "FAIL: the agent branch's worktree is gone"; fail=1; }
+[ "$(git -C "$work" symbolic-ref HEAD)" = refs/heads/main ] || { echo "FAIL: the main checkout left main"; fail=1; }
+# A second sweep deletes nothing more and says the same about what it keeps.
+run
+want 'second sweep of the branches' 0 "kept: - feat/bx commits the merged PR lacks
+kept: - feat/mdiv local and origin diverged
+kept: - worktree-agent-a2 commits not on origin/main
+kept: $tmp/wt-a3 worktree-agent-a3 state: none"
+git -C "$work" worktree remove --force "$tmp/wt-a3"
+for b in feat/bx feat/bl feat/mdiv feat/po feat/pc feat/none feat/pushed worktree-agent-a2 worktree-agent-a3; do git -C "$work" branch -q -D "$b"; done
+
+# --- GitHub's default branch can't be read, or origin can't be fetched: exit 1, and the branch passes don't run.
+# The worktree pass before it has done its work.
+unit dg
+pr dg MERGED 921
+git -C "$work" branch -q worktree-agent-a5 main
+echo 'gh: HTTP 502' >"$tmp/default.err"
+echo 1 >"$tmp/default.after"
+: >"$tmp/calls"
+run
+want 'default branch unreadable' 1 "removed: $tmp/wt-dg feat/dg"
+grep -q 'default branch' "$tmp/stderr" && grep -q 'no branch was deleted' "$tmp/stderr" || { echo "FAIL: the default-branch failure wasn't explained"; sed 's/^/  /' "$tmp/stderr"; fail=1; }
+git -C "$work" rev-parse -q --verify refs/heads/worktree-agent-a5 >/dev/null || { echo "FAIL: the agent branch was deleted after a failure"; fail=1; }
+rm "$tmp/default.err" "$tmp/default.after"
+for odd in '' '-x' 'a b'; do
+	printf '%s\n' "$odd" >"$tmp/default.val"
+	run
+	want "default branch '$odd'" 1 ''
+done
+rm "$tmp/default.val"
+: >"$tmp/shim-fetch-fail"
+run
+want 'fetch of origin fails' 1 ''
+grep -q 'fetch' "$tmp/stderr" || { echo "FAIL: the fetch failure wasn't named"; sed 's/^/  /' "$tmp/stderr"; fail=1; }
+git -C "$work" rev-parse -q --verify refs/heads/worktree-agent-a5 >/dev/null || { echo "FAIL: the agent branch was deleted after a fetch failure"; fail=1; }
+rm "$tmp/shim-fetch-fail"
+run
+want 'the agent branch goes once git and gh work' 0 'deleted: worktree-agent-a5'
+
+# --- the ignored files a swept worktree loses are listed (claude-ship #253).
+unit i1
+pr i1 MERGED 931
+echo secret >"$tmp/wt-i1/.env"
+unit i2
+pr i2 MERGED 932
+unit i3
+pr i3 MERGED 933
+for k in 1 2 3 4 5 6 7; do echo x >"$tmp/wt-i3/junk$k"; done
+run
+want 'ignored files are listed' 0 "removed: $tmp/wt-i1 feat/i1
+deleted-ignored: $tmp/wt-i1 1 path(s): .env
+removed: $tmp/wt-i2 feat/i2
+removed: $tmp/wt-i3 feat/i3
+deleted-ignored: $tmp/wt-i3 7 path(s): junk1 junk2 junk3 junk4 junk5 …"
+for n in i1 i2 i3; do gone "ignored $n" "$n"; done
+# An unreadable status keeps the worktree, unlocked state untouched, and its files.
+unit i4
+pr i4 MERGED 934
+echo secret >"$tmp/wt-i4/.env"
+: >"$tmp/shim-ignored-fail"
+run
+want 'ignored files unreadable' 0 "kept: $tmp/wt-i4 feat/i4 ignored files unreadable"
+alive 'unreadable ignored files' i4
+[ -f "$tmp/wt-i4/.env" ] || { echo "FAIL: the ignored file was lost"; fail=1; }
+rm "$tmp/shim-ignored-fail"
+run
+want 'removed once the ignored files can be read' 0 "removed: $tmp/wt-i4 feat/i4
+deleted-ignored: $tmp/wt-i4 1 path(s): .env"
+gone 'i4' i4
+# The user's status display setting (status.showUntrackedFiles=no) doesn't hide the ignored files from the list.
+unit i5
+pr i5 MERGED 935
+echo secret >"$tmp/wt-i5/.env"
+git -C "$work" config status.showUntrackedFiles no
+run
+want 'ignored files with status.showUntrackedFiles=no' 0 "removed: $tmp/wt-i5 feat/i5
+deleted-ignored: $tmp/wt-i5 1 path(s): .env"
+git -C "$work" config --unset status.showUntrackedFiles
+gone 'i5' i5
+
+# --- a branch being rebased shows as detached in the worktree list; its worktree still holds it (the head-name file).
+# rb: rebased in a linked worktree (merge backend, stopped by an `edit`). ra: named by the main checkout's rebase-apply.
+unit rb
+pr rb MERGED 941
+GIT_SEQUENCE_EDITOR='sed -i s/^pick/edit/' git -C "$tmp/wt-rb" rebase -q -i main >/dev/null 2>&1
+if git -C "$tmp/wt-rb" symbolic-ref -q HEAD >/dev/null; then
+	echo "FAIL: the rebase fixture did not stop with a detached HEAD"
+	fail=1
+fi
+git -C "$work" switch -q -c feat/ra main
+commit "$work" 1
+git -C "$work" switch -q main
+pr ra MERGED 942
+mkdir "$work/.git/rebase-apply"
+echo refs/heads/feat/ra >"$work/.git/rebase-apply/head-name"
+run
+want 'branches of a rebase in progress' 0 "kept: $tmp/wt-rb (none) detached HEAD or no branch"
+alive 'rebasing worktree' rb
+git -C "$work" rev-parse -q --verify refs/heads/feat/ra >/dev/null || { echo "FAIL: the branch named by rebase-apply was deleted"; fail=1; }
+# Once the rebase is over (or aborted) the merged branches go.
+rm -rf "$work/.git/rebase-apply"
+git -C "$tmp/wt-rb" rebase --abort
+run
+want 'rebases over' 0 "removed: $tmp/wt-rb feat/rb
+deleted: feat/ra"
+gone 'rebased rb' rb
 
 # --- a failure stops the sweep before any further removal (fail closed).
 unit f1
@@ -295,6 +452,10 @@ pr sp MERGED 601
 run
 want 'path with a space' 0 "removed: $tmp/wt sp feat/sp"
 [ ! -d "$tmp/wt sp" ] || { echo "FAIL: the worktree with a space is still there"; fail=1; }
+
+# --- nothing is left to do: the only branch left is the missing worktree's, which has unfinished work.
+run
+want 'a final sweep is silent' 0 ''
 
 # --- usage errors exit 2.
 run o/r extra

@@ -186,7 +186,7 @@ actions are written.
 | `none` | no branch anywhere, or one with no commits of its own |
 
 `worktree: <path>` names the worktree that has the branch, and `dirty: yes` (or `unknown` when git can't read it,
-as for a registered worktree whose directory is gone) means it holds modified or untracked files.
+as for a registered worktree whose directory is gone) means it holds modified or untracked files (git-ignored files don't count).
 
 - **Nothing is guessed from stale refs.** The default branch comes from GitHub, not `origin/HEAD` (a local ref the
   agent controls, see `pitfalls.md`). It fetches that branch and then the unit's, each with an explicit refspec,
@@ -207,6 +207,10 @@ no branch, and lists them as `kept:`) and removes a worktree only when all of th
 `unpushed:`, `dirty:` or `diverged: yes` line. Everything else prints `kept: <path> <branch> <reason>`; a removal
 prints `removed: <path> <branch>`.
 
+Then it clears local branches no worktree holds (#286), which the worktree pass never saw: `worktree-agent-<id>`
+branches that Claude Code makes for an `isolation: worktree` agent (82 piled up), and the branches of merged PRs that
+never had a worktree. Both passes compare with GitHub's default branch, fetched fresh, never with a local ref.
+
 - **It reuses `unit-state.sh`'s facts and adds none.** `unpushed:` for a merged PR counts local commits missing from
   `refs/pull/<n>/head`, so it is right after a squash merge with `--delete-branch`, when origin's copy of the branch is
   gone. `dirty: unknown` (a registered worktree whose directory is missing) keeps the worktree too.
@@ -214,11 +218,30 @@ prints `removed: <path> <branch>`.
   session, which is still running. So the sweep ignores the lock when deciding, and unlocks it when it removes (the
   porcelain output's `locked` line; `unit-state.sh` doesn't read it). `orchestrate.md` has the caller check `ListAgents`
   for a live implementer before it sweeps. If the remove fails, the lock goes back with its reason.
+- **Ignored files go with the worktree, and are listed.** `dirty:` and `git worktree remove` both ignore git-ignored
+  files (build output, a `.env`), so keeping every worktree that has one would stop the sweep for good. Just before the
+  remove it reads `git status --porcelain --ignored=traditional` (an ignored directory counts as one entry) and, after
+  the removal, prints `deleted-ignored: <path> <n> path(s): <the first five>` (with ` …` when there are more). If git
+  can't read them, the worktree is kept (`kept: … ignored files unreadable`), as `dirty: unknown` keeps it.
 - **The removal order is unlock, `git worktree remove`, `git branch -D`.** No `--force`: git refuses a worktree with
-  modified or untracked files, as a second guard after the `dirty:` check. `-D` is needed because a squash merge leaves
+  modified or untracked files (not ignored ones, see above), a second guard after the `dirty:` check. `-D` is needed because a squash merge leaves
   the branch unmerged by SHA, and it runs only after the remove succeeded. It ends with `git worktree prune`.
+- **The agent pass** deletes a `worktree-agent-*` branch (`deleted: <branch>`) when `git merge-base --is-ancestor` finds
+  its tip on `origin/<default>`, and prints `kept: - <branch> commits not on origin/<default>` when it isn't. It is
+  `-D` after that check, not `-d`: `-d` compares with HEAD or the upstream, which in the user's checkout may be another
+  or a stale branch, and would refuse a branch the check just proved merged.
+- **The merged-branch pass** runs `unit-state.sh` on every other local branch and deletes it (`deleted: <branch>`)
+  only for `state: merged` with no `unpushed:` and no `diverged:` line; with one of those it prints `kept: - <branch>
+  <reason>`. Any other state is the user's or a live unit's work, and prints nothing, so the `kept:` lines the loop
+  passes to the user stay few. It costs two `gh` calls per local branch.
+- **Never touched by either pass:** the default branch, and any branch a worktree has checked out (read from
+  `git worktree list` after the worktree pass, and before the prune, so a worktree whose directory is gone still holds
+  its branch; a branch in the middle of a rebase lists as detached, so each `rebase-merge/head-name` and
+  `rebase-apply/head-name` names one too). A name `unit-state.sh` rejects (exit 2) is skipped.
 - **Fail closed.** A `unit-state.sh`, `gh` or `git` failure is exit 1 and stops the sweep at once: nothing further
-  is removed, and no prune. Exit 0 means it ran to the end, whether or not it removed anything; exit 2 is usage.
+  is removed, and no prune; what an earlier pass removed stands (the default branch or the fetch failing, for
+  instance, stops it before the branch passes). Exit 0 means it ran to the end, whether or not it removed anything;
+  exit 2 is usage.
 
 ## `skills/ship/codex-round.sh`
 

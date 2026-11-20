@@ -166,7 +166,7 @@ awk -v ref="refs/heads/$branch" '/^worktree / { p = substr($0, 10) } $0 == ("bra
 wtpath=$(tr -d '[:cntrl:]' <"$tmp/wtpath")
 if [ -n "$wtpath" ]; then
 	echo "worktree: $wtpath"
-	if st=$(git -C "$wtpath" status --porcelain 2>/dev/null); then
+	if st=$(git -C "$wtpath" status --porcelain --untracked-files=normal 2>/dev/null); then
 		[ -z "$st" ] || echo "dirty: yes"
 	else
 		echo "dirty: unknown"
