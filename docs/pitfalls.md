@@ -307,3 +307,10 @@ review finds a new class.
   message that named it were all refused, and so was the script's own test (claude-ship #282). When a script is the thing to
   protect from a run, deny the run: the command word, or the script a shell runs, read from the syntax tree after the wrappers
   (`cmdev` in the gate's tamper check), and test the maintenance commands as passes next to every spelling of the run.
+
+- **Reading the same API endpoint twice in one run.** Two reads are not one snapshot: a push or an edit between them
+  pairs values from different moments. `codex-status.sh` read the PR three times (a head sha from one moment, a head
+  repository or ref from another) and the comments eight, so a summary's body could pair with another read's
+  `updated_at` (claude-ship #111). Read each endpoint once and derive every value from it. Keep the filters that decide
+  trust in gh's `--jq` (gojq), not in the local jq, whose regex engine differs; pass a free-text field through the
+  one read as JSON, so its newlines can't forge a line.

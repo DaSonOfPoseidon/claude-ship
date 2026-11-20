@@ -25,19 +25,36 @@ name=${repo#*/}
 approval_phrases='"okay to merge", "approved for merge", "ready for prod", "owner approved"'
 approval_hint='Okay to merge'
 
+# The bot's pull request reviews, read the first time a path needs them and kept (#111): one line each,
+# `<submitted_at> <commit_id>` (an unsubmitted review has a null submitted_at, printed as null). Call it as a
+# statement, not inside $(...), which would lose the cache; a failed read stops the script (set -e).
+bot_reviews=
+reviews_read=
+read_reviews() {
+	[ -z "$reviews_read" ] || return 0
+	bot_reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+		--jq '.[] | select(.user.login == "'"$bot"'") | "\(.submitted_at) \(.commit_id)"')
+	reviews_read=1
+}
+
+# Each endpoint is read once, and every value below comes from that one read (#111): two reads are not one snapshot,
+# so a push or an edit between them would pair values from different moments. The filters stay in gh's `--jq`
+# (gojq), which decides which comments are trusted; local jq only decodes a JSON string. Each read is its own
+# assignment, so `set -e` stops on a failed call before anything is posted.
+# The PR's head: <sha>, <repo>, <ref> separated by tabs (a deleted fork's repo reads null, as gh prints it).
+pr_line=$(gh api "repos/$repo/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // "null"), .head.ref] | join("\t")')
 # HEAD_SHA checks another commit instead, for testing against past reviews with DRY_RUN=1.
-head=${HEAD_SHA:-$(gh api "repos/$repo/pulls/$pr" --jq .head.sha)}
+head=${HEAD_SHA:-$(printf '%s\n' "$pr_line" | cut -f1)}
 short=$(echo "$head" | cut -c1-7)
-head_repo=$(gh api "repos/$repo/pulls/$pr" --jq .head.repo.full_name)
+head_repo=$(printf '%s\n' "$pr_line" | cut -f2)
 # A fork PR has another head repository; a deleted fork has none (null, or empty from another tool's output).
 fork=
 case $head_repo in
 '' | null) fork=1 ;;
 *) [ "$(echo "$head_repo" | tr A-Z a-z)" = "$(echo "$repo" | tr A-Z a-z)" ] || fork=1 ;;
 esac
-head_ref=$(gh api "repos/$repo/pulls/$pr" --jq .head.ref)
+head_ref=$(printf '%s\n' "$pr_line" | cut -f3)
 
-# Each GitHub call is its own assignment, so `set -e` stops on a failed call.
 # When this exact commit was last pushed to the PR's branch: a review counts only if it finished after, since
 # Codex's summary names commits by a 7-character SHA that could be forged. A new branch's first push is
 # recorded as `branch_creation`, not `push`.
@@ -53,18 +70,28 @@ case $head_repo in
 esac
 pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 
+# The PR's comments, read once: one tagged line per match of each filter (a comment can match several). The
+# filters are the ones the separate reads used, in this order per comment:
+#   S <updated_at> <body as JSON>   Codex's summary comments (the body is one line of JSON, so it can't forge a tag)
+#   R <created_at> <id> <eyes>      requests from the owner and collaborators; anyone can comment `@codex review`
+#   C <created_at>                  Codex's receipts, the markers of a clean review
+#   A <created_at>                  the owner's fork approvals (used below only for a fork PR)
+comment_lines=$(gh api --paginate "repos/$repo/issues/$pr/comments" --jq '.[]
+	| (select(.user.login == "'"$bot"'") | select(.body | contains("codex-pull-request-review-summary")) | "S \(.updated_at) \(.body | @json)"),
+	(select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | "R \(.created_at) \(.id) \(.reactions.eyes // 0)"),
+	(select(.user.login == "'"$bot"'") | select(.body | contains("codex-review-receipt")) | "C \(.created_at)"),
+	(select(.user.type != "Bot") | select(.author_association == "OWNER")
+		| select(.body | gsub("^\\s+|\\s+$"; "") | sub("[.!]$"; "") | gsub("\\s+$"; "") | ascii_downcase | IN('"$approval_phrases"'))
+		| "A \(.created_at)")')
 # Codex keeps one summary comment per PR; its Code Review row names the commit it reviewed and the status.
-summaries=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .body")
+summaries=$(printf '%s\n' "$comment_lines" | sed -n 's/^S [^ ]* //p' | jq -r .)
 row=$(printf '%s\n' "$summaries" | grep 'Code Review' | grep -F "\`$short\`" || true)
 # Stalled: Codex says running, but the summary, the latest trusted request and the push are all older than
 # CODEX_STALL_SECS (openai/codex#55890, claude-ship #61). It stays pending, but says so. Another commit's state,
 # or one that isn't JSON, isn't a stall.
-summary_at=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-	--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-pull-request-review-summary\")) | .updated_at")
+summary_at=$(printf '%s\n' "$comment_lines" | sed -n 's/^S \([^ ]*\) .*/\1/p')
 # One line per trusted request: `<created_at> <id> <👀 count>`. The latest one counts.
-request_lines=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-	--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | "\(.created_at) \(.id) \(.reactions.eyes // 0)"')
+request_lines=$(printf '%s\n' "$comment_lines" | sed -n 's/^R //p')
 latest=$(printf '%s\n' "$request_lines" | grep . | sort | tail -1)
 latest_request=${latest%% *}
 latest_rest=${latest#* }
@@ -98,13 +125,11 @@ if [ -z "$row" ]; then
 	row_ok=
 	if [ -n "$completed" ]; then
 # Only requests from the owner and collaborators count (anyone can comment `@codex review`).
-		requests=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-			--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | .created_at')
+		requests=$(printf '%s\n' "$request_lines" | cut -d' ' -f1)
 # Earlier completions leave a receipt comment (clean) or a pull request review (findings).
-		receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-			--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
-		reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
-			--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
+		receipts=$(printf '%s\n' "$comment_lines" | sed -n 's/^C //p')
+		read_reviews
+		reviews=$(printf '%s\n' "$bot_reviews" | cut -d' ' -f1)
 		requested_at=$(printf '%s\n' "$requests" | cut -c1-19 | sort | tail -1)
 		if [ -n "$requested_at" ]; then
 			# ISO 8601 times to the second compare as text.
@@ -154,10 +179,7 @@ after_push() {
 # read the comments for it. created_at, not updated_at: an edit doesn't move an approval past a push.
 approved=
 if [ -n "$fork" ]; then
-	approvals=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-		--jq '.[] | select(.user.type != "Bot") | select(.author_association == "OWNER")
-			| select(.body | gsub("^\\s+|\\s+$"; "") | sub("[.!]$"; "") | gsub("\\s+$"; "") | ascii_downcase | IN('"$approval_phrases"'))
-			| .created_at')
+	approvals=$(printf '%s\n' "$comment_lines" | sed -n 's/^A //p')
 	approved_at=$(printf '%s\n' "$approvals" | grep . | cut -c1-19 | sort | tail -1)
 	if later "$approved_at" "$pushed_at"; then
 		approved=1
@@ -189,10 +211,9 @@ if [ -n "$req" ] && [ -n "$pushed_at" ] && { [ "$req" = "$pushed_at" ] || later 
 			[ -z "$mine" ] || unacked=
 		fi
 		if [ -n "$unacked" ]; then
-			receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-				--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
-			reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
-				--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
+			receipts=$(printf '%s\n' "$comment_lines" | sed -n 's/^C //p')
+			read_reviews
+			reviews=$(printf '%s\n' "$bot_reviews" | cut -d' ' -f1)
 			for t in $(printf '%s\n%s\n' "$receipts" "$reviews" | grep . | cut -c1-19); do
 				if since_request "$t"; then
 					unacked=
@@ -224,8 +245,8 @@ if [ "$review_state" = completed ] && [ "$review_any" = true ] && echo "$row" | 
 	posting=1
 	floor=$(printf '%s\n%s\n' "$latest_request" "$pushed_at" | grep . | cut -c1-19 | sort | tail -1)
 	# An unsubmitted review has no submitted_at, and "null" would sort after every date.
-	posted_reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
-		--jq ".[] | select(.user.login == \"$bot\") | select(.commit_id == \"$head\") | select(.submitted_at != null) | .submitted_at")
+	read_reviews
+	posted_reviews=$(printf '%s\n' "$bot_reviews" | awk -v h="$head" '$2 == h && $1 != "null" { print $1 }')
 	posted=$(printf '%s\n' "$posted_reviews" | grep . | cut -c1-19 | awk -v f="$floor" '$0 >= f' | grep -c . || true)
 	if [ "$posted" -gt 0 ]; then
 		posting=
@@ -241,10 +262,9 @@ fi
 # threads open: without them the verdicts below already say pending. `req` is the request's time, from above.
 open_request=
 if [ "$findings" -gt 0 ] && [ -n "$req" ] && [ -n "$pushed_at" ] && { [ "$req" = "$pushed_at" ] || later "$req" "$pushed_at"; }; then
-	req_receipts=$(gh api --paginate "repos/$repo/issues/$pr/comments" \
-		--jq ".[] | select(.user.login == \"$bot\") | select(.body | contains(\"codex-review-receipt\")) | .created_at")
-	req_reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
-		--jq ".[] | select(.user.login == \"$bot\") | .submitted_at")
+	req_receipts=$(printf '%s\n' "$comment_lines" | sed -n 's/^C //p')
+	read_reviews
+	req_reviews=$(printf '%s\n' "$bot_reviews" | cut -d' ' -f1)
 	# Strictly after, as codex-request.sh counts (times compare as text, to the second).
 	req_answers=$(printf '%s\n%s\n' "$req_receipts" "$req_reviews" | grep . | cut -c1-19 |
 		awk -v r="$req" '$0 > r' | grep -c . || true)

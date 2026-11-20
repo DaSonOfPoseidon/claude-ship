@@ -116,8 +116,17 @@ head's push time (the same rule as a review), so an approval of an older head do
 `created_at`, not `updated_at`: editing a comment doesn't move it past a push. Members and collaborators can't
 approve, the same trust line as `@codex review`.
 
-**Errors.** Each GitHub call is its own assignment, so `set -e` stops on a failed call; reading a pipeline's last
-exit status would turn an empty result into "no findings".
+**Reads (#111).** A run reads each endpoint at most once, and every value comes from that one snapshot: the PR
+(`pulls/<pr>`: the head's sha, repository and ref together), its comments (`issues/<pr>/comments`) and the reviews
+(`pulls/<pr>/reviews`, only when a path needs them, then kept). Two reads are not one snapshot: a push between two reads
+of the PR paired one head's sha with another's repository, and an edit between two reads of the comments paired a
+summary's body with another read's `updated_at`. The comments come back as tagged lines, one filter per tag
+(`S` summary, `R` trusted request, `C` receipt, `A` owner approval; a comment that several filters select yields a
+line for each), and the script splits them with `sed`. The filters stay in gh's `--jq`, not in the local jq: gh runs
+gojq (Go regexp), the host's jq is Oniguruma, and `\s`, `\b` and Unicode can differ, which would change which comments
+count as a trusted request or an owner's approval. The local jq only decodes a summary's body, which travels as one
+line of JSON (so a newline in it can't forge a tag). Each read is its own assignment, so `set -e` stops on a failed
+call before anything is posted; reading a pipeline's last exit status would turn an empty result into "no findings".
 
 ## `skills/ship/ci-failures.sh`
 
