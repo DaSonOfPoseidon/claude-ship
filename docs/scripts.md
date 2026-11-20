@@ -385,8 +385,9 @@ while one is open) is left out too, unless the end of its own author's previous 
 because its window widens back to that end and can take a request from an asked PR. Both bounds come from the
 list alone, so a first commit authored before its PR's creation isn't seen by them. Only the asked PRs' rows are
 printed, and a request won by another PR is dropped, so a PR's row is the same whichever other PRs are asked for (`tests/token-report.sh` checks this directly). A failed or odd
-`gh pr list`, or a PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would reach
-the window back to the session's start. A whole subagent transcript belongs to the PR whose window holds its last
+`gh pr list`, or an asked PR with no author (a deleted account), is an error: reading it as "no earlier PRs" would
+reach the window back to the session's start. A listed PR with no author that isn't asked for is left out instead: a
+competing PR silently, a PR selected by `--since` with the warning above. A whole subagent transcript belongs to the PR whose window holds its last
 request: implementers start before their first commit but end after a push or a fix round. Anything else isn't
 printed. A session started in a worktree logs under that directory's own slug (#248), so besides the main
 checkout's transcript dir the script reads the dir of each worktree `git worktree list` shows, and every existing
@@ -538,8 +539,8 @@ there, and no `settings.json` entry is needed.
   127) is a non-blocking error, and the agent's Bash then runs unrestricted. Claude Code's docs show `onFailure:
   block` only for settings-style hook entries; subagent frontmatter isn't documented to take it, so the agents
   don't rely on it. `install.sh` checks instead that every hook an agent's frontmatter names is deployed and
-  executable, and exits 1 otherwise (#122). It does not
-  stop `git diff` using a `diff.external` driver from the repo's own config, which a branch can't set. Like the
+  executable, and exits 1 otherwise (#122). The hook does
+  not stop `git diff` using a `diff.external` driver from the repo's own config, which a branch can't set. Like the
   gate, it is for Claude's slips and steering, not a security boundary.
 
 ## `hooks/codex-bash.sh`

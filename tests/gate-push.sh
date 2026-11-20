@@ -970,10 +970,12 @@ expect_budget REVIEW_GATE_MIN_SECS=3000 2 none none 'ran out of time'
 # A budget that isn't a number blocks rather than reading as zero or as no limit.
 expect_budget REVIEW_GATE_BUDGET=abc 2 none none 'REVIEW_GATE_BUDGET'
 expect_budget REVIEW_GATE_BUDGET=0100 2 none none 'REVIEW_GATE_BUDGET'
-# Zero is a number but not a time limit: `timeout 0` means no limit at all, so a zero budget or minimum blocks too,
-# and so does a clock that has already used the whole budget (left is 0, and was never allowed to reach timeout).
+# Zero is a number but not a time limit: `timeout 0` means no limit at all, so a zero budget blocks, and so does a zero
+# minimum (the only case here that pins the check keeping `left` and the `timeout` above 0: with the default minimum
+# of 120 s, a `left` of 0 blocks anyway).
 expect_budget REVIEW_GATE_BUDGET=0 2 none none 'at least 1'
 expect_budget REVIEW_GATE_MIN_SECS=0 2 none none 'at least 1'
+# A clock that has used the whole budget blocks as 'ran out of time'.
 expect_budget FAKE_DATE_STEP=2200 2 none none 'ran out of time'
 
 # A gate that can't read the tool call blocks it instead of reading it as nothing (claude-ship #103): with no jq at

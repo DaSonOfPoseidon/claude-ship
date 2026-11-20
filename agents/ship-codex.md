@@ -34,10 +34,10 @@ implementer already replied to), `mode: resolve-only` (see **Resolve only**) or 
   - `~/.claude/skills/ship/codex-round.sh <pr> <slug>`
   - `~/.claude/skills/ship/codex-request.sh <pr> <slug> <sha>`
   - `~/.claude/skills/ship/codex-wait.sh <pr> <slug>`, optionally with `CODEX_WAIT_SECS=<n>` before it (step 4 sets it
-    to 300; the only other environment variable allowed is `CI_WAIT_POLLS=<n>`, below)
+    to 300; the only other environment variable allowed is `CI_WAIT_POLLS=<1-10>`, below)
   - `~/.claude/skills/ship/codex-findings.sh <pr> <slug>`
-  - `~/.claude/skills/ship/ci-failures.sh <pr> <slug>`, with `--wait` after the slug and `CI_WAIT_POLLS=<n>` (1 to
-    10, no leading zero) before it in step 5 (Bash `timeout: 600000`)
+  - `~/.claude/skills/ship/ci-failures.sh <pr> <slug>`, with `--wait` after the slug and `CI_WAIT_POLLS=<1-10>` (no
+    leading zero) before it in step 5 (Bash `timeout: 600000`)
   - `~/.claude/skills/ship/codex-triage.sh <pr> <triage file (Bash)> <slug>`
   - `gh pr view <pr> ...` and `gh pr checks <pr> ...` (add `-R <slug>`), without `--web`
 - **Never rely on the cwd.** You can't `cd`, so you may run in any checkout of the repo (a resumed orchestrator's,
