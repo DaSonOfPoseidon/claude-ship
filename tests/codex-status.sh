@@ -496,6 +496,17 @@ with_msg 'unresolved Codex thread' expect failure 'threads, untrusted request' '
 with_msg 'unresolved Codex thread' expect failure 'threads, request answered by a review' '`7ca1cc3`' $p $c "$r1" 'review 2026-10-21T15:41:10Z head'
 # ...and so does a receipt.
 with_msg 'unresolved Codex thread' expect failure 'threads, request answered by a receipt' '`7ca1cc3`' $p $c "$r1" "$m"
+# A review that failed after the request answers it with a failure, not a wait (Codex round 1 on #292): the
+# retry is the user's to ask for, so the verdict is the failed one, not "Waiting" (which would block a retry).
+ROW=$failed
+SUMMARY_AT=$(ago 120)
+with_msg 'ask for another' expect failure 'threads, request failed' '`7ca1cc3`' "$(ago 7200)" $c "$(ago 150) OWNER" ''
+# ...a retry after the failure is a wait again...
+with_msg 'Waiting for Codex' expect pending 'threads, request after failure' '`7ca1cc3`' "$(ago 7200)" $c "$(ago 90) OWNER" ''
+# ...and on a fork PR the failure keeps its own message.
+with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'threads, fork, request failed' '`7ca1cc3`' "$(ago 7200)" $c "$(ago 150) OWNER" ''
+SUMMARY_AT=
+ROW='| 📝 **Code Review** | ⏳ **Running** | `7ca1cc3` | Manual request |'
 # No request since the head's push (it was for an earlier head): the threads fail it.
 with_msg 'unresolved Codex thread' expect failure 'threads, request before the push' '`7ca1cc3`' 2026-10-21T15:30:00Z $c "$r1" ''
 with_msg 'unresolved Codex thread' expect failure 'threads, no request' '`7ca1cc3`' $p $c '' ''

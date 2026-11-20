@@ -31,7 +31,7 @@ for the head, then an unresolved Codex thread, then the rest (an owner's fork ap
 completed review, a failed one, a stall, finished more than once, not acknowledged, waiting). A request is
 *unanswered* when the latest trusted request came at or after the head's push and no Codex receipt or review follows
 it (strictly after, to the second, as `codex-request.sh` counts them). Then the status is `pending` whatever threads
-are open: findings still posting, then stalled, then not acknowledged, else "Waiting for Codex to review …". Without
+are open: findings still posting, then a review that failed (still a `failure`, so it can be retried), then stalled, then not acknowledged, else "Waiting for Codex to review …". Without
 this, threads left by an earlier round hid a running review behind `failure`: `codex-wait.sh` returned at once, and
 `codex-request.sh` asked a second time for the same head, which spent a round (#280). The receipts and reviews are
 read only with threads open and a request for the head, so a normal run makes no extra call. Once Codex answers
@@ -265,7 +265,7 @@ learn the cap and the new round from it, instead of every caller counting first.
 The user's way past the round cap (#282). Usage: `! ~/.claude/skills/ship/codex-allow.sh <pr> [owner/repo]`, run
 by the user with `!`; the repository defaults to the one `gh` sees in the cwd. It counts the PR's rounds with
 `codex-round.sh` (next to it; a failed count exits 1 and writes nothing) and writes that count plus one to
-`<Claude home>/claude-ship/codex-allow/<owner>+<repo>-<pr>` (`CLAUDE_HOME`, else `$HOME/.claude`; the file is
+`<Claude home>/claude-ship/codex-allow/<owner>+<repo>-<pr>` (in lower case, as `codex-request.sh` reads it, since GitHub names match without case; `CLAUDE_HOME`, else `$HOME/.claude`; the file is
 written beside itself and moved into place), then prints `Allowed one more Codex round on <slug>#<pr> (cap <n>).`
 Each run grants exactly one round beyond those already used, so allowing a fifth round takes a second run after
 the fourth. A `pr` that is not digits, or a slug that is not `owner/repo` (two parts, no `.` or `..`), exits 2

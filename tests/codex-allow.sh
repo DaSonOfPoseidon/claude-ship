@@ -75,6 +75,9 @@ run 'default slug' 0 4 cwd+repo-7 7
 # Another PR has a file of its own.
 run 'another PR' 0 4 o+r-12 12 o/r
 [ "$(cat "$dir/o+r-290")" = 5 ] || { echo "FAIL: another PR changed the allowance for 290"; fail=1; }
+# GitHub names match without case, so the file name is lower case: codex-request.sh reads the same file whichever
+# spelling it is given (Codex round 1 on #292).
+run 'mixed-case slug' 0 4 o+r-13 13 O/R
 # CLAUDE_HOME moves the directory.
 CLAUDE_HOME=$tmp/ch
 export CLAUDE_HOME

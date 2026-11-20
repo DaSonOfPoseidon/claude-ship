@@ -19,7 +19,9 @@ for a in "\$@"; do
 	[ "\$prev" = --jq ] && expr=\$a
 	prev=\$a
 done
-case "\$*" in
+# GitHub matches repository names without case: the fake does too.
+args=\$(printf '%s' "\$*" | tr '[:upper:]' '[:lower:]')
+case "\$args" in
 'pr view '*)
 	# One head per call; the last one repeats.
 	head -1 "$tmp/heads"
@@ -278,6 +280,11 @@ run 'allowance 4, four rounds used' 4 0 1 o/r "$sha"
 # A larger allowance covers more rounds.
 allow o+r-1 5
 run 'allowance 5, four rounds used' 0 1 1 o/r "$sha"
+# The repository's case doesn't matter: the allowance file is named in lower case, as codex-allow.sh writes it.
+rm -f "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
+allow o+r-1 4
+cap_case
+run 'allowance 4, mixed-case slug' 0 1 1 O/R "$sha"
 # An allowance for another PR or another repo doesn't apply.
 rm -f "$tmp/home/.claude/claude-ship/codex-allow/o+r-1"
 allow o+r-2 9

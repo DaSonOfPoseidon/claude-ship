@@ -652,6 +652,12 @@ expect 0 'chmod +x skills/ship/codex-allow.sh'
 expect 0 'diff -u skills/ship/codex-allow.sh ~/.claude/skills/ship/codex-allow.sh'
 expect 0 'echo "ask the user to run codex-allow.sh"'
 expect 0 'cat ~/.claude/claude-ship/codex-allow/o+r-1'
+# ...and a syntax check only reads the script (bash -n runs nothing), so it passes; flags after the script name are its own.
+expect 0 'bash -n skills/ship/codex-allow.sh'
+expect 0 'sh -n ~/.claude/skills/ship/codex-allow.sh'
+expect 0 'bash -nv skills/ship/codex-allow.sh'
+expect 2 'bash ~/.claude/skills/ship/codex-allow.sh -n'
+expect 2 'bash -x -c ~/.claude/skills/ship/codex-allow.sh'
 expect 0 '~/.claude/skills/ship/codex-request.sh 1 o/r 1111111111111111111111111111111111111111'
 
 # --- The Write tool --------------------------------------------------------------------------------------------------

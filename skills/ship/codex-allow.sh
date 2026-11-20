@@ -4,7 +4,7 @@
 # (codex-round.sh) and records that plus one as the PR's allowance, which codex-request.sh reads as its cap. Each run
 # grants exactly one round beyond those already used; a missing or malformed file leaves the cap at 3.
 # Usage: codex-allow.sh <pr> [owner/repo]   (the repository defaults to the one gh sees in the cwd)
-# The allowance is in ${CLAUDE_HOME:-$HOME/.claude}/claude-ship/codex-allow/<owner>+<repo>-<pr>.
+# The allowance is in ${CLAUDE_HOME:-$HOME/.claude}/claude-ship/codex-allow/<owner>+<repo>-<pr> (lower case: GitHub names match without case).
 set -eu
 usage() {
 	echo "usage: codex-allow.sh <pr> [owner/repo]" >&2
@@ -42,7 +42,7 @@ case $rounds in
 esac
 cap=$((rounds + 1))
 dir=${CLAUDE_HOME:-${HOME:-}/.claude}/claude-ship/codex-allow
-file=$dir/$(printf '%s' "$slug" | tr / +)-$pr
+file=$dir/$(printf '%s' "$slug" | tr '[:upper:]/' '[:lower:]+')-$pr
 mkdir -p "$dir"
 # Written beside the file and moved into place, so codex-request.sh never reads half of it.
 tmp=$(mktemp "$dir/.allow.XXXXXX")

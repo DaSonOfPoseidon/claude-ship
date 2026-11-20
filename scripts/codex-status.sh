@@ -260,6 +260,13 @@ if [ -n "$open_request" ]; then
 		description="Codex finished $short with findings but its review never posted (stalled, no update in $((stall_secs / 60)) min); ask again with @codex review"
 	elif [ -n "$posting" ]; then
 		description="Codex finished $short with findings; waiting for its review to post"
+	elif [ -n "$failed" ] && [ -n "$fork" ]; then
+		# A confirmed failed review (#282): the request got its answer, a failure, so it can be retried.
+		state=failure
+		description="Codex can't review fork PRs (openai/codex#47577); owner: comment '$approval_hint' to approve $short"
+	elif [ -n "$failed" ]; then
+		state=failure
+		description="Codex's review of $short failed; ask for another with @codex review"
 	elif [ -n "$stalled" ]; then
 		description="Codex's review of $short stalled (no update in $((stall_secs / 60)) min, openai/codex#55890); ask again with @codex review"
 	elif [ -n "$unacked" ]; then

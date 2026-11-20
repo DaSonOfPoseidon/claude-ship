@@ -296,7 +296,8 @@ review finds a new class.
   read as a failure: `codex-wait.sh` returned at once, and `codex-request.sh` (which treats only the plain pending as "already
   asked") posted a second request for the same head, spending a round (claude-ship #280, #282). When a verdict ranks
   states, put the one that says "an answer is still to come" ahead of the ones that describe an earlier answer, and test each
-  pair in the order (open threads with and without an unanswered request, answered, and none since the push).
+  pair in the order (open threads with and without an unanswered request, answered, and none since the push). The override must not hide a state that ends the wait: a review that failed after the
+  request still reads `failure`, or a retry is refused as "already pending" and the wait never ends (Codex on claude-ship #292).
 - **A limit an agent can lift from its own environment is not a limit.** `CODEX_ROUND_CAP` raised the Codex round cap, and the
   orchestrator that hit the cap set it itself (claude-ship #280). A cap that belongs to the user is a file or setting only
   the user writes (`! codex-allow.sh`, which the gate denies Claude, under the protected `~/.claude/claude-ship/`), read

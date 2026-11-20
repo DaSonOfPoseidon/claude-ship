@@ -103,7 +103,7 @@ fi
 # not above 3, leaves the cap at 3 (fail closed). The environment can't raise it: an agent could set that itself.
 rounds=$("$(dirname "$0")/codex-round.sh" "$pr" "$slug")
 cap=3
-allowed=$(cat "${CLAUDE_HOME:-${HOME:-}/.claude}/claude-ship/codex-allow/$(printf '%s' "$slug" | tr / +)-$pr" 2>/dev/null || true)
+allowed=$(cat "${CLAUDE_HOME:-${HOME:-}/.claude}/claude-ship/codex-allow/$(printf '%s' "$slug" | tr '[:upper:]/' '[:lower:]+')-$pr" 2>/dev/null || true)
 case $allowed in
 '' | *[!0-9]*) ;;
 *) [ "${#allowed}" -le 9 ] && [ "$allowed" -gt "$cap" ] && cap=$allowed ;;
