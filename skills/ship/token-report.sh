@@ -480,7 +480,7 @@ awk -F'\t' -v summary="$summary" '
 				printf "%-18s %-20s %10s %6.1f%%\n", grole[go[i]], gmodel[go[i]], nmoney(gc[go[i]]), gtotal ? gc[go[i]] * 100 / gtotal : 0
 			printf "%-18s %-20s %10s %6.1f%%\n", "total", "", nmoney(gtotal), gtotal ? 100 : 0
 		}
-		if (unpriced) printf "left out of the cost sums: %d PR(s) with a ? cost\n", unpriced
+		if (unpriced) printf "left out of the per-PR figures below: %d PR(s) with a ? cost (their priced rows still count in the cost by role and model)\n", unpriced
 		if (!pn) print "cost per PR: no priced PR"
 		else {
 			for (i = 1; i <= pn; i++) {

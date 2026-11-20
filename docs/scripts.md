@@ -359,8 +359,9 @@ printed cents): the number of PRs with usage out of those asked; the cost by rol
 first, with each one's share of the spend (the gate's `gate <stage>` rows are roles too); the mean, median and
 max cost per PR and the five costliest PRs (ties: the lower PR number first); the mean and max peak main context;
 and the implementer's (`ship-implementer`) mean cache read per request. A PR with no usage isn't in any figure. A `?`
-cost is excluded from the sums: a `?` row from the role and model table, and a PR whose total is `?` from the
-per-PR figures, with a count of those PRs (`left out of the cost sums`); its tokens still count for the peak. A PR
+cost is excluded per row: a `?` row is left out of the role and model table and its total, and a PR whose total
+is `?` is left out of the per-PR figures (mean, median, max, top 5), with a count of those PRs (`left out of the
+per-PR figures below`). That PR's priced rows still count in the role and model table, and its tokens in the peak. A PR
 with no main row (the stderr warning below) is left out of the peak figures, since its 0 isn't a measurement.
 Tests: `tests/token-report.sh`.
 

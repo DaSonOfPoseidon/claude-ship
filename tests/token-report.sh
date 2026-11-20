@@ -1053,8 +1053,9 @@ sed -n '/^costliest/,/^peak/p' "$tmp/out" >"$tmp/top"
 peak main context: mean 892857 tokens, max 1500000 tokens' ] || { echo 'FAIL: top 5 costliest'; cat "$tmp/top"; fail=1; }
 grep -q '^cost per PR: mean \$3.57, median \$4.00, max \$6.00$' "$tmp/out" || { echo 'FAIL: mean/median of 7 PRs'; cat "$tmp/out"; fail=1; }
 
-# An unpriced row (a model with no price) makes its PR's cost ?: the PR is left out of the cost sums, and its row
-# of the role table with it, with a count of the PRs affected. Its tokens still count for the peak context.
+# An unpriced row (a model with no price) makes its PR's cost ?, and exclusion is per row (#261): a ? row is left out
+# of the role table and its total, a PR whose total is ? is left out of the per-PR figures with a count of them, and
+# the PR's priced rows still count in the role table. Its tokens still count for the peak context.
 fresh
 pr 20 'feat: a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
 pr 22 'feat: c' 2026-10-03T10:00:00Z 2026-10-03T12:00:00Z
@@ -1078,7 +1079,7 @@ Summary: usage found for 2 of 2 PRs
 role model cost share
 main claude-opus-5-5 $1.00 100.0%
 total $1.00 100.0%
-left out of the cost sums: 1 PR(s) with a ? cost
+left out of the per-PR figures below: 1 PR(s) with a ? cost (their priced rows still count in the cost by role and model)
 cost per PR: mean $1.00, median $1.00, max $1.00
 costliest PRs:
 #20 $1.00 feat: a
@@ -1095,10 +1096,46 @@ total 1 100000 0 0 0 ?
 peak main context: 100000 tokens
 
 Summary: usage found for 1 of 1 PRs
-left out of the cost sums: 1 PR(s) with a ? cost
+left out of the per-PR figures below: 1 PR(s) with a ? cost (their priced rows still count in the cost by role and model)
 cost per PR: no priced PR
 peak main context: mean 100000 tokens, max 100000 tokens
 implementer cache read: no implementer requests'
+# A PR with a priced main row and a ? subagent row: its main row counts in the role table and the grand total, the
+# per-PR figures (mean, median, max, top 5) leave the PR out, and the line says which.
+fresh
+pr 20 'feat: a' 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z
+pr 24 'feat: e' 2026-10-05T10:00:00Z 2026-10-05T12:00:00Z
+line "$D/s20.jsonl" m1 2026-10-01T10:30:00.000Z claude-opus-5-5 250000 0 0 0
+line "$D/s24.jsonl" m4 2026-10-05T10:30:00.000Z claude-opus-5-5 500000 0 0 0
+A=$D/s24/subagents/agent-mys.jsonl
+line "$A" m5 2026-10-05T10:40:00.000Z claude-mystery-1 100000 0 0 0
+meta "$A" '{"agentType":"mys"}'
+plist '20|2026-10-01T10:00:00Z|2026-10-01T12:00:00Z' '24|2026-10-05T10:00:00Z|2026-10-05T12:00:00Z'
+run --summary 20 24
+check '--summary, a PR with a priced and an unpriced row' 0 'PR #20 feat: a (2026-10-01T10:00:00 → 2026-10-01T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 250000 0 0 0 $1.00
+total 1 250000 0 0 0 $1.00
+peak main context: 250000 tokens
+
+PR #24 feat: e (2026-10-05T10:00:00 → 2026-10-05T12:00:00)
+role model requests input output cache read cache write cost
+main claude-opus-5-5 1 500000 0 0 0 $2.00
+mys claude-mystery-1 1 100000 0 0 0 ?
+total 2 600000 0 0 0 ?
+peak main context: 500000 tokens
+
+Summary: usage found for 2 of 2 PRs
+role model cost share
+main claude-opus-5-5 $3.00 100.0%
+total $3.00 100.0%
+left out of the per-PR figures below: 1 PR(s) with a ? cost (their priced rows still count in the cost by role and model)
+cost per PR: mean $1.00, median $1.00, max $1.00
+costliest PRs:
+#20 $1.00 feat: a
+peak main context: mean 375000 tokens, max 500000 tokens
+implementer cache read: no implementer requests'
+
 fresh
 pr 23 'feat: d' 2026-10-04T10:00:00Z 2026-10-04T12:00:00Z
 run --summary 23
