@@ -719,7 +719,13 @@ built-in defaults and the grammar reference. The design choices:
   text filter keeps lines this edit didn't write out (an edit elsewhere in the file), and a `new_string` that repeats an
   earlier line reports it again, on purpose. An edit may change only part of a line, so a one-line `new_string` matches
   a line that contains it, and a several-line one matches by its first line (the end of a line), middle lines (whole
-  lines) and last line (the start of a line); the whole line is then linted. A `new_string` with no text in it (a
+  lines) and last line (the start of a line); the whole line is then linted. That matching is the fallback (#289): when
+  the payload's `tool_response.structuredPatch` is a well-formed, non-empty array of hunks (`newStart` an integer >= 0,
+  `lines` strings) and each hunk writes a non-empty `+` line, the candidates are exactly those `+` lines at their numbers
+  (a ` ` or `-` line moves the number as in a unified diff; a `\` line is skipped), and they replace the diff and the
+  text filter, so a short `new_string` can't match an earlier line. Each line is checked against the file on disk first;
+  one that differs (the file changed since, or another numbering) drops the patch for the whole call. A pure-deletion hunk
+  falls back too (below). The staged and `--remote` paths never read the payload. A `new_string` with no text in it (a
   deletion) can expose a violation anywhere, so every line the diff adds (outside git, every line) is a candidate then;
   that may report an earlier uncommitted line again, which the pre-commit check would refuse anyway. Untracked files (not gitignored: an ignored file is never committed, so it
   isn't linted), a repo with no commit and files outside git are linted whole; outside git an edit keeps only the

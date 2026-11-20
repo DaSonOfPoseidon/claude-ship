@@ -1377,6 +1377,104 @@ want hook-multi 0
 hdec hook-multi block
 hreason hook-multi 'm.js:3: debug-leftover (error)'
 hctx hook-multi 'm.js:4: narration (warn)'
+# The result's structuredPatch names the lines the edit wrote (.tool_response.structuredPatch: hunks of {newStart, lines}),
+# so a short new_string no longer matches earlier lines that merely contain it (#289).
+# withpatch <json> <patch JSON>: the tool call with the tool's result attached.
+withpatch() { printf '%s' "$1" | jq -c --argjson p "$2" '.tool_response = {structuredPatch: $p}'; }
+# ebs: an uncommitted earlier line holding the short new text `a`, and the new line `a` below it.
+ebs="$dbg // a"
+fixture
+printf 'x;\ny;\n' >"$repo/p.js"
+git -C "$repo" add -A
+commit
+printf 'x;\n%s\ny;\na\n' "$ebs" >"$repo/p.js"
+pj=$(hjson Edit "$repo/p.js" "$repo" 'a' '')
+good='[{"oldStart":2,"oldLines":1,"newStart":3,"newLines":2,"lines":[" y;","+a"]}]'
+# Without the result the new text `a` matches the earlier line too (the fallback).
+hook "$pj"
+want hook-patch-none 0
+hdec hook-patch-none block
+hreason hook-patch-none 'p.js:2: debug-leftover (error)'
+# With it only the line the edit wrote is checked.
+hook "$(withpatch "$pj" "$good")"
+want hook-patch 0
+silent hook-patch
+# The same in a file git doesn't track yet.
+printf '%s\ny;\na\n' "$ebs" >"$repo/u.js"
+upj=$(hjson Edit "$repo/u.js" "$repo" 'a' '')
+hook "$upj"
+want hook-patch-untracked-none 0
+hdec hook-patch-untracked-none block
+hreason hook-patch-untracked-none 'u.js:1: debug-leftover (error)'
+hook "$(withpatch "$upj" '[{"oldStart":1,"oldLines":2,"newStart":2,"newLines":2,"lines":[" y;","+a"]}]')"
+want hook-patch-untracked 0
+silent hook-patch-untracked
+# A written line that is itself a violation is reported, at the patch's line number.
+printf 'x;\n%s\ny;\n%s\n' "$ebs" "$dbg" >"$repo/p.js"
+hook "$(withpatch "$(hjson Edit "$repo/p.js" "$repo" "$dbg" '')" '[{"oldStart":2,"oldLines":1,"newStart":3,"newLines":2,"lines":[" y;","+'"$dbg"'"]}]')"
+want hook-patch-hit 0
+hdec hook-patch-hit block
+hreason hook-patch-hit 'p.js:4: debug-leftover (error)'
+printf 'x;\n%s\ny;\na\n' "$ebs" >"$repo/p.js"
+# A stale patch (the file's line is not what the patch says) is dropped: the matching decides, as without a result.
+hook "$(withpatch "$pj" '[{"oldStart":2,"oldLines":1,"newStart":3,"newLines":2,"lines":[" y;","+b"]}]')"
+want hook-patch-stale 0
+hdec hook-patch-stale block
+hreason hook-patch-stale 'p.js:2: debug-leftover (error)'
+hook "$(withpatch "$pj" '[{"oldStart":2,"oldLines":1,"newStart":9,"newLines":2,"lines":[" y;","+a"]}]')"
+want hook-patch-beyond 0
+hdec hook-patch-beyond block
+# A malformed patch is absent: the matching decides, with no jq error and the same exit.
+for bad in '"text"' '{}' '[]' '[1]' '[{"newStart":3}]' '[{"newStart":"3","lines":["+a"]}]' '[{"newStart":-1,"lines":["+a"]}]' \
+	'[{"newStart":3.5,"lines":["+a"]}]' '[{"newStart":3,"lines":"+a"}]' '[{"newStart":3,"lines":[1]}]' '[{"newStart":3,"lines":[" y;","+a"]},null]'; do
+	hook "$(withpatch "$pj" "$bad")"
+	want hook-patch-bad 0
+	hdec hook-patch-bad block
+	hreason hook-patch-bad 'p.js:2: debug-leftover (error)'
+	[ ! -s "$tmp/err" ] || {
+		echo "FAIL (hook-patch-bad): stderr for $bad"
+		sed 's/^/  err: /' "$tmp/err"
+		fail=1
+	}
+done
+printf '%s' "$pj" | jq -c '.tool_response = "done"' >"$tmp/trs"
+hook "$(cat "$tmp/trs")"
+want hook-patch-string 0
+hdec hook-patch-string block
+# A patch that only deletes writes nothing to check by line, and a deletion can expose a violation anywhere: the matching
+# (an empty new_string means every added line) decides.
+fixture
+printf 'a;\nx;\nb;\n' >"$repo/d.js"
+git -C "$repo" add -A
+commit
+printf 'a;\nb;\n%s\n' "$dbg" >"$repo/d.js"
+hook "$(withpatch "$(hjson Edit "$repo/d.js" "$repo" '' 'x;')" '[{"oldStart":1,"oldLines":3,"newStart":1,"newLines":2,"lines":[" a;","-x;"," b;"]}]')"
+want hook-patch-delete 0
+hdec hook-patch-delete block
+hreason hook-patch-delete 'd.js:3: debug-leftover (error)'
+# replace_all: one hunk per replaced place, every written line is checked.
+fixture
+printf 'a;\nb;\na;\n' >"$repo/r.js"
+git -C "$repo" add -A
+commit
+printf '%s\nb;\n%s\n' "$dbg" "$dbg" >"$repo/r.js"
+hook "$(withpatch "$(hjson Edit "$repo/r.js" "$repo" "$dbg" 'a;')" '[{"oldStart":1,"oldLines":1,"newStart":1,"newLines":1,"lines":["-a;","+'"$dbg"'"]},{"oldStart":3,"oldLines":1,"newStart":3,"newLines":1,"lines":["-a;","+'"$dbg"'"]}]')"
+want hook-patch-replace-all 0
+hdec hook-patch-replace-all block
+hreason hook-patch-replace-all 'r.js:1: debug-leftover (error)'
+hreason hook-patch-replace-all 'r.js:3: debug-leftover (error)'
+# MultiEdit: one patch for all the edits, every written line is checked.
+fixture
+printf 'a;\nb;\n' >"$repo/m.js"
+git -C "$repo" add -A
+commit
+printf 'a2;\nb2;\n%s\n%s\n' "$dbg" "$nar" >"$repo/m.js"
+mp=$(jq -cn --arg f "$repo/m.js" --arg c "$repo" --arg x "$dbg" --arg y "$nar" '{tool_name: "MultiEdit", cwd: $c, tool_input: {file_path: $f, edits: [{old_string: "a", new_string: $x}, {old_string: "b", new_string: $y}]}, tool_response: {structuredPatch: [{oldStart: 1, oldLines: 2, newStart: 1, newLines: 4, lines: ["-a;", "-b;", "+a2;", "+b2;", ("+" + $x), ("+" + $y)]}]}}')
+hook "$mp"
+want hook-patch-multi 0
+hdec hook-patch-multi block
+hreason hook-patch-multi 'm.js:3: debug-leftover (error)'
+hctx hook-patch-multi 'm.js:4: narration (warn)'
 # A file under skip, and a lint turned off: nothing.
 printf '%s\n' "$dbg" >"$repo/x.min.js"
 hook "$(hjson Write "$repo/x.min.js" "$repo" "$dbg")"
