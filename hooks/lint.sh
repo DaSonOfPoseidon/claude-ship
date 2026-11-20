@@ -12,8 +12,8 @@
 # ${CLAUDE_HOME:-$HOME/.claude}/claude-ship/lint, and the project's .github/claude-ship/lint as it is on the default
 # branch (a branch can't weaken its own lint). The grammar is documented in hooks/lint-rules and the README.
 # `lint.sh hook` is the PostToolUse hook for Write, Edit and MultiEdit (JSON on stdin): it reports only the lines that edit
-# added, as {"decision":"block",...} for errors (warnings ride along as additionalContext) or as additionalContext for
-# warnings alone, prints nothing when the edit is clean, and always exits 0 (a failure of its own is an additionalContext
+# wrote (by the line numbers of the result's structuredPatch when it has them, else by matching the new text), as
+# {"decision":"block",...} for errors (warnings ride along as additionalContext) or as additionalContext for warnings alone, prints nothing when the edit is clean, and always exits 0 (a failure of its own is an additionalContext
 # note, never a block: the write is already done).
 # Design notes: docs/scripts.md › hooks/lint.sh.
 set -uf
@@ -94,7 +94,8 @@ if [ "$mode" = hook ]; then
 	*) hfp=$hcwd/$hfp ;;
 	esac
 	[ -f "$hfp" ] || exit 0
-	# The new text: content (Write), new_string (Edit) or each edits[].new_string (MultiEdit, read defensively), and the
+	# The fallback when the result has no usable patch (below), and the first pass either way. The new text: content (Write),
+	# new_string (Edit) or each edits[].new_string (MultiEdit, read defensively), and the
 	# old text the same way; a field of another type is skipped. An edit may change only part of a line, so each new text
 	# becomes records that say how a file line may contain it: S (a one-line text: anywhere in the line), F (the first line
 	# of several: the line's end), M (a middle line: the whole line) and L (the last line: the line's start). A text with
@@ -102,6 +103,20 @@ if [ "$mode" = hook ]; then
 	jq -r 'def recs: split("\n") as $a | if (($a | map(length) | add) // 0) == 0 then "A" elif ($a | length) == 1 then "S" + $a[0] else ("F" + $a[0]), ($a[1:-1][] | "M" + .), ("L" + $a[-1]) end;
 		[.tool_input | objects | (.content, .new_string, (.edits[]? | objects | .new_string))] | map(select(type == "string")) | .[] | recs' "$t/in" >"$t/new" 2>/dev/null || die "can't read its input as JSON"
 	jq -r '[.tool_input | objects | (.old_string, (.edits[]? | objects | .old_string))] | map(select(type == "string")) | join("\n")' "$t/in" >"$t/old" 2>/dev/null || die "can't read its input as JSON"
+	# The edit's own lines, when the result carries them: .tool_response.structuredPatch is an array of hunks
+	# {newStart, lines} whose lines start with `+` (written), ` ` (context) or `-` (removed). Each `+` line becomes a
+	# record `<line number>TAB<text>`. A value of any other shape, a hunk that writes nothing (a deletion can expose a
+	# violation anywhere, so it needs the matching) or a jq failure leaves $t/patch empty: the matching is the
+	# fallback, never "lint nothing".
+	jq -r 'def hunk: reduce .lines[] as $l ({n: .newStart, r: [], a: false};
+			($l[0:1]) as $c
+			| if $c == "+" then (.r += [{n: .n, t: $l[1:]}] | .n += 1 | if ($l | length) > 1 then .a = true else . end)
+			elif $c == "-" or $c == "\\" then .
+			else .n += 1 end);
+		(.tool_response | objects | .structuredPatch) as $p
+		| if ($p | type) == "array" and ($p | length) > 0 and all($p[]; type == "object" and (.newStart | type) == "number" and .newStart >= 0 and .newStart == (.newStart | floor) and (.lines | type) == "array" and all(.lines[]; type == "string"))
+		then [$p[] | hunk] as $h | if all($h[]; .a) then $h[] | .r[] | "\(.n)\t\(.t)" else empty end
+		else empty end' "$t/in" >"$t/patch" 2>/dev/null || : >"$t/patch"
 	hcwdp=$(cd "$hcwd" 2>/dev/null && pwd -P) || hcwdp=
 	hbase=$(basename "$hfp")
 	cd "$(dirname "$hfp")" 2>/dev/null || die "can't enter the directory of $hfp"
@@ -130,7 +145,8 @@ if [ "$mode" != rules ]; then
 			--ignore-submodules=all --src-prefix=a/ --dst-prefix=b/ "$@"
 	}
 	if [ "$mode" = hook ]; then
-		# The candidate lines are the file's lines that the new text contains (all of a line, or the part an edit changed). In
+		# Without a usable patch (see the jq above) the candidate lines are the file's lines that the new text contains (all
+		# of a line, or the part an edit changed); with one, a later step replaces them with the patch's own lines. In
 		# a repo they are the ones the diff against HEAD adds (so an earlier, uncommitted edit's lines are not reported again,
 		# unless this edit repeats them). A file git doesn't track yet (and doesn't ignore) or a repo with no commit is whole;
 		# so is a file outside git, where an edit keeps only the new_string lines that old_string lacks.
@@ -240,6 +256,49 @@ FILENAME == setf {
 }
 EOF
 		HOOK_REL=$hrel HOOK_MODE=$hmode HOOK_SET=$t/set HOOK_OLD=$t/old HOOK_NOGIT=$hnogit awk -f "$t/hook.awk" "$t/old" "$t/set" "$t/raw" >"$t/diff" || die "awk failed"
+		# With the patch's lines (see the jq above) the diff is exactly those lines, if each is still on its line in the file
+		# (the file may have changed since the edit, or the numbers follow another convention): a line that differs, or a
+		# record that is malformed, drops the patch and keeps the diff the matching made.
+		if [ -s "$t/patch" ]; then
+			cat >"$t/patch.awk" <<'EOF'
+# Checks each record `<n>TAB<text>` of the patch against line n of the file, then writes a diff of the non-empty ones.
+# Exit 1 when a record is malformed, or its line is missing or differs.
+FILENAME == pf {
+	i = index($0, "\t")
+	if (i < 2 || substr($0, 1, i - 1) !~ /^[0-9]+$/) bad = 1
+	else {
+		recs++
+		num[recs] = substr($0, 1, i - 1) + 0
+		if (num[recs] in want) bad = 1
+		txt[recs] = substr($0, i + 1)
+		want[num[recs]] = recs
+	}
+	next
+}
+(FNR in want) {
+	if ($0 != txt[want[FNR]]) bad = 1
+	seen[FNR] = 1
+}
+END {
+	if (bad || recs == 0) exit 1
+	rel = ENVIRON["HOOK_REL"]
+	for (r = 1; r <= recs; r++) {
+		if (!(num[r] in seen)) exit 1
+		if (txt[r] == "") continue
+		if (!hdr) {
+			print "diff --git a/" rel " b/" rel
+			print "+++ b/" rel
+			hdr = 1
+		}
+		print "@@ -0,0 +" num[r] ",1 @@"
+		print "+" txt[r]
+	}
+}
+EOF
+			if HOOK_REL=$hrel awk -v pf="$t/patch" -f "$t/patch.awk" "$t/patch" "$hbase" >"$t/pdiff" 2>/dev/null; then
+				cp "$t/pdiff" "$t/diff" || die "can't write a temp file"
+			fi
+		fi
 	elif [ "$mode" = staged ]; then
 		if git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1; then
 			base=HEAD
@@ -278,11 +337,8 @@ fi
 # block commits offline, and the pre-push gate is still the boundary.
 remote_got=
 remote_why=
+remote_none=
 remote_layer() {
-	command -v gh >/dev/null 2>&1 || {
-		remote_why="gh is not installed"
-		return 1
-	}
 	[ -r "$here/gate-common.sh" ] || {
 		remote_why="$here/gate-common.sh is missing"
 		return 1
@@ -303,10 +359,17 @@ remote_layer() {
 			;;
 		esac
 	done
+	# No GitHub origin to read (no origin, or one on another host): remote_none, so the caller prints no note. The fallback
+	# is the same local ref order either way, so staying quiet gives up no protection; the note is for a GitHub origin
+	# that couldn't be read. This comes before the gh check so a repo with no GitHub origin never hears about gh.
 	if [ -z "$rslug" ]; then
-		[ -n "$remote_why" ] || remote_why="origin is not a GitHub repository"
+		[ -n "$remote_why" ] || remote_none=1
 		return 1
 	fi
+	command -v gh >/dev/null 2>&1 || {
+		remote_why="gh is not installed"
+		return 1
+	}
 	case $rslug in
 	*[!A-Za-z0-9._/-]*)
 		remote_why="can't use the repository name $rslug"
@@ -356,7 +419,7 @@ if [ -n "$in_git" ]; then
 			fi
 		done
 		shown=${ref#refs/remotes/}
-		[ -z "$remote" ] || echo "lint: project rules read from ${shown:-no ref}, not GitHub: $remote_why" >&2
+		[ -z "$remote" ] || [ -n "$remote_none" ] || echo "lint: project rules read from ${shown:-no ref}, not GitHub: $remote_why" >&2
 		if [ -n "$ref" ]; then
 			listed=$(git ls-tree --full-tree --name-only "$ref" -- .github/claude-ship/lint) || die "can't read $ref"
 			if [ -n "$listed" ]; then

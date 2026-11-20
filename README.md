@@ -304,10 +304,13 @@ skip <glob> ...
 There are no inline disable comments: an exception is a path glob in a config file.
 
 **Claude's edits.** A `PostToolUse` hook (`lint.sh hook`, registered in the drop-in and in the Install section's snippet) runs
-after every Write, Edit and MultiEdit and reports only the lines that edit added: a file's lines the diff against `HEAD` adds
-(the whole file when git doesn't track it yet, or outside git, where an edit counts the `new_string` lines that `old_string`
-lacks), and only those that contain the edit's new text (also when the edit changed just part of a line), so earlier
-edits aren't reported again. An edit that deletes text can expose a violation anywhere, so it checks every added line. An error-level hit comes
+after every Write, Edit and MultiEdit and reports only the lines that edit wrote, so earlier edits aren't reported again.
+It takes them by line number from the edit's result (`tool_response.structuredPatch`, the `+` lines of its hunks, each
+checked against the file). A result without line ranges (an older Claude Code, another tool, an unreadable value, a file
+that changed since) falls back to matching the new text: a file's lines the diff against `HEAD` adds (the whole file when git
+doesn't track it yet, or outside git, where an edit counts the `new_string` lines that `old_string` lacks) that contain the
+edit's new text, so then a short new text can match an earlier line that contains it too. An edit that deletes text can expose a
+violation anywhere, so it checks every added line. An error-level hit comes
 back to Claude as feedback to act on (`"decision": "block"` with the hits and "Fix these now: the pre-commit check refuses
 a commit that adds them"; the file is already written), a warning as extra context, and a clean edit prints nothing. It always exits 0: the write has
 happened, and a failure of its own becomes a note, never a block. Files git ignores and files under `skip` are not
@@ -319,8 +322,8 @@ commit and lists the hits; warnings print and the commit goes on; the repo's own
 own commits are never linted. Fix the hits; if one is wrong, commit it yourself with `! git commit --no-verify` (the gate
 denies Claude's own `--no-verify` and `-n`), or add an exclude (for example `debug-leftover off scripts/*`) to the default branch's
 `.github/claude-ship/lint` or to `~/.claude/claude-ship/lint`. `--remote` reads the project file from GitHub's default branch,
-not a local ref, so `git remote set-head` or `update-ref` can't point it at the branch; if GitHub can't be read (offline, no
-`gh`, a non-GitHub origin) it uses the local refs and says so on stderr. During a merge, cherry-pick or revert only
+not a local ref, so `git remote set-head` or `update-ref` can't point it at the branch; if a GitHub origin can't be read (offline, no
+`gh`, a 5xx) it uses the local refs and says so on stderr; a repo with no origin or a non-GitHub origin uses them with no note. During a merge, cherry-pick or revert only
 `conflict-marker` is checked, since the other side's code isn't Claude's. A missing or broken `lint.sh` refuses the commit.
 
 **Default rules.** `hooks/lint-rules` ships these (`~/.claude/hooks/lint.sh rules <path>` shows what applies to a path).
