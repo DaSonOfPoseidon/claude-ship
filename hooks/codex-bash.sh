@@ -9,7 +9,7 @@
 #   ~/.claude/skills/ship/codex-request.sh <pr> <owner/repo> <full sha>
 #   [CODEX_WAIT_SECS=<n>] ~/.claude/skills/ship/codex-wait.sh <pr> [owner/repo]
 #   ~/.claude/skills/ship/codex-findings.sh <pr> [owner/repo]
-#   [CI_WAIT_POLLS=<n>] ~/.claude/skills/ship/ci-failures.sh <pr> [owner/repo [--wait]]
+#   [CI_WAIT_POLLS=<1-10>] ~/.claude/skills/ship/ci-failures.sh <pr> [owner/repo [--wait]]
 #   ~/.claude/skills/ship/codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json [owner/repo]
 #   gh pr view <pr> ... | gh pr checks <pr> ...    without --web
 # and a Write of $HOME/.claude/state/claude-ship/triage-<owner>+<repo>-<n>.json (a fixed directory, so no checkout
@@ -29,7 +29,7 @@ bg=
 
 deny() {
 	echo "ship-codex may only run ~/.claude/skills/ship/codex-round.sh <pr> [owner/repo], codex-request.sh <pr> <owner/repo> <sha>," \
-		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr> [owner/repo], codex-findings.sh <pr> [owner/repo], [CI_WAIT_POLLS=<n>] ci-failures.sh <pr> [owner/repo [--wait]], codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json [owner/repo]," \
+		"[CODEX_WAIT_SECS=<n>] codex-wait.sh <pr> [owner/repo], codex-findings.sh <pr> [owner/repo], [CI_WAIT_POLLS=<1-10>] ci-failures.sh <pr> [owner/repo [--wait]], codex-triage.sh <pr> ~/.claude/state/claude-ship/triage-<owner>+<repo>-<pr>.json [owner/repo]," \
 		"gh pr view|checks <pr> (no --web), as one plain command, and Write that triage file ($1)." >&2
 	if [ -n "$poll" ]; then
 		echo "To wait for codex-wait.sh: don't poll: run codex-wait.sh again in the foreground, and never end your turn before it returns a result." >&2
