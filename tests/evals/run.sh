@@ -264,8 +264,7 @@ run_case() (
 	scoped=
 	pr=
 	threads=
-	filed=$work/filed
-	: >"$filed"
+	filed_list=
 	branch_stat=
 	changed=$(git diff --name-only --no-renames "$range") || broken "couldn't list the changed files"
 	kind=$(kind_of "$changed")

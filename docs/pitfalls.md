@@ -314,3 +314,8 @@ review finds a new class.
   `updated_at` (claude-ship #111). Read each endpoint once and derive every value from it. Keep the filters that decide
   trust in gh's `--jq` (gojq), not in the local jq, whose regex engine differs; pass a free-text field through the
   one read as JSON, so its newlines can't forge a line.
+
+- **A filter on a value the repo can change, with an empty result taken as an answer.** The gate's read of the open P3
+  issues filtered on `review:p3`, but the repo variable `CLAUDE_P3_LABELS` renames that label, so the read succeeded with
+  `[]` and the empty list replaced the file's entries in the prompt (claude-ship #112). Derive the filter from the same
+  setting the writer uses, and when that setting can't be read, treat the whole read as failed so the fallback applies.
