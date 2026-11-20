@@ -1043,5 +1043,144 @@ has nochattr "chattr or lsattr not found"
 	fail=1
 }
 
+# Files main has dropped (claude-ship #108): a reinstall deletes the hooks/ and agents/ship-*.md files that main once had and
+# no longer has, from main's history, and nothing else. main starts with old-hook.sh and ship-old.md; the next commits rename
+# old-hook.sh (a real rename), delete ship-old.md and three more
+# hooks, and re-add one of those.
+sg() { command git -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@"; }
+st=$tmp/stale-src
+mkdir -p "$st/scripts"
+cp -R "$root/agents" "$root/hooks" "$root/skills" "$root/settings" "$root/install.sh" "$root/README.md" "$st/"
+cp "$root/scripts/codex-status.sh" "$tmp/src/scripts/fetch-shfmt.sh" "$st/scripts/"
+printf 'echo an old hook\n' >"$st/hooks/old-hook.sh"
+for n in readded linked dirlike; do printf 'echo %s v1\n' "$n" >"$st/hooks/$n.sh"; done
+printf 'an old agent\n' >"$st/agents/ship-old.md"
+sg init -q "$st"
+sg -C "$st" add -A
+sg -C "$st" commit -qm one
+sg clone -q --bare "$st" "$tmp/stale-origin.git"
+sg clone -q "$tmp/stale-origin.git" "$tmp/stale-checkout"
+stale_co=$tmp/stale-checkout
+stale_install() {
+	# stale_install <name> <dest>: one install of $stale_co (output in $tmp/out, status in $rc).
+	CLAUDE_HOME=$2 GIT_CONFIG_GLOBAL="$tmp/gitconfig-$1" sh "$stale_co/install.sh" >"$tmp/out" 2>&1
+	rc=$?
+}
+# Four destinations that hold the user's own files next to what main deploys. The first install goes into a destination
+# that has no claude-ship files yet: there is nothing to remove, and no warning.
+sdm=$tmp/stale-main
+sdl=$tmp/stale-nolog
+sds=$tmp/stale-shallow-dest
+sdk=$tmp/stale-stuck
+for d in "$sdm" "$sdl" "$sds" "$sdk"; do
+	fresh_dest "$d"
+	mkdir -p "$d/hooks" "$d/agents"
+	printf 'mine\n' >"$d/hooks/no-attribution.py"
+	printf 'mine\n' >"$d/agents/my-agent.md"
+	printf 'mine\n' >"$d/agents/ship-mine.md"
+	stale_install "stale-first-${d##*/}" "$d"
+	expect "stale-first-${d##*/}" 0 0
+	lacks "stale-first-${d##*/}" "Removed"
+done
+want_flagged stale-first "$sdm/hooks/old-hook.sh"
+want_flagged stale-first "$sdm/agents/ship-old.md"
+# Main drops them: old-hook.sh is renamed, ship-old.md and three hooks are deleted, one of those comes back with new content.
+sg -C "$st" mv hooks/old-hook.sh hooks/new-hook.sh
+sg -C "$st" rm -q hooks/readded.sh hooks/linked.sh hooks/dirlike.sh agents/ship-old.md
+sg -C "$st" commit -qm two
+printf 'echo readded v2\n' >"$st/hooks/readded.sh"
+sg -C "$st" add -A
+sg -C "$st" commit -qm three
+sg -C "$st" push -q "$tmp/stale-origin.git" main
+sg clone -q --depth 1 "file://$tmp/stale-origin.git" "$tmp/stale-shallow"
+# In the main destination, two of the dropped names are a symlink and a directory now: never followed, never deleted.
+: >"$tmp/stale-target"
+rm -f "$sdm/hooks/linked.sh" "$sdm/hooks/dirlike.sh"
+ln -s "$tmp/stale-target" "$sdm/hooks/linked.sh"
+mkdir "$sdm/hooks/dirlike.sh"
+: >"$sdm/hooks/dirlike.sh/keep"
+: >"$STUB_STATE/log"
+stale_install stale-main "$sdm"
+expect stale-main 0 0
+for f in hooks/old-hook.sh agents/ship-old.md; do
+	[ ! -e "$sdm/$f" ] || {
+		echo "FAIL: stale-main: $f wasn't removed"
+		fail=1
+	}
+	has stale-main "Removed $sdm/$f (no longer in origin/main)."
+	# Lifted before it was deleted, and not flagged again after.
+	grep -qE "^-i $sdm/$f \|" "$STUB_STATE/log" || {
+		echo "FAIL: stale-main: the flag on $f wasn't lifted"
+		fail=1
+	}
+	grep -qE "^\+i $sdm/$f \|" "$STUB_STATE/log" && {
+		echo "FAIL: stale-main: flagged $f after it was removed"
+		fail=1
+	}
+done
+[ -f "$sdm/hooks/new-hook.sh" ] && [ "$(cat "$sdm/hooks/readded.sh")" = 'echo readded v2' ] || {
+	echo "FAIL: stale-main: the renamed hook wasn't installed, or the re-added one wasn't updated"
+	fail=1
+}
+want_flagged stale-main "$sdm/hooks/new-hook.sh"
+has stale-main "Set the immutable flag on the installed gate"
+for f in hooks/no-attribution.py agents/my-agent.md agents/ship-mine.md hooks/dirlike.sh/keep; do
+	[ -e "$sdm/$f" ] || {
+		echo "FAIL: stale-main: the user's $f was removed"
+		fail=1
+	}
+done
+[ -L "$sdm/hooks/linked.sh" ] && [ -f "$tmp/stale-target" ] || {
+	echo "FAIL: stale-main: the symlink was removed or followed"
+	fail=1
+}
+for f in no-attribution.py my-agent.md ship-mine.md linked.sh dirlike.sh readded.sh; do
+	lacks stale-main "Removed $sdm/hooks/$f"
+	lacks stale-main "Removed $sdm/agents/$f"
+done
+grep -qE "no-attribution|my-agent|ship-mine" "$STUB_STATE/log" && {
+	echo "FAIL: stale-main: chattr touched the user's own file"
+	fail=1
+}
+# A history that can't be read: the install goes on, deletes nothing and says so.
+nolog="$tmp/nolog-bin"
+mkdir -p "$nolog"
+printf '#!/bin/sh\nfor a; do [ "$a" = log ] && exit 1; done\nexec %s "$@"\n' "$(command -v git)" >"$nolog/git"
+chmod +x "$nolog/git"
+saved_path=$PATH
+PATH=$nolog:$PATH
+stale_install stale-nolog "$sdl"
+PATH=$saved_path
+expect stale-nolog 0 1
+has stale-nolog "install: warning: couldn't read origin/main's history, so files main has dropped weren't removed."
+lacks stale-nolog "Removed"
+[ -f "$sdl/hooks/old-hook.sh" ] && [ -f "$sdl/agents/ship-old.md" ] && [ -f "$sdl/hooks/new-hook.sh" ] || {
+	echo "FAIL: stale-nolog: a file was removed, or the new one wasn't installed"
+	fail=1
+}
+# A shallow clone has no history of the old names: fewer deletions, not a failure.
+stale_co=$tmp/stale-shallow
+stale_install stale-shallow "$sds"
+stale_co=$tmp/stale-checkout
+expect stale-shallow 0 0
+lacks stale-shallow "Removed"
+[ -f "$sds/hooks/old-hook.sh" ] && [ -f "$sds/hooks/new-hook.sh" ] || {
+	echo "FAIL: stale-shallow: a file was removed, or the new one wasn't installed"
+	fail=1
+}
+# A flag that can't be lifted on a stale file stops the install before anything is written or removed.
+STUB_CHATTR_FAIL=1
+export STUB_CHATTR_FAIL
+stale_install stale-stuck "$sdk"
+unset STUB_CHATTR_FAIL
+expect stale-stuck 1
+has stale-stuck "still immutable"
+has stale-stuck "nothing was installed"
+lacks stale-stuck "Removed"
+[ -f "$sdk/hooks/old-hook.sh" ] && [ -f "$sdk/agents/ship-old.md" ] && [ ! -e "$sdk/hooks/new-hook.sh" ] || {
+	echo "FAIL: stale-stuck: something was removed or installed although a flag couldn't be lifted"
+	fail=1
+}
+
 [ "$fail" = 0 ] && echo "install: ok"
 exit "$fail"

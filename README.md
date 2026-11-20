@@ -134,7 +134,7 @@ same section.
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, fetches shfmt into ~/.claude/bin, registers the gate in /etc/claude-code/managed-settings.d, and sets the immutable flag (chattr +i) on all of it
+./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, fetches shfmt into ~/.claude/bin, registers the gate in /etc/claude-code/managed-settings.d, removes the hooks and ship agents main has dropped, and sets the immutable flag (chattr +i) on all of it
 ```
 
 `./install.sh` also sets git's global `core.hooksPath` to `~/.claude/git-hooks` when it is unset (any other value is left

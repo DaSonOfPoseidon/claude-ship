@@ -749,6 +749,19 @@ fetch that fails, or a file that doesn't run, prints `couldn't install shfmt`, e
 was installed stays as it was: a new gate without shfmt would block every Bash call (#189). Otherwise the verified
 file is moved into `$dest/bin/shfmt` along with the rest.
 
+It also removes what main has dropped (#108). `hooks/` and `agents/ship-*.md` are copied file by file, so a hook or ship
+agent that main renamed or deleted would stay installed, flagged and selectable. A file is stale when its path
+(`hooks/<name>` or `agents/ship-<name>.md`, nothing deeper) is in `origin/main`'s history (`git log --no-renames --name-only`,
+so no `diff.renames` setting hides a name), is not in main's tree now, and is a regular file in the target directory (a
+symlink or a directory is left alone). Stale files get the same flag lift as the rest and are deleted after the copy
+succeeded, one `Removed <path> (no longer in origin/main).` line each; a failed `rm` stops the install. There is no manifest on
+purpose: a file the user could edit must not decide what a root install deletes. The history is already read from
+`origin/main`, and it errs toward keeping files: a shallow clone, or a path git prints quoted, gives fewer names. If the
+`git log` itself fails, nothing is removed and the install warns `couldn't read origin/main's history, so files main has
+dropped weren't removed.` (exit unchanged). The user's own files (`hooks/no-attribution.py`, `agents/my-agent.md`, a `ship-`
+name main never had) are never touched; one that shares a name main once had would already have been overwritten by an
+earlier install.
+
 ## `scripts/fetch-shfmt.sh`
 
 `scripts/fetch-shfmt.sh <dest-file>` installs shfmt v3.14.1, the shell parser the gate's tamper check uses (#135),

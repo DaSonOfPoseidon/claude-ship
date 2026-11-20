@@ -74,7 +74,7 @@ or anything CI already checks (shellcheck, actionlint).
   (`! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>`; the gate denies Claude that command), prunes the gate's old state
   (`! ~/.claude/hooks/review-gate.sh --prune [--dry-run] [days]`; denied the same way), lifts the immutable flag on the installed files
   (`! sudo chattr -i <path>`), or edits the installed gate, its state, the lint config (`~/.claude/claude-ship/`) or the settings that register it. `install.sh`
-  deploys only `origin/main`; it lifts the flag itself while it reinstalls and sets it again.
+  deploys only `origin/main` and removes the hooks and `ship-*` agents main has dropped; it lifts the flag itself while it reinstalls and sets it again.
 - Scripts are POSIX `sh` (the gate runs under `/bin/sh`) and use POSIX utilities (`awk`, `sed`, `grep`, `sort`,
   `cut`, `tr`, `head`, `tail`, `cp`, `printf`, …), plus `git`, `gh`, `jq`, and the widely supported extras already
   in use: `grep -o`, `grep -m`, `grep -A` (tests), `sed -E`, `head -N` and `tail -N` (POSIX is `-n N`), `mktemp`,
