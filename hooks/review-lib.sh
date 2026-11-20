@@ -93,11 +93,10 @@ path_matches() {
 
 # never_skipped <path>: succeeds for the paths a skip rule can't leave out: the files that steer the gate or Claude from the
 # repo (AGENTS.md and CLAUDE.md anywhere, .claude/, .github/, and the context files the gate reads: docs/pitfalls.md,
-# docs/false-positives.md, the contributing guides), and any path git prints C-quoted (it starts with a double quote), which
-# an exclude pathspec can't name.
+# docs/false-positives.md, the contributing guides).
 never_skipped() {
 	case $1 in
-	'"'* | AGENTS.md | */AGENTS.md | CLAUDE.md | */CLAUDE.md | .claude/* | .github/*) return 0 ;;
+	AGENTS.md | */AGENTS.md | CLAUDE.md | */CLAUDE.md | .claude/* | .github/*) return 0 ;;
 	docs/pitfalls.md | docs/false-positives.md | docs/CONTRIBUTING.md | CONTRIBUTING.md) return 0 ;;
 	esac
 	return 1
@@ -137,6 +136,8 @@ path_list() {
 # $skipped (the paths a skip rule leaves out), $path_section (one prompt line per instruction rule that matches a reviewed
 # path) and $skipped_line (the prompt line naming the skipped paths). With no rules, $reviewed is $changed and the rest is
 # empty. A path is skipped when any matching rule is `skip`; every matching instruction rule counts for the paths that stay.
+# When any changed path is one git prints C-quoted (it starts with a double quote: a control character or a non-ASCII byte in
+# its name), nothing is skipped: diff_range's pathspecs can't name such a path, so it would drop out of the diff.
 apply_path_rules() {
 	reviewed=
 	skipped=
@@ -148,6 +149,10 @@ apply_path_rules() {
 	fi
 	ap_nl='
 '
+	ap_quoted=
+	case "$ap_nl$changed" in
+	*"$ap_nl\""*) ap_quoted=1 ;;
+	esac
 	ap_rest=$changed
 	while [ -n "$ap_rest" ]; do
 		ap_path=${ap_rest%%"$ap_nl"*}
@@ -157,7 +162,7 @@ apply_path_rules() {
 		esac
 		[ -n "$ap_path" ] || continue
 		ap_skip=
-		if [ -n "${path_skip:-}" ] && ! never_skipped "$ap_path"; then
+		if [ -n "${path_skip:-}" ] && [ -z "$ap_quoted" ] && ! never_skipped "$ap_path"; then
 			ap_rules=$path_rules
 			while [ -n "$ap_rules" ] && [ -z "$ap_skip" ]; do
 				ap_rule=${ap_rules%%"$ap_nl"*}
@@ -196,18 +201,23 @@ apply_path_rules() {
 	fi
 }
 
-# diff_range <range>: git diff <range> without the paths in $skipped (an exclude pathspec for each, literal and from the top
-# of the repo, whatever directory the gate runs in). With nothing skipped it is plain `git diff <range>`.
+# diff_range <range>: git diff <range> limited to the paths in $reviewed when $skipped isn't empty (a literal pathspec from the
+# top of the repo for each, whatever directory the gate runs in). With nothing skipped it is plain `git diff <range>`. It
+# lists what stays and doesn't exclude what goes, because a literal pathspec also matches everything under that name:
+# excluding a deleted file `cache` would hide a reviewed `cache/AGENTS.md`, while including a reviewed `cache` can only show
+# a skipped `cache/x` too (more review, never less). An empty $reviewed with something skipped fails: no pathspec would
+# mean the whole diff.
 diff_range() {
 	if [ -z "${skipped:-}" ]; then
 		git diff "$1"
 		return
 	fi
+	[ -n "${reviewed:-}" ] || return 1
 	dr_nl='
 '
 	dr_range=$1
-	set -- ':/'
-	dr_rest=$skipped
+	set --
+	dr_rest=$reviewed
 	while [ -n "$dr_rest" ]; do
 		dr_path=${dr_rest%%"$dr_nl"*}
 		case $dr_rest in
@@ -215,7 +225,7 @@ diff_range() {
 		*) dr_rest= ;;
 		esac
 		[ -n "$dr_path" ] || continue
-		set -- "$@" ":(exclude,top,literal)$dr_path"
+		set -- "$@" ":(top,literal)$dr_path"
 	done
 	git diff "$dr_range" -- "$@"
 }

@@ -372,7 +372,7 @@ lacksd never-skip 'other.sh'
 lacksd never-skip 'docs/other.md'
 has never-skip 'Left out of this diff by a skip rule (not reviewed): docs/other.md, other.sh.'
 
-# A path git prints C-quoted (a tab in its name) is never skipped: the exclude pathspec can't name it.
+# A path git prints C-quoted (a tab in its name) can't be named by a pathspec, so with one in the diff nothing is skipped.
 fixture
 rules_on_origin <<'EOT'
 ### Path rules
@@ -385,7 +385,8 @@ printf 'x\n' >"$repo/$(printf 'tab\tname.sh')"
 change plain.sh
 review quoted
 hasd quoted 'tab\tname.sh'
-lacksd quoted 'plain.sh'
+hasd quoted 'diff --git a/plain.sh'
+lacks quoted 'Left out of this diff'
 
 # Upstream has no AGENTS.md and the branch adds one with a skip rule: the branch can't skip its own files, so the
 # reviewer runs on the full diff, with the note. Its instruction rules still apply.
@@ -462,6 +463,28 @@ hasd odd-names 'diff --git a/ok.sh'
 lacksd odd-names '.lock'
 has odd-names 'a b.lock'
 has odd-names 'c[1].lock'
+
+# A skipped path's name is not a prefix that hides reviewed paths: a deleted file `cache` is skipped, and `cache/x.sh`, added
+# in its place, stays in the diff (git's literal pathspec for `cache` would also match everything under it).
+fixture
+echo data >"$repo/cache"
+git -C "$repo" add -A
+g commit -q -m cache
+rules_on_origin <<'EOT'
+### Path rules
+
+```
+cache  skip
+```
+EOT
+git -C "$repo" rm -q cache
+mkdir "$repo/cache"
+echo 'echo x' >"$repo/cache/x.sh"
+git -C "$repo" add -A
+g commit -q -m "cache is a directory now"
+review skip-prefix
+hasd skip-prefix 'diff --git a/cache/x.sh'
+has skip-prefix 'Left out of this diff by a skip rule (not reviewed): cache.'
 
 # The gate run from a subdirectory leaves the same paths out, and still shows the rest of the repo.
 fixture

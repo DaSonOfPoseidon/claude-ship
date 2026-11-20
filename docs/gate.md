@@ -692,15 +692,18 @@ the rules that match the reviewed files into the prompt, and `skip` rules leave 
   with one line per instruction rule that matches a reviewed path (the first 10 paths, then `and <n> more`), and, when
   something was skipped, a line naming the skipped paths (the first 20). With no subsection the prompt is the same as
   before.
-- **Skipped paths** are left out of the finder's and the verifier's diff (an exclude pathspec for each, literal and from
-  the repo's top, so a name with a space or `[` works from any directory). `$changed`, the commit list and the branch
+- **Skipped paths** are left out of the finder's and the verifier's diff by listing the paths that stay (a literal
+  pathspec for each, from the repo's top, so a name with a space or `[` works from any directory). It lists what stays
+  rather than excluding what goes because a literal pathspec also matches everything under that name: excluding a
+  deleted file `cache` would hide a reviewed `cache/x.sh`. The cost is the other way round and safe: a reviewed `cache`
+  shows a skipped `cache/y.lock` too. `$changed`, the commit list and the branch
   stat are unchanged. The review's kind (docs or code) is judged on the paths that stay. When nothing stays, the gate
   prints `every changed file matches a skip rule` and passes, like an empty diff. The patch-id pass cache is still keyed
   on the whole branch diff.
 - **Never skipped**, whatever a rule says (instructions still apply to them): any `AGENTS.md` or `CLAUDE.md`, `.claude/*`,
-  `.github/*`, `docs/pitfalls.md`, `docs/false-positives.md`, `docs/CONTRIBUTING.md`, `CONTRIBUTING.md`, and any path
-  git prints C-quoted. These steer the gate (the rules, the checklist, the pitfalls, the false positives) or Claude from
-  the repo, so a skip rule that hid them would let a change to what steers the review go unreviewed.
+  `.github/*`, `docs/pitfalls.md`, `docs/false-positives.md`, `docs/CONTRIBUTING.md` and `CONTRIBUTING.md`. These steer the gate (the rules, the checklist, the pitfalls, the false positives) or Claude from
+  the repo, so a skip rule that hid them would let a change to what steers the review go unreviewed. And when any
+  changed path is one git prints C-quoted, a pathspec can't name it, so nothing is skipped in that review.
 - **`skip` comes from the default branch only.** When the rules fall back to the branch's own `AGENTS.md` (the
   bootstrap PR), the gate ignores its `skip` rules, with a note on stderr, because the branch wrote them itself and could
   skip the files it wants unreviewed. Its instruction rules still apply: they only add scrutiny.
@@ -723,7 +726,9 @@ what the gate's kind check says of the diff), `expect` (the findings a reviewer 
 severity}` with `line` in the changed file; `[]` for a clean case), `source` (the pitfall, issue or PR it comes from)
 and an optional `commit` (the subject the reviewer sees in the commit list). The runner makes a detached worktree at
 `base`, commits the diff, and builds the prompt with the gate's own code (`hooks/review-lib.sh`, which the gate sources
-too), reading the rules, the checklist, the pitfalls and the false positives from `base`, not from the working tree. It then runs the gate's
+too), reading the rules, the checklist, the pitfalls and the false positives from `base`, not from the working tree. The
+`### Path rules` in those rules apply as in the gate (the rules section, the skipped files left out of the diff, the kind judged
+on the files that stay). It then runs the gate's
 stages with the gate's flags: the Sonnet finder, then the Haiku verifier when the finder found something (a docs case
 gets the Haiku claims check and no verifier). Cost rows go to a temporary file, not to
 `~/.claude/state/review-costs.jsonl`.
