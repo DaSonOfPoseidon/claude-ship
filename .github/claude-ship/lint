@@ -40,3 +40,12 @@ ban pitfall-status-stale warn .github/workflows/codex-*.yml 'cancel-in-progress:
 # pitfall: Anyone can post a comment, and a completion doesn't say which request it answers. -> none: Describes trusted comment authors and request pairing; no single line shows it.
 # pitfall: A completion marker can arrive before the content it announces. -> none: Describes waiting for content behind a marker; no single line shows it.
 # pitfall: Local refs are state the agent controls. -> none: origin/main is used correctly across the tree; no narrow signature.
+ban pitfall-current-checkout warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_./-])gh[[:space:]]+pr[[:space:]]+(view|checks|merge|diff|ready|review|comment|edit|close|reopen)([[:space:]]+-[^[:space:];&|()<>"'']*)*([[:space:]]*($|[;&)])|[[:space:]]+[|])' unless '^[[:space:]]*#' -- Name the PR's number (gh pr <cmd> <pr>): without one, gh acts on the current checkout's branch, which may not be the PR's.
+# pitfall: A squash-merge commit has no local `.pass`, so "merged" has to be read from the remote. -> none: Describes reading remote state; no literal signature on one line.
+# pitfall: Another service's job can die without saying so. -> none: Describes waiting on an external job; no single-line signature.
+# pitfall: An agent that reports before its background job finishes hands over a wrong result. -> none: Describes agent turn-ending and background waits; no single-line signature.
+# pitfall: A new script is committed without its execute bit. -> none: File mode is not in an added line's text.
+# pitfall: A step that reads the current checkout assumes it's the PR's. -> pitfall-current-checkout
+# pitfall: A doc of an allowlist can read backwards. -> none: Describes prose wording of a list; no single-line code signature.
+# pitfall: A checker that stops at `--` misses options after it. -> none: A break at `--` is also correct parsing; no safe signature.
+# pitfall: A hook's allow is a grant, not the absence of a deny. -> none: Describes allow-list design for hooks; no single-line signature.

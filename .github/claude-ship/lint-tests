@@ -72,3 +72,14 @@ hit pitfall-status-stale .github/workflows/codex-review.yml cancel-in-progress: 
 miss pitfall-status-stale .github/workflows/codex-status.yml cancel-in-progress: false
 miss pitfall-status-stale .github/workflows/codex-status.yml # cancel-in-progress: true
 miss pitfall-status-stale .github/workflows/ci.yml cancel-in-progress: true
+
+# pitfall-current-checkout: gh pr with a subcommand that acts on a PR and no number before its flags or end; a pipe after
+# a space counts, a quoted mention, a numbered or placeholder call, a comment, and tests/ are not.
+hit pitfall-current-checkout hooks/x.sh gh pr checks --watch
+hit pitfall-current-checkout scripts/x.sh gh pr merge --squash --delete-branch
+hit pitfall-current-checkout hooks/x.sh gh pr view | jq .title
+miss pitfall-current-checkout tests/x.sh gh pr checks --watch
+miss pitfall-current-checkout hooks/x.sh gh pr checks "$pr" --watch
+miss pitfall-current-checkout hooks/x.sh gh pr view 12 --json headRefOid
+miss pitfall-current-checkout hooks/x.sh # gh pr checks --watch
+miss pitfall-current-checkout hooks/x.sh echo "run gh pr view --web"
