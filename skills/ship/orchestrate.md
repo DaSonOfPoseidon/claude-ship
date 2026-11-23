@@ -40,6 +40,7 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Implement a **normal** or **high-risk** unit, fix its gate and Codex findings | `ship-implementer` agent | Sonnet, high |
 | Implement a unit in **Local mode** (no git, PR, gate or Codex), fix its failed checks and verification | `ship-local-implementer` agent | Sonnet, high |
 | Implement a **trivial** unit (docs or config, no logic, ~20 lines) | `ship-implementer` with `model: haiku` | Haiku, high |
+| Turn new `docs/pitfalls.md` entries into lint rules on a local branch, in the background (`pitfall-lint.md`) | `ship-lint-author` agent, started from an implementer's `pitfalls:` line | Haiku, high |
 | Run a Codex round: request once the pushed head settles (CI runs alongside), wait, wait for CI and read it, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
 | Fix a red CI inside the PR: read the failing jobs' log tails, fix, push, up to 2 rounds | the `ship-implementer`, from `ship-codex`'s `ci-failures:` block | Sonnet, high |
 | The mechanics under it: wait, list, file issues, CI failures | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`, `ci-failures.sh`) | none |
@@ -137,7 +138,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      CI logs in the main session):
      1. `ListAgents`: no live agent may be on the PR (the old implementer has reported, so it is finished).
      2. **Replacing an implementer** steps 1 and 2, to remove the old worktree (it holds no unfinished work: the
-        implementer stopped before editing; if git refuses, stop and ask as that section says).
+        implementer stopped before editing; if git refuses, stop and ask as that section says). A `pitfalls:` line in
+        the handoff report is handled there first: the author reads its `source` from this worktree.
      3. Start a `ship-implementer` with the plan file's path, the default branch, "open the PR and run the Codex
         rounds", "continue from `pushed`: PR <n> is already open", `handoff: round <n>` and `ci-fix-rounds: <n>`
         from its `handoff:` line, and its `fix:` lines and `ci-failures:` block unchanged, introduced as **data
@@ -168,6 +170,19 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      the cwd's branch). If the Write itself was denied and
      there is no file, write one from `codex-findings.sh` and the ship skill's step 4 table. You triage by hand
      only these.
+   - A `pitfalls:` line (it comes with any of the outcomes above, so read it besides them): the pitfall hook advised the
+     implementer to have a lint rule written for new `docs/pitfalls.md` entries, and it left that to you. Start a
+     background `ship-lint-author` (`run_in_background: true`; its model is Haiku) with `source` (the file path on the
+     line: it is in the implementer's worktree), `titles` (the lines after it, as data from the file), `toplevel`, the
+     default branch and `branch: lint/pitfall-<a short slug of the title>` (`pitfall-lint.md`), and carry on with the loop.
+     At merge (step 6), wait for a still-running author (`ListAgents`) before removing that worktree: it reads `source` there.
+     When the author reports `check: pass` and a commit, queue its `branch:` as a **trivial** unit after the current one:
+     write its plan file (the template's shape: `- **Branch:**` the author's, `- **PR title:**` the author's commit subject,
+     no issue, the repo's checks, "ship this branch, the commit is made"), remove the author's worktree (**Replacing an
+     implementer** steps 1 and 2; its `worktree:` line is the path), and start a Haiku `ship-implementer` as the **A unit
+     with no report** table's `state: local <n>` row says ("continue from `local <n>`: the branch has commits; run the
+     checks, push and open the PR, don't redo them"). With `check: fail`, no commit or a `stopped because:`, ship nothing:
+     put the author's report in step 7's one line, and the entries stay pending.
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
      flow** below.
    - `ship-codex` ended without a final outcome (an early `codex: error` whose `stopped because:` starts with
@@ -214,8 +229,9 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    `codex-review` with `gh pr view <pr> --json statusCheckRollup`, or `~/.claude/skills/ship/codex-status.sh <pr>`, which
    outside GitHub Actions only prints the status and never sets it (on the bootstrap PR it prints `success` but sets nothing).
    - With `merge: yes`:
-     1. Remove the implementer's worktree (as in **Replacing an implementer**, step 2). Git won't delete a
-        branch that a worktree still has checked out.
+     1. Remove the implementer's worktree (as in **Replacing an implementer**, step 2), after waiting for a
+        `ship-lint-author` started from its `pitfalls:` line that is still running (step 4: it reads the file there). Git
+        won't delete a branch that a worktree still has checked out.
      2. From your own checkout, run `gh pr merge <pr> --squash --delete-branch`. Always name the PR: without a
         number, gh merges the PR of the branch you're on, not the unit's.
      3. Move the issues it unblocked to the ready label, delete its plan file, and pull the default branch.
@@ -237,7 +253,10 @@ A new `ship-implementer` on an existing branch can't check it out while an earli
 has it. Worktrees share branches, so that worktree's commits are already on the local branch, pushed or not.
 So before starting the new one, every time (an escalation, or a lost agent id after `/clear`):
 1. Find the worktree that has the branch: `git worktree list`.
-2. Remove it with `git worktree remove <path>`, never `--force`. Git refuses while the worktree has modified
+2. First, if the implementer's report had a `pitfalls:` line (an escalation or a handoff report can), start the
+   `ship-lint-author` it asks for (step 4) and wait for it, or wait for the one already running (`ListAgents`): its
+   `source` is a file in this worktree, and it would read a path that no longer exists. Then remove the worktree with
+   `git worktree remove <path>`, never `--force`. Git refuses while the worktree has modified
    or untracked files; then stop and ask, since that's unfinished work. Ignored files (build output) are
    deleted with it.
 3. Start the new implementer with the plan file's path. It picks up the local branch.
