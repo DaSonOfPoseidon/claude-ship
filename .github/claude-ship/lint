@@ -59,3 +59,13 @@ ban pitfall-escape-path-separator warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_.-])
 # pitfall: A filter by branch name also matches other repositories' branches of that name. -> pitfall-filter-by-branch-name
 # pitfall: A doc must not widen an opt-in beyond its marker. -> none: Describes prose in docs; no code line carries the bug.
 # pitfall: A shell runs a trap only after its foreground command returns. -> none: TERM traps are common and correct; the bug is the command's shape.
+ban pitfall-wait-all-checks warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_./-])gh[[:space:]].*pr[[:space:]]+checks[[:space:]].*--watch([^[:alnum:]_-]|$)' unless '^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*gh[[:space:]]|^([^'']*''[^'']*'')*[^'']*''[^'']*gh[[:space:]]' -- Don't wait with gh pr checks --watch: it waits on every check, codex-review included, and that one waits on this job. Poll gh pr checks --json name,bucket and wait on the checks named.
+ban pitfall-config-by-grep warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_])grep[[:space:]].*(gitconfig|git/config|config\.worktree)' unless '^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*grep[[:space:]]|^([^'']*''[^'']*'')*[^'']*''[^'']*grep[[:space:]]' -- Ask git for the value it applies (git config --get, with -C DIR or --global --includes): grep reads only the file it names, not the includes or worktree config git follows.
+# pitfall: An error path must keep what the success path records. -> none: Describes an error path's bookkeeping; no literal signature on one line.
+# pitfall: A function's status is its last command's, including a group that writes a file. -> none: Group exit status is behaviour across lines; no one-line signature.
+# pitfall: Text the PR's own code writes is untrusted, and it travels. -> none: Describes untrusted PR text passed on; no literal signature.
+# pitfall: A wait on "all checks" includes the check that waits on you. -> pitfall-wait-all-checks
+# pitfall: An error message matched as text can be a different error. -> none: 'not found' matches are correct after a gh check; too broad.
+# pitfall: A repo-local setting can silently turn a global layer off. -> none: Describes a repo setting overriding a global layer; no one-line signature.
+# pitfall: A setting read file by file misses the precedence git applies. -> pitfall-config-by-grep
+# pitfall: A notice about a setting must read the file the loop reads. -> none: Describes which file a notice reads; no literal signature.

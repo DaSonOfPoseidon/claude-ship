@@ -104,3 +104,23 @@ miss pitfall-escape-path-separator hooks/x.sh tr '/' '\n' <<<"$path"
 miss pitfall-escape-path-separator hooks/x.sh # tr '/' '_'
 miss pitfall-escape-path-separator hooks/x.sh echo "use tr '/' '_' only in tests"
 miss pitfall-escape-path-separator hooks/x.sh tr '/' ' ' <<<"$path"
+
+# pitfall-wait-all-checks: gh pr checks with --watch, which waits on every check; a whole-line comment, a quoted mention, a
+# call that reads the checks with --json, and tests/ are not.
+hit pitfall-wait-all-checks hooks/x.sh gh pr checks --watch
+hit pitfall-wait-all-checks scripts/x.sh gh -R o/r pr checks 12 --watch --interval 30
+miss pitfall-wait-all-checks tests/x.sh gh pr checks 12 --watch
+miss pitfall-wait-all-checks hooks/x.sh # gh pr checks 12 --watch
+miss pitfall-wait-all-checks hooks/x.sh gh pr checks 12 --json name,bucket
+miss pitfall-wait-all-checks hooks/x.sh echo "waiting with gh pr checks --watch can hang"
+
+# pitfall-config-by-grep: a grep on a line that names a git config file (gitconfig, .git/config, config.worktree); git
+# config --get, a whole-line comment, a quoted mention, a path outside the globs, and tests/ are not.
+hit pitfall-config-by-grep hooks/x.sh grep -q hooksPath ~/.gitconfig
+hit pitfall-config-by-grep scripts/x.sh if grep -q '^\[core' "$r/.git/config"; then
+hit pitfall-config-by-grep hooks/x.sh v=$(grep hooksPath "$HOME/.config/git/config")
+miss pitfall-config-by-grep tests/x.sh grep -q hooksPath ~/.gitconfig
+miss pitfall-config-by-grep hooks/x.sh # grep hooksPath ~/.gitconfig
+miss pitfall-config-by-grep hooks/x.sh git config --get core.hooksPath
+miss pitfall-config-by-grep hooks/x.sh echo "grep does not see include.path in ~/.gitconfig"
+miss pitfall-config-by-grep docs/x.md grep -q hooksPath ~/.gitconfig
