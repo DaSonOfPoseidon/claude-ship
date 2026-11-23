@@ -1556,6 +1556,257 @@ hdec hook-no-rules none
 hctx hook-no-rules 'lint hook:'
 unset script
 
+# --- check: the checkout's project rules against their cases (.github/claude-ship/lint-tests) and the tree ---
+# CBAN: a rule for .txt files only, since the scan reads the project file and lint-tests too.
+CBAN="ban t error *.txt 'BAN' -- remove BAN"
+# proj <text>: the checkout's own project file (staged). cases <line>...: its lint-tests, one argument per line (staged).
+proj() {
+	mkdir -p "$repo/.github/claude-ship"
+	printf '%s\n' "$1" >"$repo/.github/claude-ship/lint"
+	git -C "$repo" add -A
+}
+cases() {
+	mkdir -p "$repo/.github/claude-ship"
+	printf '%s\n' "$@" >"$repo/.github/claude-ship/lint-tests"
+	git -C "$repo" add -A
+}
+
+fixture
+proj "$CBAN"
+cases 'hit t a.txt has BAN here'
+lint check
+want check-hit 0
+has check-hit 'cases: 1 passed, 0 failed'
+lacks check-hit 'case FAIL'
+
+fixture
+proj "$CBAN"
+cases 'miss t a.txt has BAN here'
+lint check
+want check-miss-fails 1
+has check-miss-fails 'case FAIL 1: miss t a.txt has BAN here'
+has check-miss-fails 'cases: 0 passed, 1 failed'
+
+fixture
+proj "$CBAN"
+cases '# a comment' '' 'hit t a.txt nothing to see' 'miss t a.txt nothing to see' 'hit t a.txt BAN'
+lint check
+want check-hit-fails 1
+has check-hit-fails 'case FAIL 3: hit t a.txt nothing to see'
+lacks check-hit-fails 'case FAIL 4'
+lacks check-hit-fails 'case FAIL 5'
+has check-hit-fails 'cases: 2 passed, 1 failed'
+
+# The scan lists the tree's hits (committed lines too, not only added ones) and its exit status stays 0.
+fixture
+proj "$CBAN"
+put a.txt 'BAN one\nok\nBAN two\n'
+put sub/b.txt 'BAN three\n'
+commit
+lint check
+want check-scan 0
+has check-scan 'scan:'
+has check-scan 'a.txt:1: t (error): remove BAN'
+has check-scan 'a.txt:3: t (error)'
+has check-scan 'sub/b.txt:1: t (error)'
+has check-scan 'scan t: 3 hit(s)'
+lacks check-scan 'cases:'
+lacks check-scan 'a.txt:2:'
+
+# No hit anywhere: say so.
+fixture
+proj "$CBAN"
+lint check
+want check-scan-clean 0
+has check-scan-clean 'scan: no hits'
+
+# The checkout's project file, not the default branch's: a rule only the checkout has is read, and one only origin/main
+# has is not. staged still reads the default branch.
+fixture
+set_default_project "ban other error * 'OTHER' -- other"
+proj "$CBAN"
+cases 'hit t a.txt BAN' 'hit other a.txt OTHER'
+put a.txt 'BAN\nOTHER\n'
+lint check
+want check-checkout 1
+has check-checkout 'a.txt:1: t (error)'
+lacks check-checkout 'a.txt:2:'
+has check-checkout 'case FAIL 2: hit other a.txt OTHER'
+has check-checkout 'cases: 1 passed, 1 failed'
+lint staged
+want check-staged-default 1
+has check-staged-default 'a.txt:2: other (error)'
+lacks check-staged-default 'a.txt:1:'
+
+# Layers 1 and 2 still apply, and the project's line wins over the install's.
+fixture
+install "ban inst error *.txt 'INST' -- inst
+ban t warn *.txt 'BAN' -- install says warn"
+proj "$CBAN"
+cases 'hit inst a.txt INST' 'hit t a.txt BAN' 'hit debug-leftover x.py breakpoint()'
+put a.txt 'BAN\n'
+lint check
+want check-layers 0
+has check-layers 'cases: 3 passed, 0 failed'
+has check-layers 'a.txt:1: t (error)'
+
+# The built-in rules run with no project file, and with no lint-tests file there is only the scan.
+fixture
+cases 'hit debug-leftover x.py breakpoint()' 'miss debug-leftover x.py # breakpoint()' 'hit placeholder x.sh # TO''DO: implement this' 'miss placeholder x.sh echo TO''DO implement' 'hit new-suppression x.py x = 1  # no''qa' 'miss new-suppression x.md # no''qa'
+lint check
+want check-builtin 0
+has check-builtin 'cases: 6 passed, 0 failed'
+fixture
+put x.py 'breakpoint()\n'
+lint check
+want check-no-tests 0
+has check-no-tests 'x.py:1: debug-leftover (error)'
+has check-no-tests 'scan debug-leftover: 1 hit(s)'
+lacks check-no-tests 'cases:'
+
+# A case path under a skip line can't run: it is a failure, not a pass.
+fixture
+proj "$CBAN
+skip *.lock"
+cases 'hit t a.lock BAN' 'miss t a.lock ok'
+lint check
+want check-skipped 1
+has check-skipped 'case FAIL 1: hit t a.lock BAN'
+has check-skipped 'case FAIL 2: miss t a.lock ok'
+has check-skipped 'unrunnable'
+
+# The text is the rest of the line, literal: leading spaces, quotes, a backslash, a tab, a #.
+fixture
+proj "ban sp error * '^  x' -- m
+ban q error * '[''\"\\\\]' -- m
+ban tab error * 'a[^ ]b' -- m
+ban hash error * '# BAN' -- m
+ban cm error * comment 'MARK' -- m"
+{
+	printf '%s\n' 'hit sp a.txt   x' 'miss sp a.txt  x' 'miss sp a.txt x'
+	printf '%s\n' "hit q a.txt it's" 'hit q a.txt say "hi"' 'hit q a.txt a\b' 'miss q a.txt plain'
+	printf 'hit tab a.txt a\tb\nmiss tab a.txt a b\n'
+	printf '%s\n' 'hit hash a.sh # BAN' 'hit cm a.sh # MARK' 'hit cm a.sh x # MARK' 'miss cm a.sh MARK' 'miss cm a.txt # MARK' 'hit cm a.js // MARK'
+} >"$repo/.github/claude-ship/lint-tests"
+git -C "$repo" add -A
+lint check
+want check-text 0
+has check-text 'cases: 15 passed, 0 failed'
+lacks check-text 'case FAIL'
+
+# The coded rules take cases too, and each case is a file of its own: the opener of one case doesn't make the bare
+# ======= of the next a marker.
+fixture
+mkdir -p "$repo/.github/claude-ship"
+{
+	printf 'hit conflict-marker a.txt %s HEAD\n' "$(mk LLLLLLL)"
+	printf 'miss conflict-marker a.txt %s\n' "$(mk EEEEEEE)"
+	printf 'hit invisible-char a.txt a\342\200\213b\n'
+	printf 'miss invisible-char a.txt ab\n'
+} >"$repo/.github/claude-ship/lint-tests"
+git -C "$repo" add -A
+lint check
+want check-coded 0
+has check-coded 'cases: 4 passed, 0 failed'
+
+# Malformed cases, an undefined rule and a malformed config line all fail it.
+fixture
+proj "$CBAN"
+cases 'maybe t a.txt x' 'hit' 'hit t' 'hit t a.txt' 'hit  t a.txt x' 'hit no-such-rule a.txt x' 'hit t a.txt BAN'
+lint check
+want check-malformed 1
+has check-malformed 'case FAIL 1: maybe t a.txt x'
+has check-malformed 'case FAIL 2: hit'
+has check-malformed 'case FAIL 3: hit t'
+has check-malformed 'case FAIL 4: hit t a.txt'
+has check-malformed 'case FAIL 5: hit  t a.txt x'
+has check-malformed 'case FAIL 6: hit no-such-rule a.txt x'
+has check-malformed 'malformed'
+has check-malformed 'defines no rule no-such-rule'
+lacks check-malformed 'case FAIL 7'
+has check-malformed 'cases: 1 passed, 6 failed'
+fixture
+proj "$CBAN
+ban broken error"
+lint check
+want check-bad-config 1
+ehas check-bad-config 'ignored'
+fixture
+proj "$CBAN
+ban bad error * '(' -- m"
+cases 'hit t a.txt BAN'
+lint check
+want check-bad-regex 1
+ehas check-bad-regex 'invalid regular expression'
+has check-bad-regex 'cases: 1 passed, 0 failed'
+
+# --only limits the cases and the scan to that rule; an unknown rule fails.
+fixture
+proj "$CBAN
+ban u error *.txt 'UUU' -- u"
+cases 'hit t a.txt BAN' 'miss u a.txt UUU'
+put a.txt 'BAN\nUUU\n'
+lint check
+want check-only-all 1
+has check-only-all 'case FAIL 2: miss u a.txt UUU'
+has check-only-all 'a.txt:2: u (error)'
+lint check --only t
+want check-only 0
+has check-only 'cases: 1 passed, 0 failed'
+has check-only 'a.txt:1: t (error)'
+lacks check-only 'a.txt:2:'
+lacks check-only 'scan u:'
+lint check --only u
+want check-only-u 1
+has check-only-u 'case FAIL 2: miss u a.txt UUU'
+lacks check-only-u 'a.txt:1:'
+lint check --only no-such-rule
+want check-only-unknown 1
+ehas check-only-unknown 'no-such-rule'
+
+# An empty repo with no tracked file, a binary tracked file, a subdirectory and no repo at all.
+n=$((n + 1))
+repo=$tmp/repo$n
+git init -q -b main "$repo"
+lint check
+want check-empty-repo 0
+has check-empty-repo 'scan: no hits'
+fixture
+proj "$CBAN"
+cases 'hit t a.txt BAN'
+put bin.dat 'BAN\000BAN\n'
+put a.txt 'ok\n'
+lint check
+want check-binary 0
+lacks check-binary 'bin.dat'
+has check-binary 'scan: no hits'
+mkdir -p "$repo/sub/dir"
+(cd "$repo/sub/dir" && sh "$lint_sh" check) >"$tmp/out" 2>"$tmp/err"
+rc=$?
+want check-subdir 0
+has check-subdir 'cases: 1 passed, 0 failed'
+(cd "$tmp/outside" && sh "$lint_sh" check) >"$tmp/out" 2>"$tmp/err"
+rc=$?
+want check-no-repo 2
+ehas check-no-repo 'not in a git repository'
+
+# Usage: --remote is staged's, and a stray argument is an error.
+lint check --remote
+want usage-check-remote 2
+lint check extra
+want usage-check-extra 2
+lint check --only
+want usage-check-only-missing 2
+lint check --only 'a b'
+want usage-check-only-space 2
+
+# This repo's own cases against its own project file: CI enforces them.
+(cd "$root" && sh "$lint_sh" check) >"$tmp/out" 2>"$tmp/err"
+rc=$?
+want own-check 0
+has own-check 'cases:'
+lacks own-check 'case FAIL'
+
 # --- portability: the same checks under the other awks that are installed ---
 portable() {
 	name=$1
@@ -1584,6 +1835,15 @@ ban br error * 'a(' -- x"
 	lacks "awk-$name" 'i.txt:2:'
 	ehas "awk-$name" 'invalid regular expression'
 	has "awk-$name" 'lint: 4 error(s), 0 warning(s)'
+	# check runs the cases and the scan under it too (the invalid regex above is a malformed config line: exit 1).
+	mkdir -p "$repo/.github/claude-ship"
+	printf '%s\n' 'hit t a.py BAN' 'miss t a.py BAN OK' 'hit c a.py x = 1  # MARK' 'miss c a.py MARK' >"$repo/.github/claude-ship/lint-tests"
+	PATH=$tmp/awk-$name:$PATH lint check
+	want "awk-$name-check" 1
+	has "awk-$name-check" 'cases: 4 passed, 0 failed'
+	has "awk-$name-check" 'a.py:1: t (error)'
+	has "awk-$name-check" 'scan t: 1 hit(s)'
+	ehas "awk-$name-check" 'invalid regular expression'
 	# hook mode runs two awk programs of its own (the candidate lines, then the hits).
 	printf 'x;\n%s\n' "$dbg" >"$repo/h.js"
 	PATH=$tmp/awk-$name:$PATH hook "$(hjson Write "$repo/h.js" "$repo" "$(printf 'x;\n%s\n' "$dbg")")"
