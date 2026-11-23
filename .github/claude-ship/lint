@@ -32,3 +32,11 @@ ban pitfall-status-stale warn .github/workflows/codex-*.yml 'cancel-in-progress:
 # pitfall: A list of what's dangerous misses what nobody listed; list what's allowed. -> none: Describes allowlist design for checks; no single added line shows it.
 # pitfall: A parser that returns nothing for input it doesn't recognize fails open. -> none: Describes parser failure modes; no single added line shows it.
 # pitfall: A status computed from events goes stale when its inputs change some other way. -> pitfall-status-stale
+# pitfall: A cached verdict outlives the inputs that produced it. -> none: Cache-key contents are design; the one git patch-id call is correct code.
+# pitfall: A hook sees the whole command at once, but each step runs in the state of its own moment. -> none: Describes step ordering across a command; no single added line shows it.
+# pitfall: A path is compared as text before it is resolved. -> none: Describes resolving paths before comparing; no literal signature on one line.
+# pitfall: A permission that looks like it belongs to one step may serve others. -> none: Describes permissions shared by several API calls; no single line shows it.
+# pitfall: Another tool's output can leave out a field you match on. -> none: Describes a blank output field's meaning; no single added line shows it.
+# pitfall: Anyone can post a comment, and a completion doesn't say which request it answers. -> none: Describes trusted comment authors and request pairing; no single line shows it.
+# pitfall: A completion marker can arrive before the content it announces. -> none: Describes waiting for content behind a marker; no single line shows it.
+# pitfall: Local refs are state the agent controls. -> none: origin/main is used correctly across the tree; no narrow signature.
