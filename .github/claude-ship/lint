@@ -77,3 +77,4 @@ ban pitfall-config-by-grep warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_])grep[[:sp
 # pitfall: A filter on a value the repo can change, with an empty result taken as an answer. -> none: Literal label filters are common; the bug needs the label's source.
 # pitfall: A cleanup keyed on one record misses what that record no longer points to. -> none: Describes a cleanup's coverage across records; no single-line signature.
 # pitfall: `git status --porcelain` does not list ignored files. -> none: Plain status is correct for tracked changes; the sweep reads --ignored.
+# pitfall: A script that both computes and publishes a value publishes under the wrong identity when run by hand. -> none: Publish guard is on other lines; a lone statuses call is correct.
