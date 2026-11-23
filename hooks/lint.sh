@@ -861,9 +861,9 @@ function hit(rule, level, msg, text,   sp) {
 	if (only != "" && rule != only) return
 	if (rule in here) return
 	here[rule] = 1
-	# cases mode only notes that the rule reported on the case's line (its number is ln).
+	# cases mode only notes that the rule reported on the case (its key is ck).
 	if (m == "cases") {
-		chit[ln, rule] = 1
+		chit[ck, rule] = 1
 		return
 	}
 	if (m == "check") {
@@ -885,10 +885,10 @@ function is_open(text) {
 	return substr(text, 1, 7) == "<<<<<<<" && (length(text) == 7 || substr(text, 8, 1) == " ")
 }
 
-# openkey: what has_open is keyed by. Each case is a file of its own (its line number tells them apart); a real diff's key
+# openkey: what has_open is keyed by. Each case is a file of its own (its key ck tells them apart); a real diff's key
 # is the path.
 function openkey() {
-	return (m == "cases") ? path SUBSEP ln : path
+	return (m == "cases") ? path SUBSEP ck : path
 }
 
 function added(text,   a, k, idx, target, e, rest) {
@@ -899,7 +899,7 @@ function added(text,   a, k, idx, target, e, rest) {
 		return
 	}
 	if (skipped) return
-	if (m == "cases") cran[ln] = 1
+	if (m == "cases") cran[ck] = 1
 	split("", here)
 	if (lvl_cm != "off") {
 		a = substr(text, 1, 8)
@@ -987,8 +987,10 @@ function difline(   c, h, parts, np, o, w) {
 # --- cases (check mode) ---
 # caseline: $0 is one line of lint-tests, `hit|miss <rule> <path> <text>`: blank and `#` lines are skipped, the fields
 # are separated by single spaces and the text is the rest of the line, literal. A well-formed case becomes the
-# synthetic -U0 diff of a file with that one added line, run through difline() as git's own output would be, with the
-# case's line number as the hunk's line (hit() and cran[] are keyed by it). A malformed line is recorded in pass 2.
+# synthetic -U0 diff of a file with that one added line, run through difline() as git's own output would be. The hunk
+# is at line 1, since each case is a file of its own (a leading byte order mark is ordinary there), and the cases are
+# told apart by ck, their count so far in this pass (hit() and cran[] are keyed by it, not by the line in lint-tests).
+# A malformed line is recorded in pass 2.
 function caseline(   line, t, kind, rule, cpth, text, rest, i, why) {
 	line = $0
 	sub(/\r$/, "", line)
@@ -1024,9 +1026,11 @@ function caseline(   line, t, kind, rule, cpth, text, rest, i, why) {
 		}
 	}
 	if (only != "" && why == "" && rule != only) return
+	ck++
 	if (pass == 2) {
 		cn++
 		cnum[cn] = FNR
+		ccid[cn] = ck
 		clinetxt[cn] = line
 		ckind[cn] = kind
 		crule[cn] = rule
@@ -1035,7 +1039,7 @@ function caseline(   line, t, kind, rule, cpth, text, rest, i, why) {
 	if (why != "") return
 	$0 = "+++ b/" cpth
 	difline()
-	$0 = "@@ -0,0 +" FNR " @@"
+	$0 = "@@ -0,0 +1 @@"
 	difline()
 	$0 = "+" text
 	difline()
@@ -1047,9 +1051,9 @@ function report_cases(   k, why, np, nf, shown) {
 		why = cwhy[k]
 		if (why != "") why = "malformed: " why
 		else if (!(crule[k] in rseen)) why = "the config defines no rule " crule[k]
-		else if (!cran[cnum[k]]) why = "unrunnable: the path is skipped by a skip line or can't be linted"
-		else if (ckind[k] == "hit" && !chit[cnum[k], crule[k]]) why = "the rule did not report on it"
-		else if (ckind[k] == "miss" && chit[cnum[k], crule[k]]) why = "the rule reported on it"
+		else if (!cran[ccid[k]]) why = "unrunnable: the path is skipped by a skip line or can't be linted"
+		else if (ckind[k] == "hit" && !chit[ccid[k], crule[k]]) why = "the rule did not report on it"
+		else if (ckind[k] == "miss" && chit[ccid[k], crule[k]]) why = "the rule reported on it"
 		if (why == "") {
 			np++
 			continue
@@ -1116,6 +1120,7 @@ BEGIN {
 	p2 = (FILENAME == d1) ? 1 : 2
 	if (p2 != pass) {
 		pass = p2
+		ck = 0
 		rem_old = 0
 		rem_new = 0
 		path = ""

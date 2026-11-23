@@ -699,10 +699,11 @@ built-in defaults and the grammar reference. The design choices:
   `staged`, `diff` or `hook`, which keep the invariant that a branch can't weaken its own lint. Layers 1 and 2 are
   the same. It runs awk twice. The first run (`LINT_MODE=cases`) reads `lint-tests` twice in place of a diff, as the
   two passes of a diff: `caseline` turns each `hit|miss <rule> <path> <text>` line into the synthetic `-U0` diff
-  `+++ b/<path>`, `@@ -0,0 +<n> @@`, `+<text>` (n is the case's line number) and feeds it to `difline`, so `begin_file`,
+  `+++ b/<path>`, `@@ -0,0 +1 @@`, `+<text>` and feeds it to `difline`, so `begin_file`,
   `added` and `hit` (globs, `skip`, comment detection, the `unless` of a ban) are the code a commit goes through.
-  `hit()` records that the rule reported on line n instead of printing. Each case is a file of its own, so the opener of
-  one case doesn't make the next `=======` a marker (`openkey`). A case that never reached the rules (its path is under
+  `hit()` records that the rule reported on the case instead of printing. Each case is a file of its own, at line 1 (so a
+  leading byte order mark is ordinary wherever the case sits in `lint-tests`) and keyed by its count in the pass, not by
+  its line in `lint-tests`: the opener of one case doesn't make the next `=======` a marker (`openkey`). A case that never reached the rules (its path is under
   a `skip`) is unrunnable and fails, not passes. The second run (`LINT_MODE=check`) lints `git diff -U0` of the empty
   tree against the working tree (no second ref), so every line of every tracked file is added: untracked files aren't
   scanned, binary files have no `+` lines, and an empty repo has nothing to scan (`scan: no hits`; the cases still run, so

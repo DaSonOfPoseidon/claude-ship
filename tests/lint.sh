@@ -1709,6 +1709,21 @@ lint check
 want check-coded 0
 has check-coded 'cases: 4 passed, 0 failed'
 
+# A case is a file of its own, wherever it sits in lint-tests: a leading BOM is ordinary after comments and other cases too,
+# and a second BOM on the line isn't.
+fixture
+mkdir -p "$repo/.github/claude-ship"
+{
+	printf '# a comment first\n\n'
+	printf 'hit invisible-char a.txt a\342\200\213b\n'
+	printf 'miss invisible-char a.txt \357\273\277hello\n'
+	printf 'hit invisible-char a.txt \357\273\277he\357\273\277llo\n'
+} >"$repo/.github/claude-ship/lint-tests"
+git -C "$repo" add -A
+lint check
+want check-bom-case 0
+has check-bom-case 'cases: 3 passed, 0 failed'
+
 # Malformed cases, an undefined rule and a malformed config line all fail it.
 fixture
 proj "$CBAN"
