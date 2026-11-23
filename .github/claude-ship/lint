@@ -69,3 +69,11 @@ ban pitfall-config-by-grep warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_])grep[[:sp
 # pitfall: A repo-local setting can silently turn a global layer off. -> none: Describes a repo setting overriding a global layer; no one-line signature.
 # pitfall: A setting read file by file misses the precedence git applies. -> pitfall-config-by-grep
 # pitfall: A notice about a setting must read the file the loop reads. -> none: Describes which file a notice reads; no literal signature.
+# pitfall: A flag matched as a word of a command line can be another option's argument. -> none: Checker design; the grep -P case is already gnu-grep-p.
+# pitfall: A verdict checked first hides a later state. -> none: Order of verdict checks across lines; no single-line signature.
+# pitfall: A limit an agent can lift from its own environment is not a limit. -> none: Who may set a cap is design; env-var limits are often correct.
+# pitfall: A deny matched on a file's name also blocks the work done on that file. -> none: Describes a deny's match target; no literal one-line signature.
+# pitfall: Reading the same API endpoint twice in one run. -> none: Needs two lines compared; gh api calls are routine.
+# pitfall: A filter on a value the repo can change, with an empty result taken as an answer. -> none: Literal label filters are common; the bug needs the label's source.
+# pitfall: A cleanup keyed on one record misses what that record no longer points to. -> none: Describes a cleanup's coverage across records; no single-line signature.
+# pitfall: `git status --porcelain` does not list ignored files. -> none: Plain status is correct for tracked changes; the sweep reads --ignored.
