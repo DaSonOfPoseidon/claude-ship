@@ -53,6 +53,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 4. Create `docs/pitfalls.md` if it doesn't exist, with the title `# Pitfalls` and this intro: "Classes of
    bug that reviews have caught here. Check every change against them, and add an entry when a review
    finds a new class." AGENTS.md's Known pitfalls section links to it, and the gate shows it to reviewers.
+   If it already exists with entries, offer the user once, after the bootstrap PR merges, a backfill that turns the entries
+   that have a literal signature into lint rules (`pitfall-lint.md` › Backfill); don't start it unasked.
    Also create `docs/false-positives.md` with the title `# False positives` and this intro: "Findings
    reviews raised here that were judged wrong. Each entry is one narrow pattern, why it's fine, and where it
    came up. The gate shows this file to its reviewers. Never add a whole class of bug." The gate shows the
@@ -85,7 +87,8 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
      ask for the reason if it isn't clear, and add an entry for the finding to `docs/false-positives.md` in the
      next push (one narrow pattern, why it's fine, where it came up).
    - When a blocking finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in
-     the same push: the class, what to check, and where it bit (PR or issue).
+     the same push: the class, what to check, and where it bit (PR or issue). The `pitfall-lint.sh` hook then asks for a
+     background `ship-lint-author` for the new entry; follow `pitfall-lint.md`, without stopping this task.
    - The gate files confirmed P3s as issues itself. Don't fix them in this PR.
 
 ## 3. Request the Codex round
@@ -161,7 +164,8 @@ right-hand column.
 - **File an issue:** reply on the thread with the issue's link, then resolve it. The issue is filed with
   `~/.claude/hooks/p3-issue.sh`, which applies the repo's labels and milestone the same way the gate does for
   its P3s.
-- When a finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in the same push.
+- When a finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in the same push. The
+  `pitfall-lint.sh` hook may then ask for a background `ship-lint-author` (`pitfall-lint.md`).
 
 **Apply the outcomes in one call.** Write the triage to a JSON file in your scratchpad with the Write tool:
 `[{"thread": "<id>", "outcome": "not-valid" | "issue" | "fixed" | "resolve", "reply": "<text>", "issue":

@@ -578,6 +578,34 @@ the titles on a `pitfalls:` line of its report; ship the author's `branch:` as i
 (`skills/ship/pitfall-lint.md`). A payload that isn't an object, a field of another type, a session id with other than id
 characters, no `jq`, `REVIEW_GATE_INNER` set, any git or gh failure: no output, exit 0.
 
+## `agents/ship-lint-author.md` and `skills/ship/pitfall-lint.md`
+
+What the hook's advice asks for (claude-ship #313). The agent is Haiku (`effort: high`) with `isolation: worktree` and the tools
+Read, Write, Edit, Bash, Grep and Glob, and `tests/install.sh` checks that frontmatter and that the agent is deployed. Its
+inputs are the ones the advice names: `source` (the pitfalls file's absolute path: a new entry may exist only in the session's
+checkout, so the author never reads its own worktree's copy), `titles` (marked as data from the file), `branch`, the default
+branch with its base ref, and `toplevel`.
+
+- **Why a worktree off the default branch.** The author's commit is a PR of its own, so it can't ride on the task's branch, and
+  the lint reads the project file from the default branch, so a rule counts only once merged. A branch that already exists
+  locally (a backfill's second batch) is switched to and never reset; a branch another worktree holds is a stop, which is why
+  the backfill removes each finished author's worktree before the next one starts.
+- **When a rule fits.** Only a literal signature on a single added line that correct code rarely contains; behavioural entries
+  are the majority and get `none: <reason>`, and a doubtful one gets `none` as well, because a rule that fires on correct code
+  costs more than a missed one. A rule is `warn`: an `error` rule with a false positive would block every Claude commit through
+  the pre-commit stub, so a batch that wants one stops and asks.
+- **How it is proved.** `lint.sh check --only <id>` (the cases, then the scan of the whole tracked tree). The scan reaches
+  `docs/` and `lint-tests`, which quote the signatures, so a rule's globs must exclude them; more than 3 hits on correct code is
+  too broad. After 3 failed attempts the rule and all its cases are removed (a case for an undefined rule fails the whole
+  check) and the ledger line says `none: no rule passed its cases (<why>)`. A last full `lint.sh check` must exit 0, and each
+  title's ledger line is matched as an exact line, since a title that differs by a character stays pending.
+- **Commit.** One, with the ledger lines even when every title is `none` (so the entries stop being pending), never pushed. The
+  agent edits only `.github/claude-ship/lint` and `.github/claude-ship/lint-tests`.
+- **Who starts it.** The session that got the hook's advice, in the background, and ships the branch after its task; an
+  orchestrated `ship-implementer` reports a `pitfalls:` line instead and the orchestrator starts the author and queues its
+  branch as a trivial unit (`orchestrate.md` step 4). The backfill (`pitfall-lint.md`) runs authors one after the other, 8
+  titles each, on `lint/pitfall-backfill`, until `pitfall-lint.sh pending` prints nothing.
+
 ## `hooks/explorer-bash.sh`
 
 A PreToolUse hook in `agents/ship-explorer.md`'s frontmatter (claude-ship #68). The explorer reads issue and PR

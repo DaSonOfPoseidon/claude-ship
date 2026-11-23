@@ -32,6 +32,7 @@ the rest, one PR at a time (claude-ship #66):
 | Questions about the code, for the plan and the implementer's orientation (its Bash is held to read-only `git` and `gh` by `hooks/explorer-bash.sh`) | `agents/ship-explorer.md` | Haiku, medium |
 | Implementing a unit, fixing its gate and Codex findings, opening the PR | `agents/ship-implementer.md` | Sonnet, high; Haiku for trivial units |
 | Implementing a unit in local mode (no git, PR, gate or Codex; it never commits) | `agents/ship-local-implementer.md` | Sonnet, high |
+| Turning new (or, in a backfill, existing) `docs/pitfalls.md` entries into `warn`-level lint rules with cases, on a local branch in its own worktree that it never pushes (`skills/ship/pitfall-lint.md`) | `agents/ship-lint-author.md` | Haiku, high |
 | Running each Codex round for the implementer: request once the pushed head settles (CI runs alongside), wait, wait for CI and read it (a red CI goes back to the implementer, with the failing jobs' log tails, next to the findings), findings, the rule-decided issues and resolves (its Bash and Write are held to the ship scripts and one triage file by `hooks/codex-bash.sh`) | `agents/ship-codex.md` | Haiku, medium |
 | The mechanics under it: waiting, listing findings, filing issues | the ship scripts | none |
 
@@ -390,6 +391,18 @@ Write, Edit and MultiEdit. When one changes the toplevel `docs/pitfalls.md` in a
 to start a background `ship-lint-author` agent (once that agent is installed; until then the hook is silent) for the new entries without stopping its task, and to ship the branch that
 agent reports as its own PR afterwards. It asks once per session and entry. An edit of an old entry, of another file, a repo
 with no commit or no opt-in, and any error add nothing: the hook only advises and never blocks or writes to the repo.
+
+The agent (`agents/ship-lint-author.md`, Haiku, `isolation: worktree`) and the procedure around it
+(`skills/ship/pitfall-lint.md`) are what the advice points to. Given the pitfalls file, the titles and a branch
+(`lint/pitfall-<slug>`), the agent decides per entry whether a rule fits: only a literal signature on a single added line that
+correct code rarely contains. For those it writes `warn` `ban` lines, at least 2 `hit` and 2 `miss` cases in
+`.github/claude-ship/lint-tests`, and the ledger line; the rest get `# pitfall: <title> -> none: <reason>`, which is the usual
+answer. It proves each rule with `lint.sh check --only <id>` (3 attempts, then the rule and its cases are dropped), makes one
+commit and does not push. The session ships that branch as its own PR after its current task (an orchestrated
+`ship-implementer` doesn't start the agent: it reports the titles on a `pitfalls:` line and the orchestrator does). A
+**backfill** runs the agent over `pitfall-lint.sh pending` 8 titles at a time, one author after the other on
+`lint/pitfall-backfill`, and ships that branch as one PR; the ship skill's bootstrap offers it once for a repo that already has
+entries, and it runs only in an opted-in repo or when the user asks.
 
 ## Costs
 

@@ -129,12 +129,30 @@ if ! GIT_CONFIG_GLOBAL="$tmp/gitconfig-main" CLAUDE_HOME="$tmp/dest" sh "$tmp/ch
 fi
 for f in main-installer-ran bin/shfmt hooks/review-gate.sh hooks/review-lib.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
 	skills/ship/orchestrate.md skills/ship/codex-status.sh agents/ship-explorer.md agents/ship-implementer.md \
-	agents/ship-codex.md hooks/codex-bash.sh agents/mine.md; do
+	agents/ship-codex.md agents/ship-lint-author.md hooks/codex-bash.sh hooks/pitfall-lint.sh agents/mine.md; do
 	[ -e "$tmp/dest/$f" ] || {
 		echo "FAIL: $f wasn't deployed"
 		fail=1
 	}
 done
+# No ship agent runs on Opus (AGENTS.md › Project invariants), and the lint author is a Haiku agent in its own worktree
+# (claude-ship #313): its frontmatter keeps it cheap and keeps its commits off every other checkout.
+fm() { awk -v key="$2" '/^---[ \t]*$/ { n++; next } n == 1 && index($0, key ": ") == 1 { sub(/^[^:]*:[ \t]*/, ""); print; exit }' "$1"; }
+for a in "$root"/agents/ship-*.md; do
+	case $(fm "$a" model) in
+	sonnet | haiku) ;;
+	*)
+		echo "FAIL: ${a#"$root"/} doesn't run on sonnet or haiku"
+		fail=1
+		;;
+	esac
+done
+la=$root/agents/ship-lint-author.md
+[ "$(fm "$la" name)" = ship-lint-author ] && [ "$(fm "$la" model)" = haiku ] && [ "$(fm "$la" effort)" = high ] &&
+	[ "$(fm "$la" isolation)" = worktree ] && [ "$(fm "$la" tools)" = "Read, Write, Edit, Bash, Grep, Glob" ] || {
+	echo "FAIL: agents/ship-lint-author.md is missing or its frontmatter isn't name, haiku, high, worktree, Read/Write/Edit/Bash/Grep/Glob"
+	fail=1
+}
 # Every hook an agent's frontmatter names is deployed (claude-ship #122); the list comes from the agents themselves,
 # so a new one can't be missed.
 agent_hooks=$(grep -h 'command: ~/.claude/' "$root"/agents/ship-*.md | sed 's|.*command: ~/.claude/||')

@@ -78,7 +78,10 @@ finding costs a full extra round, so care here is cheaper than speed.
   `git commit && git push`.
 - The PreToolUse review gate reviews every push. When it blocks:
   - Fix every blocking finding test-first, sweep for the class, commit, and push again.
-  - When a blocking finding is a class `docs/pitfalls.md` doesn't cover, add an entry in the same push.
+  - When a blocking finding is a class `docs/pitfalls.md` doesn't cover, add an entry in the same push. The
+    `pitfall-lint.sh` hook may then advise starting a `ship-lint-author`: **don't start one**. Put the advised titles on a
+    `pitfalls:` line of your final report (the file's absolute path the hook names, then the titles, one per line, word for
+    word), and carry on: the orchestrator starts the author. A handoff report carries the line too.
   - **If you think a finding is wrong,** stop and report it with your file:line evidence. Only the user can
     waive, so never try.
   - **After a third block on this branch,** stop and report.
@@ -214,7 +217,7 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 - Never waive a review, or edit anything under `~/.claude`.
 - Never push a branch other than the plan's.
 
-## Report (15 lines or fewer, not counting the `stop:`, `denied:`, `done:` and `file:` lines, and a handoff's `fix:` lines and `ci-failures:` block)
+## Report (15 lines or fewer, not counting the `stop:`, `denied:`, `done:` and `file:` lines, the `pitfalls:` lines, and a handoff's `fix:` lines and `ci-failures:` block)
 
 ```
 branch: <name>   worktree: <path>   pr: <number or none>   codex requested: yes/no/unknown
@@ -226,6 +229,7 @@ handoff: context <n>   round: <the last ship-codex report's round>   ci-fix-roun
 fix: <the last ship-codex report's fix: lines, word for word>  (handoff only)
 ci-failures: <its block, word for word>  (handoff only, with ci: fail)
 replied: <thread id> <sha>  (fallback flow, or a `codex: no final report` hand-back: one per thread you replied to; omit otherwise)
+pitfalls: <the pitfalls file's absolute path from the pitfall hook's advice, then the advised titles, one per line, word for word>  (only when the hook advised a lint author; you don't start one)
 checks: <command> → pass/fail
 gate: passed after <n> blocks | blocked: <finding summary>
 deviations: <anything you did beyond the plan, or none>
