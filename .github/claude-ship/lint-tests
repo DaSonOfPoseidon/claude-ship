@@ -49,14 +49,19 @@ miss gnu-stat-c tests/x.sh stat -c %s "$f"
 miss gnu-stat-c hooks/x.sh # stat -c is GNU-only
 miss gnu-stat-c hooks/x.sh wc -c < "$f"
 
-# pitfall-pipeline-status: a gh call piped inside $( ), assigned or not; a quoted pipe, a fallback, a quoted mention and a comment are not.
+# pitfall-pipeline-status: a gh call piped inside $( ), assigned or not, with quoted arguments or inside double quotes; a
+# quoted pipe, a fallback, a single-quoted mention and a comment are not.
 hit pitfall-pipeline-status hooks/x.sh x=$(gh api repos/o/r/pulls | wc -l)
 hit pitfall-pipeline-status scripts/x.sh n=$(gh -R o/r api pulls/1/reviews | jq length)
 miss pitfall-pipeline-status tests/x.sh x=$(gh api repos/o/r/pulls | wc -l)
 miss pitfall-pipeline-status hooks/x.sh # x=$(gh api repos/o/r/pulls | wc -l)
 miss pitfall-pipeline-status hooks/x.sh x=$(gh api --jq '.[] | .id' repos/o/r/pulls)
 miss pitfall-pipeline-status hooks/x.sh x=$(gh api repos/o/r/pulls || echo 0)
-miss pitfall-pipeline-status hooks/x.sh echo "x=$(gh api repos/o/r | wc -l)"
+miss pitfall-pipeline-status hooks/x.sh echo 'x=$(gh api repos/o/r | wc -l)'
+hit pitfall-pipeline-status hooks/x.sh x="$(gh api repos/o/r/pulls | wc -l)"
+hit pitfall-pipeline-status hooks/x.sh x=$(gh api "repos/$slug/pulls" | wc -l)
+hit pitfall-pipeline-status hooks/x.sh echo "x=$(gh api repos/o/r | wc -l)"
+miss pitfall-pipeline-status hooks/x.sh x="$(gh api --jq '.[] | .id' "repos/$slug/pulls")"
 
 # pitfall-missing-arg-exit: a positional-argument guard that exits 1 on the same line; exit 2, a test of another value, and tests/ are not.
 hit pitfall-missing-arg-exit hooks/x.sh [ -z "$1" ] && exit 1
@@ -73,14 +78,23 @@ miss pitfall-status-stale .github/workflows/codex-status.yml cancel-in-progress:
 miss pitfall-status-stale .github/workflows/codex-status.yml # cancel-in-progress: true
 miss pitfall-status-stale .github/workflows/ci.yml cancel-in-progress: true
 
-# pitfall-current-checkout: gh pr with a subcommand that acts on a PR and no number before its flags or end; a pipe after
-# a space counts, a quoted mention, a numbered or placeholder call, a comment, and tests/ are not.
+# pitfall-current-checkout: gh pr with a subcommand that acts on a PR and no number before its flags or end, whether a
+# flag takes a value (--json f, -R o/r) or not; a pipe after a space counts, a quoted mention, a numbered or placeholder
+# call (also after an option's value), a comment, and tests/ are not.
 hit pitfall-current-checkout hooks/x.sh gh pr checks --watch
 hit pitfall-current-checkout scripts/x.sh gh pr merge --squash --delete-branch
 hit pitfall-current-checkout hooks/x.sh gh pr view | jq .title
+hit pitfall-current-checkout hooks/x.sh gh pr view --json headRefOid
+hit pitfall-current-checkout hooks/x.sh n=$(gh pr view --json number --jq .number)
+hit pitfall-current-checkout scripts/x.sh gh pr checks -R owner/repo
+hit pitfall-current-checkout scripts/x.sh gh pr checks --repo "$slug" --interval 30 --watch
+hit pitfall-current-checkout hooks/x.sh gh pr view --json number --jq '.number | tostring'
 miss pitfall-current-checkout tests/x.sh gh pr checks --watch
 miss pitfall-current-checkout hooks/x.sh gh pr checks "$pr" --watch
 miss pitfall-current-checkout hooks/x.sh gh pr view 12 --json headRefOid
+miss pitfall-current-checkout hooks/x.sh gh pr view -R owner/repo 12 --json headRefOid
+miss pitfall-current-checkout hooks/x.sh gh pr checks --repo "$slug" "$pr" --watch
+miss pitfall-current-checkout hooks/x.sh gh pr view --json number "$pr"
 miss pitfall-current-checkout hooks/x.sh # gh pr checks --watch
 miss pitfall-current-checkout hooks/x.sh echo "run gh pr view --web"
 
@@ -92,6 +106,7 @@ miss pitfall-filter-by-branch-name tests/x.sh gh pr list --head "$b" --json numb
 miss pitfall-filter-by-branch-name hooks/x.sh gh pr list --head "$b" --json number,isCrossRepository
 miss pitfall-filter-by-branch-name hooks/x.sh # gh pr list --head "$b"
 miss pitfall-filter-by-branch-name hooks/x.sh echo "use gh pr list --head only with isCrossRepository"
+hit pitfall-filter-by-branch-name hooks/x.sh n="$(gh pr list --head "$b" --json number --jq length)"
 miss pitfall-filter-by-branch-name hooks/x.sh gh pr list --author @me --json number,headRefName,isCrossRepository
 
 # pitfall-escape-path-separator: tr maps / to a character other than a newline or a space; tr -d, a comment, a quoted
@@ -104,6 +119,7 @@ miss pitfall-escape-path-separator hooks/x.sh tr '/' '\n' <<<"$path"
 miss pitfall-escape-path-separator hooks/x.sh # tr '/' '_'
 miss pitfall-escape-path-separator hooks/x.sh echo "use tr '/' '_' only in tests"
 miss pitfall-escape-path-separator hooks/x.sh tr '/' ' ' <<<"$path"
+hit pitfall-escape-path-separator hooks/x.sh id="$(echo $dir | tr '/' '+')"
 
 # pitfall-wait-all-checks: gh pr checks with --watch, which waits on every check; a whole-line comment, a quoted mention, a
 # call that reads the checks with --json, and tests/ are not.
@@ -111,6 +127,7 @@ hit pitfall-wait-all-checks hooks/x.sh gh pr checks --watch
 hit pitfall-wait-all-checks scripts/x.sh gh -R o/r pr checks 12 --watch --interval 30
 miss pitfall-wait-all-checks tests/x.sh gh pr checks 12 --watch
 miss pitfall-wait-all-checks hooks/x.sh # gh pr checks 12 --watch
+hit pitfall-wait-all-checks hooks/x.sh r="$(gh pr checks 12 --watch)"
 miss pitfall-wait-all-checks hooks/x.sh gh pr checks 12 --json name,bucket
 miss pitfall-wait-all-checks hooks/x.sh echo "waiting with gh pr checks --watch can hang"
 
@@ -121,6 +138,7 @@ hit pitfall-config-by-grep scripts/x.sh if grep -q '^\[core' "$r/.git/config"; t
 hit pitfall-config-by-grep hooks/x.sh v=$(grep hooksPath "$HOME/.config/git/config")
 miss pitfall-config-by-grep tests/x.sh grep -q hooksPath ~/.gitconfig
 miss pitfall-config-by-grep hooks/x.sh # grep hooksPath ~/.gitconfig
+hit pitfall-config-by-grep hooks/x.sh v="$(grep hooksPath ~/.gitconfig)"
 miss pitfall-config-by-grep hooks/x.sh git config --get core.hooksPath
 miss pitfall-config-by-grep hooks/x.sh echo "grep does not see include.path in ~/.gitconfig"
 miss pitfall-config-by-grep docs/x.md grep -q hooksPath ~/.gitconfig
