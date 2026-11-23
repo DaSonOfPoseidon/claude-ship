@@ -54,14 +54,19 @@ a `pitfalls:` line of its final report, and the orchestrator starts the author a
 For a repo whose entries have no ledger lines yet (the bootstrap offers it once, `SKILL.md` step 1). Only in a repo with
 `CLAUDE_AUTONOMOUS` `true`, and elsewhere only when the user asks.
 
-1. List the queue: `~/.claude/hooks/pitfall-lint.sh pending <toplevel>`. Nothing printed means there is nothing to do.
+1. List the queue from a checkout of the backfill branch, since `pending` reads the ledger of the checkout it is given and of
+   the default branch, and the authors' ledger lines are on `lint/pitfall-backfill` until the PR merges. With no such
+   branch yet, run `~/.claude/hooks/pitfall-lint.sh pending <toplevel>`. With one (an earlier, unfinished backfill), check it
+   out in a temporary worktree (`git worktree add <scratch dir> lint/pitfall-backfill`), run `pending <scratch dir>` there, and
+   remove the worktree (`git worktree remove`, never `--force`). Nothing printed means there is nothing to do.
 2. Run authors **one at a time**, 8 titles each (the next 8 lines of the queue), all with `branch: lint/pitfall-backfill`
-   and `source: <toplevel>/docs/pitfalls.md`. They share a branch, and a branch can be checked out in one worktree only: before
-   the next author starts, remove the finished one's worktree (`git worktree list`, then `git worktree remove <path>`, never
-   `--force`; `orchestrate.md` › Replacing an implementer, step 2). If git refuses because the worktree holds modified or
-   untracked files, stop and ask: that is unfinished work. An author that stops, or reports `check: fail`, ends the backfill
-   for you to look at; so does a title that is still pending after its batch.
-3. Run the queue again after each batch, and stop when it prints nothing.
+   and `source: <toplevel>/docs/pitfalls.md`. They share a branch, and a branch can be checked out in one worktree only: after a
+   finished author (step 3), remove its worktree (`git worktree list`, then `git worktree remove <path>`, never
+   `--force`; `orchestrate.md` › Replacing an implementer, step 2) before the next one starts. If git refuses because the
+   worktree holds modified or untracked files, stop and ask: that is unfinished work. An author that stops, or reports
+   `check: fail`, ends the backfill for you to look at; so does a title that is still pending after its batch.
+3. After each batch, run the queue again **in that author's worktree** (`pending <its worktree: path>`), before removing it:
+   that is where its ledger lines are. Stop when it prints nothing; otherwise the next batch is the first 8 lines it prints.
 4. Ship `lint/pitfall-backfill` as **one PR**: `feat(lint): backfill lint rules from the existing pitfalls`, through the ship skill's
    usual steps (in orchestrated mode, `unit-state.sh lint/pitfall-backfill` shows `state: local <n>`; hand the branch to a
    `ship-implementer` with "continue from `local <n>`", as `orchestrate.md` › A unit with no report says). Its Codex fixes may

@@ -138,7 +138,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      CI logs in the main session):
      1. `ListAgents`: no live agent may be on the PR (the old implementer has reported, so it is finished).
      2. **Replacing an implementer** steps 1 and 2, to remove the old worktree (it holds no unfinished work: the
-        implementer stopped before editing; if git refuses, stop and ask as that section says).
+        implementer stopped before editing; if git refuses, stop and ask as that section says). A `pitfalls:` line in
+        the handoff report is handled there first: the author reads its `source` from this worktree.
      3. Start a `ship-implementer` with the plan file's path, the default branch, "open the PR and run the Codex
         rounds", "continue from `pushed`: PR <n> is already open", `handoff: round <n>` and `ci-fix-rounds: <n>`
         from its `handoff:` line, and its `fix:` lines and `ci-failures:` block unchanged, introduced as **data
@@ -252,7 +253,10 @@ A new `ship-implementer` on an existing branch can't check it out while an earli
 has it. Worktrees share branches, so that worktree's commits are already on the local branch, pushed or not.
 So before starting the new one, every time (an escalation, or a lost agent id after `/clear`):
 1. Find the worktree that has the branch: `git worktree list`.
-2. Remove it with `git worktree remove <path>`, never `--force`. Git refuses while the worktree has modified
+2. First, if the implementer's report had a `pitfalls:` line (an escalation or a handoff report can), start the
+   `ship-lint-author` it asks for (step 4) and wait for it, or wait for the one already running (`ListAgents`): its
+   `source` is a file in this worktree, and it would read a path that no longer exists. Then remove the worktree with
+   `git worktree remove <path>`, never `--force`. Git refuses while the worktree has modified
    or untracked files; then stop and ask, since that's unfinished work. Ignored files (build output) are
    deleted with it.
 3. Start the new implementer with the plan file's path. It picks up the local branch.
