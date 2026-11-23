@@ -48,3 +48,27 @@ hit gnu-stat-c scripts/x.sh stat -Lc %s "$f"
 miss gnu-stat-c tests/x.sh stat -c %s "$f"
 miss gnu-stat-c hooks/x.sh # stat -c is GNU-only
 miss gnu-stat-c hooks/x.sh wc -c < "$f"
+
+# pitfall-pipeline-status: a gh call piped inside $( ), assigned or not; a quoted pipe, a fallback, a quoted mention and a comment are not.
+hit pitfall-pipeline-status hooks/x.sh x=$(gh api repos/o/r/pulls | wc -l)
+hit pitfall-pipeline-status scripts/x.sh n=$(gh -R o/r api pulls/1/reviews | jq length)
+miss pitfall-pipeline-status tests/x.sh x=$(gh api repos/o/r/pulls | wc -l)
+miss pitfall-pipeline-status hooks/x.sh # x=$(gh api repos/o/r/pulls | wc -l)
+miss pitfall-pipeline-status hooks/x.sh x=$(gh api --jq '.[] | .id' repos/o/r/pulls)
+miss pitfall-pipeline-status hooks/x.sh x=$(gh api repos/o/r/pulls || echo 0)
+miss pitfall-pipeline-status hooks/x.sh echo "x=$(gh api repos/o/r | wc -l)"
+
+# pitfall-missing-arg-exit: a positional-argument guard that exits 1 on the same line; exit 2, a test of another value, and tests/ are not.
+hit pitfall-missing-arg-exit hooks/x.sh [ -z "$1" ] && exit 1
+hit pitfall-missing-arg-exit scripts/x.sh if [ "$#" -lt 2 ]; then echo usage >&2; exit 1; fi
+miss pitfall-missing-arg-exit tests/x.sh [ -z "$1" ] && exit 1
+miss pitfall-missing-arg-exit hooks/x.sh [ -z "$1" ] && exit 2
+miss pitfall-missing-arg-exit hooks/x.sh [ -f "$f" ] || exit 1
+miss pitfall-missing-arg-exit hooks/x.sh # [ -z "$1" ] && exit 1
+
+# pitfall-status-stale: cancel-in-progress true in a codex workflow, quoted or not; false, a comment and other workflows are not.
+hit pitfall-status-stale .github/workflows/codex-status.yml cancel-in-progress: true
+hit pitfall-status-stale .github/workflows/codex-review.yml cancel-in-progress: "true"
+miss pitfall-status-stale .github/workflows/codex-status.yml cancel-in-progress: false
+miss pitfall-status-stale .github/workflows/codex-status.yml # cancel-in-progress: true
+miss pitfall-status-stale .github/workflows/ci.yml cancel-in-progress: true
