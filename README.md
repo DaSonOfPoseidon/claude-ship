@@ -260,6 +260,7 @@ error-level hit (below); the commands work from a shell too.
 ~/.claude/hooks/lint.sh staged                    # the index against HEAD (against the empty tree before the first commit)
 ~/.claude/hooks/lint.sh diff origin/main...HEAD   # any range git diff takes
 ~/.claude/hooks/lint.sh rules src/app.py          # the level of every rule for a path, and the config line that set it
+~/.claude/hooks/lint.sh check                     # test the checkout's own rules against their cases and the tree (Testing a rule, below)
 ~/.claude/hooks/lint.sh staged --only debug-leftover   # report one rule only (--remote: see Claude's commits, below)
 ```
 
@@ -302,6 +303,27 @@ skip <glob> ...
   `invisible-char` (zero-width and bidi-control characters, and a byte order mark anywhere but the start of the file).
 
 There are no inline disable comments: an exception is a path glob in a config file.
+
+**Testing a rule.** `lint.sh check [--only <rule>]` is for the author of a rule, or CI. It differs from the other modes in
+one way: layer 3 is the checkout's own `.github/claude-ship/lint`, not the default branch's. A branch can't weaken the
+lint that enforces (`staged`, `diff` and `hook` keep reading the default branch); `check` reads the checkout only to test
+a candidate before it is merged.
+- **Cases.** Each non-comment line of the checkout's `.github/claude-ship/lint-tests` is `hit <rule> <path> <text>` or
+  `miss <rule> <path> <text>`. The fields are separated by single spaces and the text is the rest of the line, literal
+  (leading spaces, quotes, a tab and `#` included). The case runs as an added line of `<path>` through the same code a real
+  diff goes through, so globs, `unless` and comment detection behave as on a commit; the path need not exist. A `hit`
+  passes when the rule reports on the line, a `miss` when it doesn't. Each failure prints as `case FAIL <line>: <case>`,
+  with the reason, then `cases: <n> passed, <n> failed`. A case whose path a `skip` line covers can't run and fails.
+  The grammar is in the header of `hooks/lint-rules`; this repo's own cases are in `.github/claude-ship/lint-tests`, and
+  `tests/lint.sh` runs them.
+- **Scan.** Every tracked file of the working tree is then linted as if all its lines were added. The hits print under
+  `scan:` as usual, followed by one `scan <rule>: <n> hit(s)` line per rule (`scan: no hits` when there are none). That is
+  the false-positive evidence for a new rule: scan hits never fail the check.
+- **Exit.** 0 when every case passed. 1 when a case failed, a case line is malformed or names a rule the config doesn't
+  define, a config line is malformed (the same `ignored` note on stderr), or `--only` names no defined rule. 2 when it
+  couldn't run. `--only` limits the cases and the scan to one rule; `--remote` is not accepted.
+- A comment line in `.github/claude-ship/lint` can record which `docs/pitfalls.md` entry a rule came from; the lint
+  skips it like any comment (see `hooks/lint-rules`).
 
 **Claude's edits.** A `PostToolUse` hook (`lint.sh hook`, registered in the drop-in and in the Install section's snippet) runs
 after every Write, Edit and MultiEdit and reports only the lines that edit wrote, so earlier edits aren't reported again.

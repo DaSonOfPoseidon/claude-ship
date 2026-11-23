@@ -1,9 +1,9 @@
 #!/bin/sh
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
-# Hygiene lint for added lines: `lint.sh staged [--only <rule>] [--remote]`, `lint.sh diff <range>` or `lint.sh rules
-# <path>`. Only lines a diff adds are checked (git diff -U0 of the index against HEAD, or of a range such as
-# origin/main...HEAD), so code that is already there never fails. `--only` reports one rule and ignores the others.
+# Hygiene lint for added lines: `lint.sh staged [--only <rule>] [--remote]`, `lint.sh diff <range>`, `lint.sh rules
+# <path>` or `lint.sh check [--only <rule>]`. Only lines a diff adds are checked (git diff -U0 of the index against
+# HEAD, or of a range such as origin/main...HEAD), so code that is already there never fails. `--only` reports one rule and ignores the others.
 # `--remote` reads the project file from GitHub's default branch first, falling back to the local refs below with a note
 # on stderr (the git hook stubs pass it for Claude's commits). Each hit prints as `path:line: rule (error|warn): what to do instead`, the line, and a
 # summary. Exit 0: clean or warnings only. 1: an error-level hit. 2: couldn't lint (usage, git or awk failed), which
@@ -11,6 +11,13 @@
 # Config layers, a later one winning line by line: hooks/lint-rules (next to this script), the install's
 # ${CLAUDE_HOME:-$HOME/.claude}/claude-ship/lint, and the project's .github/claude-ship/lint as it is on the default
 # branch (a branch can't weaken its own lint). The grammar is documented in hooks/lint-rules and the README.
+# `lint.sh check` is the author's tool for a candidate rule, so it reads the checkout's .github/claude-ship/lint instead
+# (the one place a branch's own rules count, and only to test them; staged, diff and hook never do). It runs every case
+# of the checkout's .github/claude-ship/lint-tests (`hit|miss <rule> <path> <text>`, through the same code as a real
+# diff: `case FAIL <line>: ...` for each one that fails), then scans every tracked file of the working tree as if all its
+# lines were added and lists the hits under `scan:` with a count per rule. Exit 0: every case passed (scan hits never
+# fail it). 1: a case failed or is malformed or names an undefined rule, a config line is malformed, or --only names an
+# unknown rule. 2: couldn't run. `--only` limits the cases and the scan to one rule.
 # `lint.sh hook` is the PostToolUse hook for Write, Edit and MultiEdit (JSON on stdin): it reports only the lines that edit
 # wrote (by the line numbers of the result's structuredPatch when it has them, else by matching the new text), as
 # {"decision":"block",...} for errors (warnings ride along as additionalContext) or as additionalContext for warnings alone, prints nothing when the edit is clean, and always exits 0 (a failure of its own is an additionalContext
@@ -21,7 +28,7 @@ LC_ALL=C
 export LC_ALL
 
 usage() {
-	echo "usage: lint.sh staged [--only <rule>] [--remote] | diff <range> | rules <path> | hook" >&2
+	echo "usage: lint.sh staged [--only <rule>] [--remote] | check [--only <rule>] | diff <range> | rules <path> | hook" >&2
 	exit 2
 }
 # hook_note <text>: the hook's way to say something without blocking. Fixed text when jq is missing.
@@ -42,7 +49,7 @@ mode=${1:-}
 only=
 remote=
 case $mode in
-staged)
+staged | check)
 	shift
 	while [ $# -gt 0 ]; do
 		case $1 in
@@ -55,6 +62,7 @@ staged)
 			esac
 			;;
 		--remote)
+			[ "$mode" = staged ] || usage
 			remote=1
 			shift
 			;;
@@ -306,11 +314,15 @@ EOF
 			base=$(git hash-object -t tree /dev/null) || die "can't make the empty tree"
 		fi
 		gitd --cached "$base" -- >"$t/diff" || die "git diff failed"
+	elif [ "$mode" = check ]; then
+		# The empty tree against the working tree (no second ref): every line of every tracked file counts as added.
+		base=$(git hash-object -t tree /dev/null) || die "can't make the empty tree"
+		gitd "$base" -- >"$t/diff" || die "git diff failed"
 	else
 		gitd "$2" -- >"$t/diff" || die "git diff failed"
 	fi
-	# Nothing added or removed: nothing to lint.
-	[ -s "$t/diff" ] || exit 0
+	# Nothing added or removed: nothing to lint. check still runs its cases.
+	[ -s "$t/diff" ] || [ "$mode" = check ] || exit 0
 	cp "$t/diff" "$t/diff2" || die "can't copy the diff"
 fi
 
@@ -407,7 +419,16 @@ remote_layer() {
 
 # The project's file comes from the default branch, found without the network: origin/HEAD, then origin/main, then
 # origin/master, then HEAD (a repo with no remote, or none fetched). Not the checkout, so the branch can't change it.
-if [ -n "$in_git" ]; then
+# `check` is the one exception: it tests a candidate rule, so it reads the checkout's own file (no remote, no refs).
+checkout_top=
+if [ "$mode" = check ]; then
+	checkout_top=$(git rev-parse --show-toplevel) || die "can't find the top of the working tree"
+	if [ -e "$checkout_top/.github/claude-ship/lint" ]; then
+		[ -f "$checkout_top/.github/claude-ship/lint" ] && [ -r "$checkout_top/.github/claude-ship/lint" ] || die "can't read .github/claude-ship/lint"
+		LINT_L3=.github/claude-ship/lint
+		addlayer 3 "$checkout_top/.github/claude-ship/lint"
+	fi
+elif [ -n "$in_git" ]; then
 	[ -z "$remote" ] || remote_layer || :
 	if [ -z "$remote_got" ]; then
 		ref=
@@ -435,9 +456,12 @@ export LINT_L1 LINT_L2 LINT_L3
 cat >"$t/lint.awk" <<'EOF'
 # One pass over the config stream, then (diff mode) twice over the diff: pass 1 notes which files add a conflict
 # opener, pass 2 reports. Written with no GNU extensions: no IGNORECASE, gensub, \b or length(array).
+# check mode runs it twice: LINT_MODE=cases reads lint-tests twice in place of the diff (see caseline), and
+# LINT_MODE=check reads the working-tree diff like diff mode and counts the hits per rule.
 
 function bad(src, why) {
-	printf "lint: %s: ignored: %s\n", src, why > "/dev/stderr"
+	nbad++
+	if (m != "cases") printf "lint: %s: ignored: %s\n", src, why > "/dev/stderr"
 }
 
 function trim(s) {
@@ -837,6 +861,16 @@ function hit(rule, level, msg, text,   sp) {
 	if (only != "" && rule != only) return
 	if (rule in here) return
 	here[rule] = 1
+	# cases mode only notes that the rule reported on the case (its key is ck).
+	if (m == "cases") {
+		chit[ck, rule] = 1
+		return
+	}
+	if (m == "check") {
+		if (!nscan) print "scan:"
+		nscan++
+		scount[rule]++
+	}
 	sp = safe_path(path)
 	# hook mode splits the hits by level into two files, which the shell turns into the hook's JSON.
 	if (m == "hook") printf "%s:%d: %s (%s): %s\n    %s\n", sp, ln, rule, level, msg, clip(text) > ((level == "error") ? ENVIRON["LINT_OUT_E"] : ENVIRON["LINT_OUT_W"])
@@ -851,19 +885,26 @@ function is_open(text) {
 	return substr(text, 1, 7) == "<<<<<<<" && (length(text) == 7 || substr(text, 8, 1) == " ")
 }
 
+# openkey: what has_open is keyed by. Each case is a file of its own (its key ck tells them apart); a real diff's key
+# is the path.
+function openkey() {
+	return (m == "cases") ? path SUBSEP ck : path
+}
+
 function added(text,   a, k, idx, target, e, rest) {
 	sub(/\r$/, "", text)
 	if (path == "") return
 	if (pass == 1) {
-		if (is_open(text)) has_open[path] = 1
+		if (is_open(text)) has_open[openkey()] = 1
 		return
 	}
 	if (skipped) return
+	if (m == "cases") cran[ck] = 1
 	split("", here)
 	if (lvl_cm != "off") {
 		a = substr(text, 1, 8)
 		if (is_open(text) || a == ">>>>>>> " || a == "||||||| ") hit("conflict-marker", lvl_cm, "resolve the merge conflict and delete the marker line", text)
-		else if (text ~ /^=======[ \t]*$/ && (path in has_open)) hit("conflict-marker", lvl_cm, "resolve the merge conflict and delete the marker line", text)
+		else if (text ~ /^=======[ \t]*$/ && (openkey() in has_open)) hit("conflict-marker", lvl_cm, "resolve the merge conflict and delete the marker line", text)
 	}
 	if (lvl_iv != "off") {
 		for (k = 1; k <= ninv; k++) {
@@ -943,6 +984,98 @@ function difline(   c, h, parts, np, o, w) {
 	}
 }
 
+# --- cases (check mode) ---
+# caseline: $0 is one line of lint-tests, `hit|miss <rule> <path> <text>`: blank and `#` lines are skipped, the fields
+# are separated by single spaces and the text is the rest of the line, literal. A well-formed case becomes the
+# synthetic -U0 diff of a file with that one added line, run through difline() as git's own output would be. The hunk
+# is at line 1, since each case is a file of its own (a leading byte order mark is ordinary there), and the cases are
+# told apart by ck, their count so far in this pass (hit() and cran[] are keyed by it, not by the line in lint-tests).
+# A malformed line is recorded in pass 2.
+function caseline(   line, t, kind, rule, cpth, text, rest, i, why) {
+	line = $0
+	sub(/\r$/, "", line)
+	t = line
+	sub(/^[ \t]+/, "", t)
+	if (t == "" || substr(t, 1, 1) == "#") return
+	why = ""
+	rule = ""
+	cpth = ""
+	text = ""
+	rest = ""
+	i = index(line, " ")
+	kind = (i > 0) ? substr(line, 1, i - 1) : line
+	if (i > 0) rest = substr(line, i + 1)
+	if (kind != "hit" && kind != "miss") why = "the line must start with hit or miss"
+	else if (i == 0) why = "no rule, path or text"
+	if (why == "") {
+		i = index(rest, " ")
+		if (i == 0) why = "no path or text after the rule"
+		else {
+			rule = substr(rest, 1, i - 1)
+			rest = substr(rest, i + 1)
+			if (rule !~ /^[A-Za-z0-9_.-]+$/) why = "the rule id is missing (letters, digits, _ . -)"
+		}
+	}
+	if (why == "") {
+		i = index(rest, " ")
+		if (i == 0) why = "no text after the path"
+		else {
+			cpth = substr(rest, 1, i - 1)
+			text = substr(rest, i + 1)
+			if (cpth == "") why = "the path is missing"
+		}
+	}
+	if (only != "" && why == "" && rule != only) return
+	ck++
+	if (pass == 2) {
+		cn++
+		cnum[cn] = FNR
+		ccid[cn] = ck
+		clinetxt[cn] = line
+		ckind[cn] = kind
+		crule[cn] = rule
+		cwhy[cn] = why
+	}
+	if (why != "") return
+	$0 = "+++ b/" cpth
+	difline()
+	$0 = "@@ -0,0 +1 @@"
+	difline()
+	$0 = "+" text
+	difline()
+}
+
+# report_cases: a `case FAIL <line>: <the case>` and the reason for each failure, then the totals. Returns the failures.
+function report_cases(   k, why, np, nf, shown) {
+	for (k = 1; k <= cn; k++) {
+		why = cwhy[k]
+		if (why != "") why = "malformed: " why
+		else if (!(crule[k] in rseen)) why = "the config defines no rule " crule[k]
+		else if (!cran[ccid[k]]) why = "unrunnable: the path is skipped by a skip line or can't be linted"
+		else if (ckind[k] == "hit" && !chit[ccid[k], crule[k]]) why = "the rule did not report on it"
+		else if (ckind[k] == "miss" && chit[ccid[k], crule[k]]) why = "the rule reported on it"
+		if (why == "") {
+			np++
+			continue
+		}
+		nf++
+		shown = clinetxt[k]
+		gsub(/[\001-\037\177]/, "?", shown)
+		printf "case FAIL %d: %s\n    %s\n", cnum[k], shown, why
+	}
+	if (cn > 0) printf "cases: %d passed, %d failed\n", np, nf
+	return nf + 0
+}
+
+# report_scan: the per-rule counts of the working-tree scan.
+function report_scan(   i, r) {
+	if (nscan == 0) print "scan: no hits"
+	for (i = 1; i <= nr; i++) {
+		r = rorder[i]
+		if (scount[r] > 0) printf "scan %s: %d hit(s)\n", r, scount[r]
+	}
+}
+
 # --- rules mode ---
 function report_rules(   p, i, r, src) {
 	p = ENVIRON["LINT_PATH"]
@@ -987,19 +1120,30 @@ BEGIN {
 	p2 = (FILENAME == d1) ? 1 : 2
 	if (p2 != pass) {
 		pass = p2
+		ck = 0
 		rem_old = 0
 		rem_new = 0
 		path = ""
 		skipped = 0
 		na = 0
 	}
-	difline()
+	if (m == "cases") caseline()
+	else difline()
 }
 
 END {
 	if (!cfg_done) finish_cfg()
 	if (m == "rules") report_rules()
-	else if (nerr + nwarn > 0 && m != "hook") printf "lint: %d error(s), %d warning(s)\n", nerr, nwarn
+	else if (m == "cases") nerr = report_cases()
+	else if (m == "check") {
+		report_scan()
+		# The scan's hits never fail the check; a malformed config line, or an unknown --only rule, does.
+		nerr = nbad
+		if (only != "" && !(only in rseen)) {
+			printf "lint: --only names no rule the config defines: %s\n", only > "/dev/stderr"
+			nerr++
+		}
+	} else if (nerr + nwarn > 0 && m != "hook") printf "lint: %d error(s), %d warning(s)\n", nerr, nwarn
 	print nerr + 0 > ENVIRON["LINT_STATUS"]
 	close(ENVIRON["LINT_STATUS"])
 }
@@ -1016,6 +1160,19 @@ if [ "$mode" = rules ]; then
 	export LINT_PATH
 	awk -f "$t/lint.awk" "$t/cfg" || die "awk failed"
 else
+	# check: the cases first (lint-tests of the checkout, read as the diff's two passes), then the scan below.
+	cerrs=0
+	if [ "$mode" = check ] && [ -e "$checkout_top/.github/claude-ship/lint-tests" ]; then
+		[ -f "$checkout_top/.github/claude-ship/lint-tests" ] && [ -r "$checkout_top/.github/claude-ship/lint-tests" ] || die "can't read .github/claude-ship/lint-tests"
+		cp "$checkout_top/.github/claude-ship/lint-tests" "$t/cases" || die "can't copy lint-tests"
+		cp "$t/cases" "$t/cases2" || die "can't copy lint-tests"
+		LINT_MODE=cases LINT_D1=$t/cases LINT_STATUS=$t/cstatus awk -f "$t/lint.awk" "$t/cfg" "$t/cases" "$t/cases2" || die "awk failed"
+		[ -f "$t/cstatus" ] || die "awk didn't finish"
+		cerrs=$(cat "$t/cstatus")
+		case $cerrs in
+		'' | *[!0-9]*) die "awk gave a bad status" ;;
+		esac
+	fi
 	awk -f "$t/lint.awk" "$t/cfg" "$t/diff" "$t/diff2" || die "awk failed"
 fi
 [ -f "$t/status" ] || die "awk didn't finish"
@@ -1023,6 +1180,8 @@ errs=$(cat "$t/status")
 case $errs in
 '' | *[!0-9]*) die "awk gave a bad status" ;;
 esac
+# check: a failed case counts with the scan's own failures (its hits never do).
+[ "$mode" != check ] || errs=$((errs + cerrs))
 if [ "$mode" = hook ]; then
 	# Errors block, with the warnings riding along as context; warnings alone are context; a clean edit prints nothing.
 	hreason=$(cat "$t/out_e")

@@ -30,6 +30,27 @@
 #   skip <glob> ...
 #       Paths that are never linted. Skip lines add up across the layers.
 #
+# Testing a rule: `./lint.sh check [--only <rule>]` reads the checkout's .github/claude-ship/lint (not the default
+# branch's, so a candidate can be tried before it is merged) and runs every case of the checkout's
+# .github/claude-ship/lint-tests, then lists the rule's hits across the tracked files. The cases file has comments (`#` at
+# the start of a line), blank lines and one case per line:
+#
+#   hit <rule> <path> <text>
+#   miss <rule> <path> <text>
+#       The text is linted as one added line of <path>, so the rule's globs, `unless` and comment detection apply as on a
+#       real commit; the path need not exist, and a path under a `skip` line can't run (the case fails). A `hit` passes
+#       when <rule> reports on that line, a `miss` when it doesn't. The three fields are separated by single spaces and
+#       <text> is the rest of the line, literal: spaces (leading ones too), quotes, a tab, a backslash and `#` count as
+#       written. Example:
+#           hit no-print src/app.py print("x")
+#           miss no-print tests/app.py print("x")
+#
+# The ledger: a comment line in .github/claude-ship/lint records what became of an entry of docs/pitfalls.md (the lint
+# skips comments, so it needs no parser):
+#   # pitfall: <the entry's bold title> -> <rule-id>[, <rule-id>]
+#   # pitfall: <the entry's bold title> -> none: <short reason>
+# An entry is pending while no ledger line names its title.
+#
 # Comment text by extension (approximate: a leader inside a string counts, and unknown extensions have no comments):
 #   #   sh bash py rb pl r yaml yml toml conf, Makefile, Dockerfile
 #   //  js jsx ts tsx mjs cjs go rs c h cc cpp hpp java kt swift cs scala dart php (and /* ... */ block lines)

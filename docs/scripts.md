@@ -693,6 +693,24 @@ built-in defaults and the grammar reference. The design choices:
   nothing, so staying quiet gives up no protection). A hygiene lint must not block commits offline, and the
   pre-push gate is still the boundary. Limits: `origin`'s URL is itself config the agent can change, which is outside the
   gate's scope (AGENTS.md › Gate scope).
+- **`check` reads the checkout, and only to test.** It is the one mode whose project layer is `.github/claude-ship/lint` of
+  the working tree (found with `git rev-parse --show-toplevel`, so a subdirectory works), because its job is to try a
+  candidate rule before the rule is merged. It never reads the default branch or GitHub, and it changes nothing for
+  `staged`, `diff` or `hook`, which keep the invariant that a branch can't weaken its own lint. Layers 1 and 2 are
+  the same. It runs awk twice. The first run (`LINT_MODE=cases`) reads `lint-tests` twice in place of a diff, as the
+  two passes of a diff: `caseline` turns each `hit|miss <rule> <path> <text>` line into the synthetic `-U0` diff
+  `+++ b/<path>`, `@@ -0,0 +1 @@`, `+<text>` and feeds it to `difline`, so `begin_file`,
+  `added` and `hit` (globs, `skip`, comment detection, the `unless` of a ban) are the code a commit goes through.
+  `hit()` records that the rule reported on the case instead of printing. Each case is a file of its own, at line 1 (so a
+  leading byte order mark is ordinary wherever the case sits in `lint-tests`) and keyed by its count in the pass, not by
+  its line in `lint-tests`: the opener of one case doesn't make the next `=======` a marker (`openkey`). A case that never reached the rules (its path is under
+  a `skip`) is unrunnable and fails, not passes. The second run (`LINT_MODE=check`) lints `git diff -U0` of the empty
+  tree against the working tree (no second ref), so every line of every tracked file is added: untracked files aren't
+  scanned, binary files have no `+` lines, and an empty repo has nothing to scan (`scan: no hits`; the cases still run, so
+  the empty-diff early exit of the other modes doesn't apply). Scan hits are counted per rule but never fail the exit;
+  a case failure, a malformed case, a case for an undefined rule, a malformed config line (the cases run stays quiet
+  about it, so the note prints once) or an `--only` that names no defined rule does. `--only` filters the cases and
+  the hits alike.
 - **`staged --only <rule>`** reports one rule and ignores the rest, in the hits, the summary and the exit status. The
   merge case of the pre-commit stub uses it for `conflict-marker`.
 - **Bad lines are skipped, git and awk failures are not.** A config typo prints a warning and the rest still applies,

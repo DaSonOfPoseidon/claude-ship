@@ -1,0 +1,50 @@
+# Cases for the rules of .github/claude-ship/lint, run by `hooks/lint.sh check` (and by tests/lint.sh, so CI enforces
+# them). One case per line: `hit|miss <rule> <path> <text>`, the text being the rest of the line, literal. A `hit`
+# case passes when the rule reports on that one added line, a `miss` case when it doesn't. The path decides which globs
+# and which comment syntax apply, so it need not exist. Format and the rest: hooks/lint-rules.
+
+# gnu-sed-i: sed -i, in its cluster, attached, long and after another option; not a comment, not the tests, not another
+# option's argument.
+hit gnu-sed-i hooks/x.sh sed -i 's/a/b/' "$f"
+hit gnu-sed-i hooks/x.sh sed -e p -i "$f"
+hit gnu-sed-i scripts/x.sh sed -ni '1p' "$f"
+hit gnu-sed-i hooks/x.sh sed --in-place s/a/b/ f
+miss gnu-sed-i tests/x.sh sed -i 's/a/b/' "$f"
+miss gnu-sed-i hooks/x.sh # sed -i is GNU-only
+miss gnu-sed-i hooks/x.sh sed -E 's/a/b/' "$f"
+miss gnu-sed-i hooks/x.sh sed -e -i f
+
+# gnu-date-d: date -d, attached or not, and the long form; date -u alone and a comment are fine.
+hit gnu-date-d hooks/x.sh x=$(date -u -d @0 +%s)
+hit gnu-date-d hooks/x.sh date -d2026-11-19 +%s
+hit gnu-date-d scripts/x.sh date --date=@0 +%s
+miss gnu-date-d tests/x.sh date -d @0 +%s
+miss gnu-date-d hooks/x.sh # date -d is GNU-only
+miss gnu-date-d hooks/x.sh date -u +%s
+miss gnu-date-d hooks/x.sh date -- -d
+
+# gnu-grep-p: grep -P, alone, in a cluster and long; an option's argument and the tests are not.
+hit gnu-grep-p hooks/x.sh grep -oP 'a+' "$f"
+hit gnu-grep-p hooks/x.sh grep --perl-regexp a f
+hit gnu-grep-p scripts/x.sh grep --regexp foo -nP "$f"
+miss gnu-grep-p tests/x.sh grep -P a f
+miss gnu-grep-p hooks/x.sh # grep -P is GNU-only
+miss gnu-grep-p hooks/x.sh grep -e -P f
+miss gnu-grep-p hooks/x.sh grep -f -P f
+miss gnu-grep-p hooks/x.sh grep -- -P f
+
+# gnu-readlink-f: readlink -f, in a cluster and as --canonicalize.
+hit gnu-readlink-f hooks/x.sh readlink -f "$0"
+hit gnu-readlink-f hooks/x.sh readlink -fn "$0"
+hit gnu-readlink-f scripts/x.sh readlink --canonicalize "$0"
+miss gnu-readlink-f tests/x.sh readlink -f "$0"
+miss gnu-readlink-f hooks/x.sh # readlink -f is GNU-only
+miss gnu-readlink-f hooks/x.sh readlink "$0"
+
+# gnu-stat-c: stat -c and --format.
+hit gnu-stat-c hooks/x.sh stat -c %s "$f"
+hit gnu-stat-c hooks/x.sh stat --format=%s "$f"
+hit gnu-stat-c scripts/x.sh stat -Lc %s "$f"
+miss gnu-stat-c tests/x.sh stat -c %s "$f"
+miss gnu-stat-c hooks/x.sh # stat -c is GNU-only
+miss gnu-stat-c hooks/x.sh wc -c < "$f"
