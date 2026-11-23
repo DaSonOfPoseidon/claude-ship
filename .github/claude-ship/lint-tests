@@ -83,3 +83,24 @@ miss pitfall-current-checkout hooks/x.sh gh pr checks "$pr" --watch
 miss pitfall-current-checkout hooks/x.sh gh pr view 12 --json headRefOid
 miss pitfall-current-checkout hooks/x.sh # gh pr checks --watch
 miss pitfall-current-checkout hooks/x.sh echo "run gh pr view --web"
+
+# pitfall-filter-by-branch-name: gh pr list filtered by --head or -H with no isCrossRepository on the line; a comment, a
+# quoted mention, a line that asks for isCrossRepository, and tests/ are not.
+hit pitfall-filter-by-branch-name hooks/x.sh milestone=$(gh pr list -R "$slug" --head "$branch" --state open --json milestone)
+hit pitfall-filter-by-branch-name scripts/x.sh gh -R o/r pr list -H "$b" --jq '.[0].number'
+miss pitfall-filter-by-branch-name tests/x.sh gh pr list --head "$b" --json number
+miss pitfall-filter-by-branch-name hooks/x.sh gh pr list --head "$b" --json number,isCrossRepository
+miss pitfall-filter-by-branch-name hooks/x.sh # gh pr list --head "$b"
+miss pitfall-filter-by-branch-name hooks/x.sh echo "use gh pr list --head only with isCrossRepository"
+miss pitfall-filter-by-branch-name hooks/x.sh gh pr list --author @me --json number,headRefName,isCrossRepository
+
+# pitfall-escape-path-separator: tr maps / to a character other than a newline or a space; tr -d, a comment, a quoted
+# mention, a test, and a newline or space target are not.
+hit pitfall-escape-path-separator hooks/x.sh id=$(printf '%s' "$dir" | tr '/' '+')
+hit pitfall-escape-path-separator scripts/x.sh tr -s / _ <<<"$path"
+miss pitfall-escape-path-separator tests/x.sh tr '/' '_' <<<"$path"
+miss pitfall-escape-path-separator hooks/x.sh tr -d '/' < "$f"
+miss pitfall-escape-path-separator hooks/x.sh tr '/' '\n' <<<"$path"
+miss pitfall-escape-path-separator hooks/x.sh # tr '/' '_'
+miss pitfall-escape-path-separator hooks/x.sh echo "use tr '/' '_' only in tests"
+miss pitfall-escape-path-separator hooks/x.sh tr '/' ' ' <<<"$path"

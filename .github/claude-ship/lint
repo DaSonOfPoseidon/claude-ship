@@ -49,3 +49,13 @@ ban pitfall-current-checkout warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_./-])gh[[
 # pitfall: A doc of an allowlist can read backwards. -> none: Describes prose wording of a list; no single-line code signature.
 # pitfall: A checker that stops at `--` misses options after it. -> none: A break at `--` is also correct parsing; no safe signature.
 # pitfall: A hook's allow is a grant, not the absence of a deny. -> none: Describes allow-list design for hooks; no single-line signature.
+ban pitfall-filter-by-branch-name warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_./-])gh[[:space:]].*pr[[:space:]]+list.*[[:space:]](--head|-H)([=[:space:]]|$)' unless 'isCrossRepository|^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*gh[[:space:]]|^([^'']*''[^'']*'')*[^'']*''[^'']*gh[[:space:]]' -- Ask for isCrossRepository and drop those PRs: --head also matches a fork's branch of the same name.
+ban pitfall-escape-path-separator warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_.-])tr[[:space:]]+(-s[[:space:]]+)?[''"]?/[''"]?[[:space:]]+[''"]?[^[:space:]''"\\<>|;&)]' unless '^[[:space:]]*#|^([^"]*"[^"]*")*[^"]*"[^"]*tr[[:space:]]|^([^'']*''[^'']*'')*[^'']*''[^'']*tr[[:space:]]' -- Escape the escape character (% as %25), then the separator (/ as %2F), before joining path parts; a plain substitution maps two paths to one name.
+# pitfall: A hook that dies is not a hook that said no. -> none: Gate registration is checked by tests; advisory hooks omit onFailure on purpose.
+# pitfall: A file's extension doesn't say whether it's behaviour. -> none: Path-based classification has no single-line signature; extensions also serve docs.
+# pitfall: Two spellings of the same repo are not equal strings. -> none: Comparing slugs depends on the fields; no literal one-line signature.
+# pitfall: A line scanner for Markdown settings must treat fences and HTML comments as literal inside each other. -> none: Scanner state design across lines; no single added line shows the bug.
+# pitfall: An encoding that joins path parts must escape its own separator and escape character first. -> pitfall-escape-path-separator
+# pitfall: A filter by branch name also matches other repositories' branches of that name. -> pitfall-filter-by-branch-name
+# pitfall: A doc must not widen an opt-in beyond its marker. -> none: Describes prose in docs; no code line carries the bug.
+# pitfall: A shell runs a trap only after its foreground command returns. -> none: TERM traps are common and correct; the bug is the command's shape.
