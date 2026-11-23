@@ -304,10 +304,11 @@ check_settings() {
 			echo "install: info: orchestrated mode's hint hook isn't registered (optional). To use it, add:"
 			printf '%s\n' "$hint"
 		fi
-		# The hygiene lint's edit hook (hooks/lint.sh hook) is in the managed drop-in; without one, user settings need it. It
-		# never blocks, so this stays information.
-		if [ -z "$managed_ok" ] && [ -n "$lint_hook" ] && ! jqs -e 'any(.hooks.PostToolUse[]?.hooks[]?; type == "object" and (.command | tostring | test("lint[.]sh hook$")))' "$settings" >/dev/null 2>&1; then
-			echo "install: info: the hygiene lint's edit hook (PostToolUse) isn't registered in $settings (optional; the pre-commit check works without it). To use it, add:"
+		# The edit hooks (hooks/lint.sh hook and hooks/pitfall-lint.sh hook) are in the managed drop-in; without one, user settings
+		# need them. They never block, so this stays information. The lint's pattern starts at a path separator, since
+		# `pitfall-lint.sh hook` ends the same way.
+		if [ -z "$managed_ok" ] && [ -n "$lint_hook" ] && ! jqs -e 'def reg(p): any(.hooks.PostToolUse[]?.hooks[]?; type == "object" and (.command | tostring | test(p))); reg("(^|/)lint[.]sh hook$") and reg("(^|/)pitfall-lint[.]sh hook$")' "$settings" >/dev/null 2>&1; then
+			echo "install: info: the edit hooks (PostToolUse: the hygiene lint's and the pitfall check's) aren't both registered in $settings (optional; the pre-commit check works without them). To use them, add:"
 			printf '%s\n' "$lint_hook"
 		fi
 		# Under Claude Code's fork mode a subagent's Agent call returns at once, so the PR loop's implementer never

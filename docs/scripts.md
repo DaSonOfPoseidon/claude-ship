@@ -538,6 +538,46 @@ missing; a section only in `CLAUDE.md` doesn't count): the loop runs on its defa
 tells the user once, offering to add the section from `templates/AGENTS.md` and never adding it unasked, since
 `merge: yes` is a per-repo opt-in (claude-ship #260). The local loop's hint is unchanged.
 
+## `hooks/pitfall-lint.sh`
+
+Links `docs/pitfalls.md` to the hygiene lint's rules (claude-ship #313). It reads a repo's entries and the ledger and has two
+modes; neither writes to the repo.
+
+**Titles.** An entry is a line starting `- **`. Its title is the text after that up to the next `**` outside backticks, so a
+title may hold a quoted `` `**` ``. When the closing `**` isn't on the line, the title continues on the following lines, each
+trimmed and joined with a single space; a blank line, a heading or the next `- ` line ends an entry that never closed (it has
+no title). Titles are compared as exact strings.
+
+**Ledger.** The `# pitfall: <title> -> <outcome>` lines (from column 0, with something after the `->`) of two files, whose union
+counts: the checkout's `.github/claude-ship/lint` and the default branch's. The default branch is found as `lint.sh` finds it,
+without the network: `origin/HEAD`, `origin/main`, `origin/master`, then `HEAD`. A ledger line counts whether only the checkout has it (a lint branch in progress) or only the default branch has it (merged,
+while the checkout is older). A ledger line for an entry that no longer exists is ignored. The matching is a prefix test on
+`# pitfall: <title> -> ` (not a split of the line), so a title that holds ` -> ` is no problem.
+
+**`pending [<dir>]`** prints the titles of `<dir>`'s repository (default: the current directory; outside git, `<dir>` itself)
+that no ledger line names, one per line: the queue of a backfill. No `docs/pitfalls.md` prints nothing. Exit 0, or 2 when it
+can't read a file or git (a message on stderr), or on a usage error.
+
+**`hook`** is the `PostToolUse` hook for `Write|Edit|MultiEdit` (`settings/claude-ship.json`, no `onFailure`; the settings are
+managed, so it runs on every edit in every repo). Hooks can't start agents, so it can only ask, as
+`orchestrate-hint.sh` does. The order matters for cost: the first stage is one `jq` call and a path test, with no git or gh;
+the `file_path` must end in `docs/pitfalls.md` (relative to the payload's `cwd` when not absolute) and, after one
+`git rev-parse --show-toplevel`, resolve (symlinks included) to `<toplevel>/docs/pitfalls.md`. Every other edit exits there.
+Then it needs the agent it asks for, `agents/ship-lint-author.md`, installed (under `${CLAUDE_HOME:-~/.claude}`; until it is, the
+hook is silent, so the advice never names an agent or procedure the machine lacks), `AGENTS.md` with a `## Code Review Rules`
+and a commit to compare with. The new titles are the pending ones that
+`git show HEAD:docs/pitfalls.md` lacks, so rewording an old entry's body, or a Write of the whole file in a repo that was never
+backfilled, advises only for what the edit added (a renamed title counts as new, since the ledger names the exact title). A
+title advised before in this session and repo is skipped: one empty mark file per session, repo and title under
+`${TMPDIR:-/tmp}/claude-ship-pitfall`, written after the advice is given. With new titles left, `CLAUDE_AUTONOMOUS` is read with
+`gh variable get` as `orchestrate-hint.sh` does (a missing variable is off and a failing lookup is silence, neither makes a
+mark, so the next edit asks again). The advice is an `additionalContext` that names up to 20 titles (the rest wait for the
+next edit; the titles are marked as data from the file), the file's absolute path, the toplevel and the default branch, and
+says: don't stop the task; start a background `ship-lint-author` with them; a `ship-implementer` doesn't start one but puts
+the titles on a `pitfalls:` line of its report; ship the author's `branch:` as its own PR after the task
+(`skills/ship/pitfall-lint.md`). A payload that isn't an object, a field of another type, a session id with other than id
+characters, no `jq`, `REVIEW_GATE_INNER` set, any git or gh failure: no output, exit 0.
+
 ## `hooks/explorer-bash.sh`
 
 A PreToolUse hook in `agents/ship-explorer.md`'s frontmatter (claude-ship #68). The explorer reads issue and PR
@@ -775,8 +815,9 @@ More than one gives a warning that the gate is registered N times, then the usua
 differs, named 1st, 2nd, and so on; "The gate is registered" prints only for exactly one hook with no warnings. The orchestrate hint hook is
 optional: a missing one only prints an info line. So does a missing `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}`
 (only the string `"0"` counts): the PR loop needs it, because under fork mode a subagent's Agent call returns at
-once (#160). The same goes for the lint's `PostToolUse` entry (`lint.sh hook`) when the drop-in isn't used: an info line
-gives the README's snippet if `settings.json` has no hook running `lint.sh hook`.
+once (#160). The same goes for the `PostToolUse` entry (`lint.sh hook` and `pitfall-lint.sh hook`) when the drop-in isn't used: an info
+line gives the README's snippet if `settings.json` lacks a hook running either (each is matched from a path separator, so
+`pitfall-lint.sh hook` doesn't count as the lint's).
 
 It creates `$dest/claude-ship/lint` (the install's lint rules) with a commented header when it is missing, and never
 overwrites it, follows a symlink there or sets the immutable flag on it: it is the user's file. As root under `sudo` the

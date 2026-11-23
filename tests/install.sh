@@ -304,11 +304,11 @@ run_case all-wrong
 expect all-wrong 0 3
 has all-wrong "$expected_matcher"
 
-# The lint's edit hook (PostToolUse) is optional information: without it in the settings (and no drop-in), the output gives
-# the snippet; with it, nothing. Neither changes the exit status or counts as a warning.
+# The edit hooks (PostToolUse: the lint's and the pitfall check's) are optional information: without both in the settings (and no
+# drop-in), the output gives the snippet; with both, nothing. Neither changes the exit status or counts as a warning.
 lint_snippet=$(snippet_of PostToolUse)
-printf '%s' "$lint_snippet" | jq -e '.hooks.PostToolUse[0].hooks[0].command | test("lint[.]sh hook$")' >/dev/null 2>&1 || {
-	echo "FAIL: README.md has no PostToolUse snippet for lint.sh hook"
+printf '%s' "$lint_snippet" | jq -e '(.hooks.PostToolUse[0].hooks[0].command | test("^[^ ]*/lint[.]sh hook$")) and (.hooks.PostToolUse[0].hooks[1].command | test("/pitfall-lint[.]sh hook$"))' >/dev/null 2>&1 || {
+	echo "FAIL: README.md has no PostToolUse snippet for lint.sh hook and pitfall-lint.sh hook"
 	fail=1
 }
 gate_with '.'
@@ -324,6 +324,18 @@ gate_with --argjson l "$(printf '%s' "$lint_snippet" | jq -c .)" '.hooks.PostToo
 run_case lint-hook-other
 expect lint-hook-other 0 0
 has lint-hook-other "PostToolUse"
+
+# Each of the two edit hooks is judged on its own: `pitfall-lint.sh hook` doesn't stand in for `lint.sh hook`, and a user
+# settings file with only the lint's hook is told about the pitfall hook.
+gate_with --argjson l "$(printf '%s' "$lint_snippet" | jq -c .)" '.hooks.PostToolUse = ($l.hooks.PostToolUse | .[0].hooks |= [.[1]])'
+run_case lint-hook-only-pitfall
+expect lint-hook-only-pitfall 0 0
+has lint-hook-only-pitfall "PostToolUse"
+gate_with --argjson l "$(printf '%s' "$lint_snippet" | jq -c .)" '.hooks.PostToolUse = ($l.hooks.PostToolUse | .[0].hooks |= [.[0]])'
+run_case pitfall-hook-missing
+expect pitfall-hook-missing 0 0
+has pitfall-hook-missing "PostToolUse"
+has pitfall-hook-missing '"command": "~/.claude/hooks/pitfall-lint.sh hook"'
 
 # The command written with the absolute path counts as registered.
 gate_with --arg c "$tmp/case-abs-command/hooks/review-gate.sh" '.hooks.PreToolUse[0].hooks[0].command = $c'
