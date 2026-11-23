@@ -3,5 +3,8 @@
   "hooks": [{"type": "command", "command": "~/.claude/hooks/review-gate.sh", "timeout": 2400, "onFailure": "block"}]
 }], "PostToolUse": [{
   "matcher": "Write|Edit|MultiEdit",
-  "hooks": [{"type": "command", "command": "~/.claude/hooks/lint.sh hook", "timeout": 30}]
+  "hooks": [
+    {"type": "command", "command": "~/.claude/hooks/lint.sh hook", "timeout": 30},
+    {"type": "command", "command": "~/.claude/hooks/pitfall-lint.sh hook", "timeout": 30}
+  ]
 }]}}

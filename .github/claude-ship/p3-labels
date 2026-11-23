@@ -28,6 +28,7 @@ tests/unit-state.sh      area:skill
 tests/worktree-sweep.sh  area:skill
 tests/orchestrate-hint.sh area:gate
 tests/lint.sh            area:gate
+tests/pitfall-lint.sh   area:gate
 .github/workflows/*      area:action
 .github/claude-ship/*    area:gate
 install.sh               area:install

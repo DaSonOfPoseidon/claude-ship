@@ -12,6 +12,8 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
 - `skills/ship/orchestrate.md`, `agents/`, `hooks/orchestrate-hint.sh`, `hooks/explorer-bash.sh` and
   `hooks/codex-bash.sh`: the optional orchestrated mode (below).
+- `hooks/pitfall-lint.sh`: lists the `docs/pitfalls.md` entries that no lint rule covers, and asks the session for a lint
+  author when an edit adds one (Pitfalls and lint rules, below).
 - `action.yml` and `scripts/codex-status.sh`: the `codex-review` action. In GitHub Actions it sets the `codex-review` commit
   status that branch protection requires (success once Codex reviewed the PR's head and every Codex thread is
   resolved). Opted-in repos call it through the reusable workflow `.github/workflows/codex-status.yml` from a
@@ -169,8 +171,9 @@ The drop-in applies to every Claude Code user of the machine, and its hook is `~
 the session. On a machine with other Claude Code users, run `./install.sh` for each of them first (`CLAUDE_HOME=<their
 ~/.claude>`), or remove the drop-in (`sudo chattr -i /etc/claude-code /etc/claude-code/managed-settings.d /etc/claude-code/managed-settings.d/claude-ship.json`, then delete the file) and keep the gate in user
 settings: a user without the gate installed gets every matching tool call blocked, since the hook is missing and fails closed.
-The drop-in also registers the hygiene lint's edit hook, `~/.claude/hooks/lint.sh hook`, for the same users; it has no
-`onFailure`, so for a user without the install it only shows a non-blocking hook error after each file edit.
+The drop-in also registers two edit hooks for the same users, the hygiene lint's `~/.claude/hooks/lint.sh hook` and the pitfall
+hook's `~/.claude/hooks/pitfall-lint.sh hook`; neither has an `onFailure`, so for a user without the install they only show a
+non-blocking hook error after each file edit.
 
 After installing, restart Claude Code and check that `/status` lists "Enterprise managed settings (drop-ins)". The
 drop-in has the same hook as the snippet below, so while you keep that snippet, Claude Code runs the gate once; once
@@ -194,14 +197,18 @@ and blocks every call without it.
 value that differs); it never edits `settings.json`. A gate registered in the drop-in counts: without the entry above it
 reports the drop-in instead of failing.
 
-The hygiene lint also checks each file edit as Claude makes it (Hygiene lint, below). The drop-in has this hook too; in
-`~/.claude/settings.json` it is:
+The hygiene lint also checks each file edit as Claude makes it (Hygiene lint, below), and a second hook asks for a lint rule
+when an edit adds an entry to `docs/pitfalls.md` (Pitfalls and lint rules, below). The drop-in has both hooks; in
+`~/.claude/settings.json` they are:
 
 ```json
-{"hooks": {"PostToolUse": [{"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "~/.claude/hooks/lint.sh hook", "timeout": 30}]}]}}
+{"hooks": {"PostToolUse": [{"matcher": "Write|Edit|MultiEdit", "hooks": [
+  {"type": "command", "command": "~/.claude/hooks/lint.sh hook", "timeout": 30},
+  {"type": "command", "command": "~/.claude/hooks/pitfall-lint.sh hook", "timeout": 30}
+]}]}}
 ```
 
-It has no `onFailure` on purpose: it runs after the write, so it can't undo it, and a failure of its own must never block.
+They have no `onFailure` on purpose: they run after the write, so they can't undo it, and a failure of their own must never block.
 `./install.sh` also creates `~/.claude/claude-ship/lint` (a commented header, no rules) when it is missing, and never
 overwrites or locks it; that is the file you edit to tune the lint for this install.
 
@@ -364,6 +371,25 @@ Each hit's message says what to do instead.
 | `new-comment` | off | every added comment except a shebang: turn it on with `new-comment warn` (or `error`) for a no-comments policy |
 
 Tune any of them in your own file, for example `new-suppression off tests/*`, `skipped-test error` or `* off`.
+
+## Pitfalls and lint rules
+
+`docs/pitfalls.md` lists classes of bug past reviews caught; some have a literal signature that the hygiene lint could flag.
+`hooks/pitfall-lint.sh` links the two (claude-ship #313). An entry is a line starting `- **`, and its bold text is its title.
+The ledger is the `# pitfall: <title> -> <rule-id>[, <rule-id>]` (or `-> none: <reason>`) comment lines of
+`.github/claude-ship/lint` (`hooks/lint-rules` has the grammar). An entry is *pending* while no ledger line names its exact
+title. The ledger is read from the checkout's file and the default branch's together.
+
+```
+~/.claude/hooks/pitfall-lint.sh pending [<dir>]   # the pending titles of <dir>'s repository, one per line
+```
+
+A `PostToolUse` hook (`pitfall-lint.sh hook`, registered in the drop-in and in the Install section's snippet) watches every
+Write, Edit and MultiEdit. When one changes the toplevel `docs/pitfalls.md` in a repo with a `## Code Review Rules` and
+`CLAUDE_AUTONOMOUS` `true`, and an entry in it is pending and absent from `HEAD`'s copy, it adds context that asks the session
+to start a background `ship-lint-author` agent (once that agent is installed; until then the hook is silent) for the new entries without stopping its task, and to ship the branch that
+agent reports as its own PR afterwards. It asks once per session and entry. An edit of an old entry, of another file, a repo
+with no commit or no opt-in, and any error add nothing: the hook only advises and never blocks or writes to the repo.
 
 ## Costs
 

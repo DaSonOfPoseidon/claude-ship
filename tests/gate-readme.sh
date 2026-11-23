@@ -54,7 +54,7 @@ if [ "$want" != "$got" ]; then
 	fail=1
 fi
 if [ "$(jq -c 'keys' "$dropin")" != '["hooks"]' ] || [ "$(jq -c '.hooks | keys' "$dropin")" != '["PostToolUse","PreToolUse"]' ]; then
-	echo "FAIL: settings/claude-ship.json holds more than the gate's PreToolUse hook and the lint's PostToolUse hook"
+	echo "FAIL: settings/claude-ship.json holds more than the gate's PreToolUse hook and the PostToolUse hooks of the lint and the pitfall check"
 	fail=1
 fi
 # The lint's PostToolUse hook (hooks/lint.sh hook): the README's snippet and the drop-in register the same one, and it must not
@@ -71,8 +71,13 @@ elif [ "$(printf '%s' "$post" | jq -cS '.hooks.PostToolUse')" != "$(jq -cS '.hoo
 	echo "FAIL: settings/claude-ship.json registers a different PostToolUse hook than the README's snippet"
 	fail=1
 fi
-if ! jq -e '.hooks.PostToolUse[0] | .matcher == "Write|Edit|MultiEdit" and (.hooks | length == 1) and (.hooks[0].command | test("lint[.]sh hook$")) and (.hooks[0] | has("onFailure") | not)' "$dropin" >/dev/null 2>&1; then
-	echo "FAIL: the drop-in's PostToolUse hook isn't lint.sh hook on Write|Edit|MultiEdit without onFailure"
+if ! jq -e '.hooks.PostToolUse | length == 1 and (.[0] | .matcher == "Write|Edit|MultiEdit" and (.hooks | length == 2) and (.hooks[0].command | test("lint[.]sh hook$")) and (.hooks | all(has("onFailure") | not)))' "$dropin" >/dev/null 2>&1; then
+	echo "FAIL: the drop-in's PostToolUse entry isn't lint.sh hook and pitfall-lint.sh hook on Write|Edit|MultiEdit without onFailure"
+	fail=1
+fi
+# The pitfall hook (hooks/pitfall-lint.sh hook) is the second command of that entry: advisory like the lint's, so no onFailure.
+if ! jq -e '.hooks.PostToolUse[0].hooks[1] | (.command | test("/pitfall-lint[.]sh hook$")) and .type == "command" and (.timeout | type == "number")' "$dropin" >/dev/null 2>&1; then
+	echo "FAIL: the drop-in's second PostToolUse command isn't pitfall-lint.sh hook"
 	fail=1
 fi
 
