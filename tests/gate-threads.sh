@@ -12,7 +12,9 @@ mkdir -p "$tmp/rbin" "$tmp/home"
 link_shfmt "$tmp/home"
 gate_git_hooks "$tmp/home"
 export HOME="$tmp/home"
-# PR_LIST: fail, empty, or a PR number. GQL: fail, empty, or thread (one thread line).
+# PR_LIST: fail, empty, or a PR number. PR_JSON, when set, is the list gh would print before --jq (the PRs with
+# their number and isCrossRepository), and the fake runs the caller's own --jq over it, as gh does. GQL: fail, empty,
+# or thread (one thread line).
 cat >"$tmp/rbin/gh" <<'EOT'
 #!/bin/sh
 if [ "$1 $2" = "repo view" ]; then
@@ -20,6 +22,15 @@ if [ "$1 $2" = "repo view" ]; then
 	exit 0
 fi
 if [ "$1 $2" = "pr list" ]; then
+	if [ -n "${PR_JSON:-}" ]; then
+		expr=
+		while [ $# -gt 0 ]; do
+			[ "$1" = --jq ] && expr=$2
+			shift
+		done
+		printf '%s' "$PR_JSON" | jq -r "$expr"
+		exit
+	fi
 	case ${PR_LIST:-empty} in
 	fail)
 		echo "gh: HTTP 502" >&2
@@ -173,6 +184,38 @@ errs threads-fail "couldn't read the unresolved review threads of PR #7"
 push PR_LIST=7 GQL=thread
 check threads-fail-then-ok 0 1
 prompt_has threads-fail-then-ok 'Codex says: fix the quoting'
+
+# A fork's PR from a branch of the same name comes first and ours second: ours is the PR (claude-ship #317), so its
+# threads are quoted and the fork's number appears nowhere.
+fixture
+push PR_JSON='[{"number":5,"isCrossRepository":true},{"number":7,"isCrossRepository":false}]' GQL=thread
+check fork-first 0 1
+prompt_has fork-first '## Unresolved review threads on PR #7'
+prompt_lacks fork-first 'PR #5'
+
+# Only a fork's PR is open: no PR, so no threads section.
+fixture
+push PR_JSON='[{"number":5,"isCrossRepository":true}]' GQL=thread
+check fork-only 0 1
+prompt_lacks fork-only 'Unresolved review threads'
+
+# An empty list is no PR.
+fixture
+push PR_JSON='[]' GQL=thread
+check empty-list 0 1
+prompt_lacks empty-list 'Unresolved review threads'
+
+# An entry without the field could be a fork's, so the lookup fails and the push is blocked (also when a good entry
+# comes first); the next push, with the field back, is reviewed.
+fixture
+push PR_JSON='[{"number":7}]' GQL=thread
+check no-field 2 0
+errs no-field "couldn't read the open PR for feat"
+push PR_JSON='[{"number":7,"isCrossRepository":false},{"number":8}]' GQL=thread
+check no-field-second 2 0
+push PR_JSON='[{"number":7,"isCrossRepository":false}]' GQL=thread
+check no-field-then-ok 0 1
+prompt_has no-field-then-ok '## Unresolved review threads on PR #7'
 
 # A git log or git diff that fails while the prompt is built must not read as an empty section or an empty diff.
 fixture
