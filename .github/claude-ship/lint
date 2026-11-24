@@ -81,3 +81,4 @@ ban pitfall-config-by-grep warn *.sh,*.bash,!tests/* '(^|[^[:alnum:]_])grep[[:sp
 # pitfall: `git status --porcelain` does not list ignored files. -> none: Plain status is correct for tracked changes; the sweep reads --ignored.
 # pitfall: A script that both computes and publishes a value publishes under the wrong identity when run by hand. -> none: Publish guard is on other lines; a lone statuses call is correct.
 # pitfall: `pgrep -f` matches the command line of the shell running it. -> none: a Bash tool command, which lint.sh never reads
+# pitfall: awk reads an operand `name=value` as an assignment, not a file. -> none: the operand is a shell variable in any script, and the bug is a missing `./`, which no one line shows.
