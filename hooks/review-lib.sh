@@ -2,8 +2,8 @@
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
 # The review gate's reviewer pieces, shared by hooks/review-gate.sh and the eval runner (tests/evals/run.sh), so the
-# runner measures the prompts and flags the gate really uses. Sourced, never run: it defines functions and two
-# schemas and does nothing else. Design notes: docs/gate.md › Reviewer pipeline, and › Changing prompts or models.
+# runner measures the prompts and flags the gate really uses. Sourced, never run: it defines functions, two schemas and
+# the finder's effort, and does nothing else. Design notes: docs/gate.md › Reviewer pipeline, and › Changing prompts or models.
 #
 # The functions read the caller's variables, named in each header. They never exit the shell: a failure is a
 # non-zero status (or an empty result) for the caller to turn into a block, an error or a skipped case.
@@ -13,6 +13,11 @@
 # JSON schemas of the finder's (and docs check's) and the verifier's structured output.
 findings_schema='{"type":"object","required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","required":["file","line","severity","summary","failure_scenario"],"properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"enum":["P0","P1","P2","P3"]},"category":{"type":"string"},"summary":{"type":"string"},"failure_scenario":{"type":"string"}}}}}}'
 verify_schema='{"type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["index","verdict","reason"],"properties":{"index":{"type":"integer"},"verdict":{"enum":["confirmed","rejected","uncertain"]},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}'
+
+# The reasoning effort the finder runs at (`claude --effort`, run_claude's last argument): the user's decision of
+# 2026-11-24 (claude-ship #72), under measurement. The verifier and the docs check pass none, so they run at their model's
+# default. The eval runner starts from this value too (--effort-finder).
+finder_effort=high
 
 # rules_of <ref>: prints the text of `## Code Review Rules` in <ref>'s AGENTS.md, without its heading. The status says
 # what was found: 0 = the file is there (the text is empty when it has no such section), 1 = <ref> has no AGENTS.md,
@@ -333,18 +338,20 @@ build_verify_prompt() {
 	} >"$1"
 }
 
-# run_claude <stage> <model> <prompt file> <schema> <output file> <seconds> <repo> <head>: runs one headless reviewer
-# and logs its cost to $costs (the gate's review-costs.jsonl). It reads only: no shell, no MCP or plugin tools, and
-# the branch's own CLAUDE.md, hooks and settings don't load (docs/gate.md › Reviewer pipeline). Returns claude's
-# (or timeout's) exit status; stderr goes to <output file>.err.
+# run_claude <stage> <model> <prompt file> <schema> <output file> <seconds> <repo> <head> [<effort>]: runs one headless
+# reviewer and logs its cost to $costs (the gate's review-costs.jsonl). It reads only: no shell, no MCP or plugin tools,
+# and the branch's own CLAUDE.md, hooks and settings don't load (docs/gate.md › Reviewer pipeline). <effort> (low, medium,
+# high, xhigh or max) goes to claude as `--effort`, as one argument; empty or absent passes none, so the model runs at its
+# own default. The cost row's `effort` is that value, or `default` when none was passed. Returns claude's (or timeout's)
+# exit status; stderr goes to <output file>.err.
 run_claude() {
 	REVIEW_GATE_INNER=1 timeout "$6" claude -p --model "$2" --no-session-persistence --safe-mode --restricted \
-		--tools Read,Grep,Glob --strict-mcp-config --allowedTools Read Grep Glob \
+		--tools Read,Grep,Glob --strict-mcp-config --allowedTools Read Grep Glob ${9:+--effort "$9"} \
 		--output-format json --json-schema "$4" <"$3" >"$5" 2>"$5.err"
 	rc=$?
 	mkdir -p "$(dirname "$costs")"
-	jq -c --arg repo "$7" --arg head "$8" --arg stage "$1" --arg model "$2" --arg rc "$rc" \
-		'{date: (now | todate), repo: $repo, head: $head, stage: $stage, model: $model, rc: ($rc | tonumber),
+	jq -c --arg repo "$7" --arg head "$8" --arg stage "$1" --arg model "$2" --arg rc "$rc" --arg effort "${9:-default}" \
+		'{date: (now | todate), repo: $repo, head: $head, stage: $stage, model: $model, effort: $effort, rc: ($rc | tonumber),
 		  cost_usd: (.total_cost_usd // null), findings: ((.structured_output.findings // .structured_output.verdicts // []) | length)}' \
 		"$5" >>"$costs" 2>/dev/null
 	return "$rc"

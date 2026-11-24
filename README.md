@@ -411,7 +411,7 @@ entries, and it runs only in an opted-in repo or when the user asks.
 
 ## Costs
 
-Every reviewer run appends `{date, repo, head, stage, model, cost_usd, findings}` to
+Every reviewer run appends `{date, repo, head, stage, model, effort, rc, cost_usd, findings}` to
 `~/.claude/state/review-costs.jsonl`.
 
 To measure what a PR cost to build, run `~/.claude/skills/ship/token-report.sh <pr>...` from a checkout of the

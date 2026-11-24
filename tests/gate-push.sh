@@ -978,6 +978,76 @@ expect_budget REVIEW_GATE_MIN_SECS=0 2 none none 'at least 1'
 # A clock that has used the whole budget blocks as 'ran out of time'.
 expect_budget FAKE_DATE_STEP=2200 2 none none 'ran out of time'
 
+# Reasoning effort (claude-ship #72): only the finder runs at --effort high; the verifier and the docs check pass no
+# --effort, and every cost row says which effort its run had (`default` when none was passed). The fake claude in ebin
+# logs each call's arguments as one record, then finds one thing (finder), confirms it (verifier) or finds nothing (docs
+# check).
+mkdir -p "$tmp/ebin"
+cat >"$tmp/ebin/claude" <<EOT
+#!/bin/sh
+printf '%s\n' "\$@" >>"$tmp/eargv"
+echo "--" >>"$tmp/eargv"
+p=\$(cat)
+case \$p in
+*"## Findings to verify"*) printf '{"structured_output":{"verdicts":[{"index":0,"verdict":"confirmed","reason":"r"}]}}' ;;
+*)
+	case " \$* " in
+	*" sonnet "*) printf '{"structured_output":{"findings":[{"file":"a","line":1,"severity":"P2","summary":"s","failure_scenario":"f"}]}}' ;;
+	*) printf '{"structured_output":{"findings":[]}}' ;;
+	esac
+	;;
+esac
+EOT
+chmod +x "$tmp/ebin/claude"
+
+# effort_run <file to change>: a push of one changed file (x.sh is code, README.md is docs) through the gate with the
+# fake claude; leaves its calls in $tmp/eargv (one line per call) and the cost rows in the gate's costs file.
+effort_run() {
+	fixture_unreviewed
+	# The rules commit is on origin's master, so the push is only the change below (a docs-only push gets the docs check).
+	git -C "$repo" push -qf "$tmp/origin.git" HEAD:refs/heads/master
+	echo 'echo x' >"$repo/$1"
+	git -C "$repo" add "$1"
+	git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m change
+	rm -f "$tmp/eargv" "$HOME/.claude/state/review-costs.jsonl"
+	jq -nc --arg c 'git push origin HEAD' --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH="$tmp/ebin:$tmp/rbin:$PATH" sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	awk '/^--$/ { print line; line = ""; next } { line = line " " $0 } END { if (line != "") print line }' "$tmp/eargv" >"$tmp/ecalls"
+}
+# effort_rows <want>: the cost rows' "<stage>=<effort>" pairs, in order.
+effort_rows() {
+	got=$(jq -r '"\(.stage)=\(.effort)"' "$HOME/.claude/state/review-costs.jsonl" 2>/dev/null | tr '\n' ' ')
+	got=${got% }
+	if [ "$got" != "$1" ]; then
+		echo "FAIL: the cost rows' effort is '$got' (want '$1')"
+		fail=1
+	fi
+}
+effort_run x.sh
+[ "$(wc -l <"$tmp/ecalls")" = 2 ] || {
+	echo "FAIL: a code push made $(wc -l <"$tmp/ecalls") reviewer calls (want 2: finder and verifier)"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+grep ' sonnet ' "$tmp/ecalls" | grep -q ' --effort high ' || {
+	echo "FAIL: the finder's call has no '--effort high': $(grep ' sonnet ' "$tmp/ecalls")"
+	fail=1
+}
+[ "$(grep -c -e '--effort' "$tmp/ecalls")" = 1 ] || {
+	echo "FAIL: more than the finder's call passes --effort:"
+	sed 's/^/  /' "$tmp/ecalls"
+	fail=1
+}
+effort_rows 'finder=high verifier=default'
+effort_run README.md
+[ "$(wc -l <"$tmp/ecalls")" = 1 ] && ! grep -q -e '--effort' "$tmp/ecalls" || {
+	echo "FAIL: the docs check's call passes --effort (or there is not exactly one call):"
+	sed 's/^/  /' "$tmp/ecalls"
+	fail=1
+}
+effort_rows 'docs-check=default'
+
 # A gate that can't read the tool call blocks it instead of reading it as nothing (claude-ship #103): with no jq at
 # all (nojq holds only what the script runs before it looks for jq), with a jq that fails, and with input jq rejects.
 mkdir -p "$tmp/nojq" "$tmp/jbin"

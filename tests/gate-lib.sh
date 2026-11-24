@@ -403,5 +403,67 @@ if [ "$rc" != 2 ] || ! grep -q "couldn't build the reviewer's prompt" "$tmp/err"
 	fail=1
 fi
 
+# run_claude's optional 9th argument is the reasoning effort (claude-ship #72): given, it reaches claude as one
+# `--effort <value>` pair and the cost row records it; absent or empty, claude gets no --effort and the row says `default`.
+mkdir -p "$tmp/cbin"
+cat >"$tmp/cbin/claude" <<EOT
+#!/bin/sh
+printf '%s\n' "\$@" >"$tmp/cargv"
+cat >/dev/null
+printf '{"total_cost_usd":0.5,"structured_output":{"findings":[]}}'
+EOT
+chmod +x "$tmp/cbin/claude"
+echo 'prompt' >"$tmp/cprompt"
+# claude_run <effort args...>: run_claude with the fake claude and a fresh costs file; sets crc, and cargs (the argv, one
+# line) and crow (the cost row's effort).
+claude_run() {
+	rm -f "$tmp/cargv" "$tmp/costs.jsonl"
+	(
+		PATH=$tmp/cbin:$PATH
+		costs=$tmp/costs.jsonl
+		. "$root/hooks/review-lib.sh"
+		run_claude finder sonnet "$tmp/cprompt" '{}' "$tmp/cout" 60 acme/app abc123 "$@"
+	)
+	crc=$?
+	cargs=$(tr '\n' ' ' <"$tmp/cargv")
+	crow=$(jq -r '.effort' "$tmp/costs.jsonl" 2>/dev/null)
+}
+claude_run high
+case $cargs in
+*" --effort high "*) ;;
+*)
+	echo "FAIL (effort): run_claude with 'high' ran claude with: $cargs"
+	fail=1
+	;;
+esac
+[ "$crc" = 0 ] && [ "$crow" = high ] || {
+	echo "FAIL (effort): exit $crc, cost row effort '$crow' (want 0 and 'high')"
+	fail=1
+}
+for none in "" absent; do
+	if [ "$none" = absent ]; then claude_run; else claude_run ''; fi
+	case $cargs in
+	*--effort*)
+		echo "FAIL (effort '$none'): claude got --effort: $cargs"
+		fail=1
+		;;
+	esac
+	[ "$crc" = 0 ] && [ "$crow" = default ] || {
+		echo "FAIL (effort '$none'): exit $crc, cost row effort '$crow' (want 0 and 'default')"
+		fail=1
+	}
+done
+# The value is one argument whatever it holds.
+claude_run 'high x"y'
+[ "$(grep -c -x 'high x"y' "$tmp/cargv")" = 1 ] || {
+	echo "FAIL (effort): a value with a space and a quote didn't reach claude as one argument: $cargs"
+	fail=1
+}
+# The row keeps its other fields.
+jq -e '.stage == "finder" and .model == "sonnet" and .repo == "acme/app" and .head == "abc123" and .rc == 0 and .cost_usd == 0.5 and .findings == 0' "$tmp/costs.jsonl" >/dev/null || {
+	echo "FAIL (effort): the cost row lost a field: $(cat "$tmp/costs.jsonl")"
+	fail=1
+}
+
 [ "$fail" = 0 ] && echo "gate-lib: ok"
 exit "$fail"

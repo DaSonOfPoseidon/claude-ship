@@ -297,6 +297,42 @@ models=$(sed -n '/^--model$/{n;p;}' "$tmp/argv" | tr '\n' ' ')
 	echo "FAIL: the reviewers ran with models '$models' (want fm, vm and dm)"
 	fail=1
 }
+
+# Effort (claude-ship #72): the finder runs at the gate's --effort high, the verifier and docs check pass none, and
+# --effort-finder changes the finder's. calls <model>: the logged calls (one line each) whose model is <model>.
+calls() { [ -r "$tmp/argv" ] && awk '/^--$/ { print line; line = ""; next } { line = line " " $0 }' "$tmp/argv" | grep -F " $1 "; }
+effort_of() { calls "$1" | sed -n 's/.* --effort \([^ ]*\) .*/\1/p' | tr '\n' ' '; }
+rm -f "$tmp/argv"
+run --case caught --case docs
+[ "$(effort_of sonnet)" = "high " ] && [ -z "$(calls haiku | grep -e '--effort')" ] || {
+	echo "FAIL: default efforts: finder '$(effort_of sonnet)' (want 'high '), haiku calls with --effort: $(calls haiku | grep -c -e '--effort') (want 0)"
+	fail=1
+}
+rm -f "$tmp/argv"
+run --case caught --effort-finder medium
+[ "$(effort_of sonnet)" = "medium " ] || {
+	echo "FAIL: --effort-finder medium: the finder ran at '$(effort_of sonnet)'"
+	fail=1
+}
+rm -f "$tmp/argv"
+run --case caught --effort-finder default
+if [ "$rc" != 0 ] || [ -n "$(calls sonnet | grep -e '--effort')" ] || [ -z "$(calls sonnet)" ]; then
+	echo "FAIL: --effort-finder default: exit $rc, the finder's call must run with no --effort flag"
+	fail=1
+fi
+for bad in bogus '' 'high x' Max; do
+	rm -f "$tmp/argv"
+	run --case caught --effort-finder "$bad"
+	if [ "$rc" != 2 ] || [ -e "$tmp/argv" ]; then
+		echo "FAIL: --effort-finder '$bad' exited $rc (want 2, with no reviewer run)"
+		fail=1
+	fi
+done
+run --effort-finder
+if [ "$rc" != 2 ]; then
+	echo "FAIL: --effort-finder with no value exited $rc (want 2)"
+	fail=1
+fi
 run --case nonesuch
 if [ "$rc" != 2 ]; then
 	echo "FAIL: an unknown --case exited $rc (want 2)"
