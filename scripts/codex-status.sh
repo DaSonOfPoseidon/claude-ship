@@ -21,7 +21,33 @@ case $pr in
 	exit 2
 	;;
 esac
-repo=${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
+# gh_read <what> <gh args...>: runs `gh <args>` and prints its output. A failed call is tried again (#338): GitHub's API
+# now and then answers with an error or an empty body (gh: "unexpected end of JSON input"), and one such answer
+# should not cost the run. Up to 3 tries in all, CODEX_STATUS_RETRY_SLEEP seconds apart (5 by default; the tests set
+# 0). An empty answer that succeeded is data (an empty list), not a failure, and isn't retried. After the last
+# failure it says which read failed and what gh said, and returns non-zero, so `set -e` stops the script before
+# anything is posted. Only reads go through it: the status POST is a write and is never repeated.
+# Call it as the whole right side of an assignment (x=$(gh_read ...)), so the failure stops the script.
+gh_err=$(mktemp)
+trap 'rm -f "$gh_err"' EXIT
+gh_read() {
+	gh_what=$1
+	shift
+	gh_tries=0
+	while :; do
+		gh_tries=$((gh_tries + 1))
+		# The if keeps set -e from stopping at the first failure; the status stays gh's own.
+		if gh_out=$(gh "$@" 2>"$gh_err"); then
+			printf '%s\n' "$gh_out"
+			return 0
+		fi
+		[ "$gh_tries" -lt 3 ] || break
+		sleep "${CODEX_STATUS_RETRY_SLEEP:-5}"
+	done
+	echo "codex-status: reading $gh_what for #$pr failed after $gh_tries tries: $(tr '\n' ' ' <"$gh_err" | sed 's/ *$//')" >&2
+	return 1
+}
+repo=${REPO:-$(gh_read 'the repository' repo view --json nameWithOwner --jq .nameWithOwner)}
 bot='chatgpt-codex-connector[bot]'
 owner=${repo%/*}
 name=${repo#*/}
@@ -38,7 +64,7 @@ bot_reviews=
 reviews_read=
 read_reviews() {
 	[ -z "$reviews_read" ] || return 0
-	bot_reviews=$(gh api --paginate "repos/$repo/pulls/$pr/reviews" \
+	bot_reviews=$(gh_read reviews api --paginate "repos/$repo/pulls/$pr/reviews" \
 		--jq '.[] | select(.user.login == "'"$bot"'") | "\(.submitted_at) \(.commit_id)"')
 	reviews_read=1
 }
@@ -46,9 +72,9 @@ read_reviews() {
 # Each endpoint is read once, and every value below comes from that one read (#111): two reads are not one snapshot,
 # so a push or an edit between them would pair values from different moments. The filters stay in gh's `--jq`
 # (gojq), which decides which comments are trusted; local jq only decodes a JSON string. Each read is its own
-# assignment, so `set -e` stops on a failed call before anything is posted.
+# assignment, so `set -e` stops on a call that still fails after its retries (gh_read) before anything is posted.
 # The PR's head: <sha>, <repo>, <ref> separated by tabs (a deleted fork's repo reads null, as gh prints it).
-pr_line=$(gh api "repos/$repo/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // "null"), .head.ref] | join("\t")')
+pr_line=$(gh_read 'the pull request' api "repos/$repo/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // "null"), .head.ref] | join("\t")')
 # HEAD_SHA checks another commit instead, for testing against past reviews with DRY_RUN=1.
 head=${HEAD_SHA:-$(printf '%s\n' "$pr_line" | cut -f1)}
 short=$(echo "$head" | cut -c1-7)
@@ -70,7 +96,7 @@ pushes=
 case $head_repo in
 '' | null) ;;
 *)
-	pushes=$(gh api --paginate "repos/$head_repo/activity?ref=$ref" \
+	pushes=$(gh_read 'push activity' api --paginate "repos/$head_repo/activity?ref=$ref" \
 		--jq ".[] | select(.activity_type == \"push\" or .activity_type == \"force_push\" or .activity_type == \"branch_creation\") | select(.after == \"$head\") | .timestamp")
 	;;
 esac
@@ -82,7 +108,7 @@ pushed_at=$(printf '%s\n' "$pushes" | sort | tail -1 | cut -c1-19)
 #   R <created_at> <id> <eyes>      requests from the owner and collaborators; anyone can comment `@codex review`
 #   C <created_at>                  Codex's receipts, the markers of a clean review
 #   A <created_at>                  the owner's fork approvals (used below only for a fork PR)
-comment_lines=$(gh api --paginate "repos/$repo/issues/$pr/comments" --jq '.[]
+comment_lines=$(gh_read comments api --paginate "repos/$repo/issues/$pr/comments" --jq '.[]
 	| (select(.user.login == "'"$bot"'") | select(.body | contains("codex-pull-request-review-summary")) | "S \(.updated_at) \(.body | @json)"),
 	(select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "COLLABORATOR") | select(.body | test("^\\s*@codex review\\b")) | "R \(.created_at) \(.id) \(.reactions.eyes // 0)"),
 	(select(.user.login == "'"$bot"'") | select(.body | contains("codex-review-receipt")) | "C \(.created_at)"),
@@ -152,7 +178,7 @@ if [ -z "$row" ]; then
 fi
 
 # Unresolved review threads Codex started, on any commit. GraphQL drops the [bot] suffix.
-threads=$(gh api graphql --paginate -F owner="$owner" -F name="$name" -F pr="$pr" -f query='
+threads=$(gh_read 'review threads' api graphql --paginate -F owner="$owner" -F name="$name" -F pr="$pr" -f query='
 	query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
 		repository(owner: $owner, name: $name) {
 			pullRequest(number: $pr) {
@@ -212,7 +238,7 @@ if [ -n "$req" ] && [ -n "$pushed_at" ] && { [ "$req" = "$pushed_at" ] || later 
 			unacked=
 		elif [ "$latest_eyes" -gt 0 ]; then
 			# The list shows only a count, and anyone can react, so only the bot's own 👀 counts.
-			mine=$(gh api --paginate "repos/$repo/issues/comments/$latest_id/reactions" \
+			mine=$(gh_read reactions api --paginate "repos/$repo/issues/comments/$latest_id/reactions" \
 				--jq ".[] | select(.content == \"eyes\") | select(.user.login == \"$bot\") | 1")
 			[ -z "$mine" ] || unacked=
 		fi
