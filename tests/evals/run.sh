@@ -4,13 +4,15 @@
 # docs/gate.md › Changing prompts or models.
 #
 # usage: tests/evals/run.sh [--case <name>]... [--model-finder <m>] [--model-verifier <m>] [--model-docs <m>]
-#                           [--prompt-dir <dir>] [--cases-dir <dir>] [--repo <dir>] [--timeout <s>] [--json] [--check]
+#                           [--effort-finder <level>] [--prompt-dir <dir>] [--cases-dir <dir>] [--repo <dir>] [--timeout <s>] [--json] [--check]
 #
 # Each case (cases/<name>/case.json and change.diff) is a diff applied on a commit of this repo (`base`), with the
 # findings a reviewer should report. The runner makes a temporary detached worktree at `base`, commits the diff there,
 # builds the prompt as the gate would at that base (hooks/review-lib.sh: the rules, with their path rules applied, checklist, pitfalls and false positives are read from
 # `base`, not from the working tree), and runs the gate's stages with the gate's flags: the Sonnet finder, then the
-# Haiku verifier (a docs case gets the Haiku claims check and no verifier). --prompt-dir takes the lib and the prompts
+# Haiku verifier (a docs case gets the Haiku claims check and no verifier). The finder runs at the gate's effort (high);
+# --effort-finder takes low, medium, high, xhigh or max, or `default` to pass no --effort. The verifier and docs check pass
+# none. --prompt-dir takes the lib and the prompts
 # from another directory, so a changed prompt can be measured before it is deployed. Cost rows go to a temporary file,
 # not to the gate's review-costs.jsonl.
 #
@@ -30,7 +32,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 
 usage() {
-	echo "usage: tests/evals/run.sh [--case <name>]... [--model-finder <m>] [--model-verifier <m>] [--model-docs <m>] [--prompt-dir <dir>] [--cases-dir <dir>] [--repo <dir>] [--timeout <s>] [--json] [--check]" >&2
+	echo "usage: tests/evals/run.sh [--case <name>]... [--model-finder <m>] [--model-verifier <m>] [--model-docs <m>] [--effort-finder <level>] [--prompt-dir <dir>] [--cases-dir <dir>] [--repo <dir>] [--timeout <s>] [--json] [--check]" >&2
 	exit 2
 }
 
@@ -38,6 +40,9 @@ want=
 mfinder=sonnet
 mverifier=haiku
 mdocs=haiku
+# The finder's effort: empty until the lib is read, then the gate's (finder_effort); `default` passes none.
+effort_finder=
+effort_given=
 promptdir=$root/hooks
 cases=$here/cases
 repo=$root
@@ -56,7 +61,7 @@ while [ $# -gt 0 ]; do
 		shift
 		continue
 		;;
-	--case | --model-finder | --model-verifier | --model-docs | --prompt-dir | --cases-dir | --repo | --timeout) ;;
+	--case | --model-finder | --model-verifier | --model-docs | --effort-finder | --prompt-dir | --cases-dir | --repo | --timeout) ;;
 	*) usage ;;
 	esac
 	[ $# -ge 2 ] || {
@@ -68,6 +73,10 @@ while [ $# -gt 0 ]; do
 	--model-finder) mfinder=$2 ;;
 	--model-verifier) mverifier=$2 ;;
 	--model-docs) mdocs=$2 ;;
+	--effort-finder)
+		effort_finder=$2
+		effort_given=1
+		;;
 	--prompt-dir) promptdir=$2 ;;
 	--cases-dir) cases=$2 ;;
 	--repo) repo=$2 ;;
@@ -81,6 +90,15 @@ case $secs in
 	exit 2
 	;;
 esac
+if [ -n "$effort_given" ]; then
+	case $effort_finder in
+	low | medium | high | xhigh | max | default) ;;
+	*)
+		echo "run.sh: --effort-finder takes low, medium, high, xhigh, max or default" >&2
+		exit 2
+		;;
+	esac
+fi
 
 need() {
 	command -v "$1" >/dev/null 2>&1 || {
@@ -186,6 +204,10 @@ costs=$work/review-costs.jsonl
 # shellcheck disable=SC1091 # the lib is chosen at run time
 . "$promptdir/review-lib.sh"
 dir=$promptdir
+# The finder's effort: the gate's unless given; `default` passes none. A lib from an older --prompt-dir has no effort to
+# pass (its run_claude ignores a 9th argument), so it stays empty.
+[ -n "$effort_given" ] || effort_finder=${finder_effort:-}
+[ "$effort_finder" != default ] || effort_finder=
 
 # score_of <expected JSON> <findings JSON>: prints {expected, caught, wrong_severity, missed, false_positives}.
 score_of() {
@@ -325,12 +347,14 @@ EOF
 	if [ "$kind" = docs ]; then
 		stage=docs-check
 		model=$mdocs
+		effort=
 	else
 		stage=finder
 		model=$mfinder
+		effort=$effort_finder
 	fi
 	out=$work/$name.$stage.json
-	run_claude "$stage" "$model" "$prompt" "$findings_schema" "$out" "$secs" evals "$head"
+	run_claude "$stage" "$model" "$prompt" "$findings_schema" "$out" "$secs" evals "$head" "$effort"
 	rc=$?
 	cost=$(cost_of "$out")
 	stage_cost=$cost

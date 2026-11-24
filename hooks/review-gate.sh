@@ -1846,7 +1846,7 @@ if [ -z "$reviewed" ] && [ -n "$skipped" ]; then
 fi
 kind=$(kind_of "$reviewed")
 
-# Runs a headless reviewer: run_reviewer <stage> <model> <prompt file> <schema> <output file>. It reads only:
+# Runs a headless reviewer: run_reviewer <stage> <model> <prompt file> <schema> <output file> [<effort>]. It reads only:
 # no shell, no MCP or plugin tools, and the branch's own CLAUDE.md, hooks and settings don't load (docs/gate.md ›
 # Reviewer pipeline). The reviewers share one budget of REVIEW_GATE_BUDGET seconds from the gate's start (the
 # hook's timeout in settings.json must be longer): each run gets 1100 s or what is left, and none starts with
@@ -1883,7 +1883,7 @@ run_reviewer() {
 	fi
 	[ "$left" -le 1100 ] || left=1100
 	echo "review-gate: $1 ($2) on $(git rev-parse --short HEAD) ($range)..." >&2
-	run_claude "$1" "$2" "$3" "$4" "$5" "$left" "$slug" "$head"
+	run_claude "$1" "$2" "$3" "$4" "$5" "$left" "$slug" "$head" "${6:-}"
 	rc=$?
 	if [ "$rc" -ne 0 ]; then
 		mv -f "$5" "$5.failed"
@@ -2029,7 +2029,7 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 	if [ "$kind" = docs ]; then
 		run_reviewer docs-check haiku "$prompt" "$findings_schema" "$out"
 	else
-		run_reviewer finder sonnet "$prompt" "$findings_schema" "$out"
+		run_reviewer finder sonnet "$prompt" "$findings_schema" "$out" "$finder_effort"
 	fi
 fi
 

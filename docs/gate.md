@@ -605,6 +605,10 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
 
 - A Sonnet finder reports P0–P3 findings. A Haiku verifier then checks each one against the code; it may reject
   a finding only by citing the `file:line` that makes it impossible, else the finding stands.
+- The finder runs at `--effort high` (the user, 2026-11-24, #72), to find more of what Codex later finds on the PR. It is
+  under measurement: every cost row records the effort, so a few weeks of PRs can be compared with the runs before it, and
+  #72 stays open until then. The verifier and the docs check pass no `--effort`, so they run at their model's own default.
+  The level is `finder_effort` in `hooks/review-lib.sh`, the one place the gate and the eval runner read it from.
 - Confirmed P0–P2 findings block. Confirmed P3s don't: the gate files them as issues with `p3-issue.sh` (labels
   from the repo variable `CLAUDE_P3_LABELS`, default `review:p3`, plus the repo's per-file label map, and an
   optional milestone) and lists them in later prompts so they aren't found twice (#112).
@@ -669,7 +673,8 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
 - Reviewer sessions never run the hygiene lint's edit hook (the managed `PostToolUse` entry for `lint.sh hook`): its
   matcher is `Write|Edit|MultiEdit`, and the reviewers have only Read, Grep and Glob (`--tools`), so "Reviewers only read"
   holds and the hook can't write or fire there.
-- Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`.
+- Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`, with the `effort` it ran at (`default` when the
+  gate passed none: the models' own defaults aren't known to it).
 - The reviewer's prompts, schemas, run and verdict rules are in `hooks/review-lib.sh`, which the gate sources and
   `tests/evals/run.sh` uses too, so the evals measure what the gate sends (see Changing prompts or models). It is
   deployed and protected like the gate. A shell that fails to source a file exits with a status Claude Code lets
@@ -737,7 +742,7 @@ A change to what a reviewer is told or how it runs (`hooks/review-prompt.md`, `r
 bugs or fewer, and a read of the diff can't say which. So a PR that makes such a change includes a before and after
 result of `tests/evals/run.sh` in its description: the runner's output on the base and on the branch (each from its
 own checkout, or the base's with `--prompt-dir` pointing at the branch's `hooks/`), and `--model-finder` and friends
-for a model change.
+for a model change (`--effort-finder` for the finder's effort, below).
 
 **What it is.** `tests/evals/cases/<name>/` holds one case: a `change.diff` with a seeded bug (or a clean change) and a
 `case.json`: `base` (a full commit sha of this repo that the diff applies on), `kind` (`code` or `docs`, which must be
@@ -749,8 +754,10 @@ too), reading the rules, the checklist, the pitfalls and the false positives fro
 `### Path rules` in those rules apply as in the gate (the rules section, the skipped files left out of the diff, the kind judged
 on the files that stay). It then runs the gate's
 stages with the gate's flags: the Sonnet finder, then the Haiku verifier when the finder found something (a docs case
-gets the Haiku claims check and no verifier). Cost rows go to a temporary file, not to
-`~/.claude/state/review-costs.jsonl`.
+gets the Haiku claims check and no verifier). The finder runs at the gate's effort (`high`); `--effort-finder <level>`
+(`low`, `medium`, `high`, `xhigh`, `max`, or `default` to pass no `--effort`) measures another one, and a value
+outside those is a usage error (exit 2). The verifier and the docs check pass no effort, as in the gate. Cost rows
+go to a temporary file, not to `~/.claude/state/review-costs.jsonl`.
 
 **Scoring.** A finding matches an expected one when the file is the same and its line is within 3 lines. An expected
 bug is *caught* when a matching finding has its severity, a *wrong severity* when the matching findings have another
