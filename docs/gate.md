@@ -633,6 +633,15 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
     matches up to case, runs of whitespace and the gate's 120 characters. The match is exact only, with no prefix or
     fuzzy title match and no site in a later line, since a wrong match drops a real finding without filing it. A
     skipped P3 is added to `p3-filed.tsv` with the open issue's URL, so later runs skip it locally.
+- **Confidence is display only** (the owner, 2026-11-24, #116: no threshold setting). The finder and the docs check may
+  give each finding, and the verifier each verdict, an optional integer `confidence` from 0 to 100 (in the schemas, not
+  in `required`, so a model that omits it and a kept finder result from before it still parse). The gate shows it in the
+  block message (`(confidence: finder 80, verifier 65)`), in the report (a `Confidence: finder 80, verifier 65` line under
+  the finding's summary and failure; the heading line is unchanged, since `gate-stats.sh` parses it) and in the cost row
+  (`confidences`, below). A value that is missing or isn't an integer from 0 to 100 shows as `?`, which means unknown, not
+  low; a docs-only change has no verifier, so its verifier part is always `?`. The verifier is not shown the finder's
+  confidence, so it can't anchor on it. Nothing reads it to decide anything: a P2 at confidence 0 blocks, an `uncertain`
+  verdict at confidence 0 blocks, and a rejection still needs its `file:line` citation, whatever the confidence.
 - Docs-only changes get a Haiku claims check instead of a full review. A change is docs-only when every changed
   path is `*.md` or under `docs/`, except `.md` files under `hooks/`, `skills/`, `agents/` or `.claude/` and any
   `AGENTS.md` or `CLAUDE.md`: those prompts, skills, agents and rules steer Claude, so they are behaviour and get
@@ -674,7 +683,9 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   matcher is `Write|Edit|MultiEdit`, and the reviewers have only Read, Grep and Glob (`--tools`), so "Reviewers only read"
   holds and the hook can't write or fire there.
 - Every reviewer run appends its cost to `~/.claude/state/review-costs.jsonl`, with the `effort` it ran at (`default` when the
-  gate passed none: the models' own defaults aren't known to it).
+  gate passed none: the models' own defaults aren't known to it), and the run's `confidences` (#116, display only): the
+  `confidence` of each finding (finder and docs-check rows) or verdict (verifier rows), in order, each an integer 0–100 or
+  `null` for a value that is missing or bad, `[]` when the run has none.
 - The reviewer's prompts, schemas, run and verdict rules are in `hooks/review-lib.sh`, which the gate sources and
   `tests/evals/run.sh` uses too, so the evals measure what the gate sends (see Changing prompts or models). It is
   deployed and protected like the gate. A shell that fails to source a file exits with a status Claude Code lets
