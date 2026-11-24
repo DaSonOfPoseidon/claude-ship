@@ -22,10 +22,12 @@ verify_schema='{"type":"object","required":["verdicts"],"properties":{"verdicts"
 # spelling, 1.6 doesn't). Put it in front of a jq program: jq "$confidence_jq"' ... | conf'.
 confidence_jq='def confok: type == "number" and . == floor and . >= 0 and . <= 100; def conf: if confok then floor | tostring else "?" end; def confn: if confok then floor else null end;'
 
-# The reasoning effort the finder runs at (`claude --effort`, run_claude's last argument): the user's decision of
-# 2026-11-24 (claude-ship #72), under measurement. The verifier and the docs check pass none, so they run at their model's
-# default. The eval runner starts from this value too (--effort-finder).
-finder_effort=high
+# The reasoning effort the finder runs at (`claude --effort`, run_claude's last argument). Empty, so the finder runs at its
+# model's default: #72 tried `high`, and the evals reverted it (16 false positives against 7 for the same 11 of 18 caught,
+# and 22% more cost, over 3 runs each; the owner's decision, 2026-11-24). Setting a level here passes it as `--effort`. The
+# verifier and the docs check pass none, so they run at their model's default. The eval runner starts from this value too
+# (--effort-finder).
+finder_effort=
 
 # rules_of <ref>: prints the text of `## Code Review Rules` in <ref>'s AGENTS.md, without its heading. The status says
 # what was found: 0 = the file is there (the text is empty when it has no such section), 1 = <ref> has no AGENTS.md,

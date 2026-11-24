@@ -298,14 +298,14 @@ models=$(sed -n '/^--model$/{n;p;}' "$tmp/argv" | tr '\n' ' ')
 	fail=1
 }
 
-# Effort (claude-ship #72): the finder runs at the gate's --effort high, the verifier and docs check pass none, and
+# Effort (claude-ship #72): by default no reviewer passes --effort (the finder runs at its model's default), and
 # --effort-finder changes the finder's. calls <model>: the logged calls (one line each) whose model is <model>.
 calls() { [ -r "$tmp/argv" ] && awk '/^--$/ { print line; line = ""; next } { line = line " " $0 }' "$tmp/argv" | grep -F " $1 "; }
 effort_of() { calls "$1" | sed -n 's/.* --effort \([^ ]*\) .*/\1/p' | tr '\n' ' '; }
 rm -f "$tmp/argv"
 run --case caught --case docs
-[ "$(effort_of sonnet)" = "high " ] && [ -z "$(calls haiku | grep -e '--effort')" ] || {
-	echo "FAIL: default efforts: finder '$(effort_of sonnet)' (want 'high '), haiku calls with --effort: $(calls haiku | grep -c -e '--effort') (want 0)"
+[ -n "$(calls sonnet)" ] && [ -z "$(effort_of sonnet)" ] && [ -z "$(calls haiku | grep -e '--effort')" ] || {
+	echo "FAIL: default efforts: finder '$(effort_of sonnet)' (want none), haiku calls with --effort: $(calls haiku | grep -c -e '--effort') (want 0)"
 	fail=1
 }
 rm -f "$tmp/argv"

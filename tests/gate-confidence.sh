@@ -142,7 +142,7 @@ has both-report "$report" 'Confidence: finder 80, verifier 65'
 has both-failure "$report" 'Failure: the failure'
 costs both-finder-row finder '[80]'
 costs both-verifier-row verifier '[65]'
-jq -e -s '[.[] | select(.stage == "finder")][0] | .effort == "high" and .findings == 1 and .model == "sonnet"' "$costs_file" >/dev/null || {
+jq -e -s '[.[] | select(.stage == "finder")][0] | .effort == "default" and .findings == 1 and .model == "sonnet"' "$costs_file" >/dev/null || {
 	echo "FAIL (both-costs): the finder row lost a field: $(cat "$costs_file" 2>&1)"
 	fail=1
 }

@@ -605,10 +605,11 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
 
 - A Sonnet finder reports P0–P3 findings. A Haiku verifier then checks each one against the code; it may reject
   a finding only by citing the `file:line` that makes it impossible, else the finding stands.
-- The finder runs at `--effort high` (the user, 2026-11-24, #72), to find more of what Codex later finds on the PR. It is
-  under measurement: every cost row records the effort, so a few weeks of PRs can be compared with the runs before it, and
-  #72 stays open until then. The verifier and the docs check pass no `--effort`, so they run at their model's own default.
-  The level is `finder_effort` in `hooks/review-lib.sh`, the one place the gate and the eval runner read it from.
+- The finder runs at its model's default effort, with no `--effort` (the user, 2026-11-24, #72). #72 tried `--effort high`,
+  and the evals reverted it: over 3 runs each it caught the same 11 of 18 as the default, with 16 false positives against 7
+  and 22% more cost. The verifier and the docs check pass no `--effort` either. The level is `finder_effort` in
+  `hooks/review-lib.sh` (empty: none), the one place the gate and the eval runner read it from; set a level there to pass
+  it as `--effort`.
 - Confirmed P0–P2 findings block. Confirmed P3s don't: the gate files them as issues with `p3-issue.sh` (labels
   from the repo variable `CLAUDE_P3_LABELS`, default `review:p3`, plus the repo's per-file label map, and an
   optional milestone) and lists them in later prompts so they aren't found twice (#112).
@@ -765,7 +766,7 @@ too), reading the rules, the checklist, the pitfalls and the false positives fro
 `### Path rules` in those rules apply as in the gate (the rules section, the skipped files left out of the diff, the kind judged
 on the files that stay). It then runs the gate's
 stages with the gate's flags: the Sonnet finder, then the Haiku verifier when the finder found something (a docs case
-gets the Haiku claims check and no verifier). The finder runs at the gate's effort (`high`); `--effort-finder <level>`
+gets the Haiku claims check and no verifier). The finder runs at the gate's effort (none: the model's default); `--effort-finder <level>`
 (`low`, `medium`, `high`, `xhigh`, `max`, or `default` to pass no `--effort`) measures another one, and a value
 outside those is a usage error (exit 2). The verifier and the docs check pass no effort, as in the gate. Cost rows
 go to a temporary file, not to `~/.claude/state/review-costs.jsonl`.
