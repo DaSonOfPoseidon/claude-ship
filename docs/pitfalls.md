@@ -298,6 +298,9 @@ review finds a new class.
   short option) slipped through (claude-ship #290). A rule that finds an option in a command line must know which of the
   tool's options take the next word, accept an attached argument, and stop at `--`. Test each with the same word as the
   pattern, after `--`, attached, and in a cluster (`-nP`, `-Lc`).
+  The lint also skips `tests/*` and cannot read inside a quoted string, so a `GIT_SEQUENCE_EDITOR='sed -i …'` in a test went
+  unseen and the rebase fixture never stopped on macOS (claude-ship #305): hand git a small script file in POSIX utilities
+  (`sed … "$1" >"$1.t" && mv "$1.t" "$1"`), and grep `tests/` for the GNU flags by hand.
 - **A verdict checked first hides a later state.** `codex-status.sh` returned `failure` for open Codex threads before it
   looked at the request for the head, so with threads left by an earlier round, a review that was running for this head
   read as a failure: `codex-wait.sh` returned at once, and `codex-request.sh` (which treats only the plain pending as "already
@@ -332,7 +335,8 @@ review finds a new class.
   branches of merged PRs that never had a worktree piled up for good (82 of them; claude-ship #286), while `orchestrate.md`
   promised they were cleared. When a cleanup starts from one list (worktrees), also sweep the other kind of record it leaves behind
   (the branches), with its own proof that each item holds nothing more (the tip on the fetched default branch, a merged PR with
-  nothing unpushed), and never touch what another record still holds (a branch a worktree has checked out). Test each kind
+  nothing unpushed), and never touch what another record still holds (a branch a worktree has checked out, or, when the worktree list shows it detached,
+  the branch a rebase's `head-name` or a bisect's `BISECT_START` names; claude-ship #306). Test each kind
   of leftover, and the guard that keeps the live one.
 
 - **`git status --porcelain` does not list ignored files.** The `dirty:` fact and `git worktree remove` both ignore them, so

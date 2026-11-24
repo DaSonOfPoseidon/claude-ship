@@ -11,7 +11,7 @@
 # fetched. `worktree-agent-*` branches (made by Claude Code for an isolation: worktree agent) are deleted when their
 # tip is on origin's default branch. Every other branch is deleted only when unit-state.sh says `state: merged`
 # with no `unpushed:` and no `diverged:` line. The default branch and any branch a worktree has checked out (the main
-# checkout's included, a worktree whose directory is gone, and one in the middle of a rebase) are never touched. A branch in any other state is the
+# checkout's included, a worktree whose directory is gone, and one in the middle of a rebase or a bisect) are never touched. A branch in any other state is the
 # user's or a live unit's, and prints nothing. The second pass costs two gh calls per local branch.
 # Git-ignored files (build output, a `.env`) are neither a `dirty:` fact nor a reason for `git worktree remove` to refuse,
 # so they go with the worktree; the sweep lists them first (claude-ship #253). If git can't list them, the worktree stays.
@@ -173,11 +173,17 @@ awk '/^branch refs\/heads\// { print substr($0, 19) }' "$tmp/porcelain" >"$tmp/c
 
 # A worktree in the middle of a rebase lists as detached, but its rebase-merge/rebase-apply directory names the branch
 # (`refs/heads/<branch>`, or `detached HEAD`, which matches nothing here). Both backends, in the main checkout's git
-# directory and in each linked worktree's.
+# directory and in each linked worktree's. A bisect detaches the worktree too, and the branch to return to is only in
+# its BISECT_START (the short branch name, or a commit SHA when the bisect began on a detached HEAD: a SHA matches no
+# branch, and a branch of that name is kept, the safe direction). Cherry-pick, revert and merge keep HEAD on the branch.
 common=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd) || die "cannot find the git directory: no branch was deleted"
 for f in "$common"/rebase-merge/head-name "$common"/rebase-apply/head-name "$common"/worktrees/*/rebase-merge/head-name "$common"/worktrees/*/rebase-apply/head-name; do
 	[ -f "$f" ] || continue
 	sed -n '1s|^refs/heads/||p' "$f" >>"$tmp/checked" || die "reading $f failed: no branch was deleted"
+done
+for f in "$common"/BISECT_START "$common"/worktrees/*/BISECT_START; do
+	[ -f "$f" ] || continue
+	sed -n '1{s|^refs/heads/||;p;}' "$f" >>"$tmp/checked" || die "reading $f failed: no branch was deleted"
 done
 
 # held <branch>: some worktree has the branch checked out.

@@ -328,7 +328,12 @@ gone 'i5' i5
 # rb: rebased in a linked worktree (merge backend, stopped by an `edit`). ra: named by the main checkout's rebase-apply.
 unit rb
 pr rb MERGED 941
-GIT_SEQUENCE_EDITOR='sed -i s/^pick/edit/' git -C "$tmp/wt-rb" rebase -q -i main >/dev/null 2>&1
+# The todo editor is a script, not `sed -i` (GNU-only: BSD sed takes the next word as a backup suffix).
+cat >"$tmp/edit-todo.sh" <<'EOT'
+#!/bin/sh
+sed 's/^pick/edit/' "$1" >"$1.t" && mv "$1.t" "$1"
+EOT
+GIT_SEQUENCE_EDITOR="sh $tmp/edit-todo.sh" git -C "$tmp/wt-rb" rebase -q -i main >/dev/null 2>&1
 if git -C "$tmp/wt-rb" symbolic-ref -q HEAD >/dev/null; then
 	echo "FAIL: the rebase fixture did not stop with a detached HEAD"
 	fail=1
@@ -350,6 +355,59 @@ run
 want 'rebases over' 0 "removed: $tmp/wt-rb feat/rb
 deleted: feat/ra"
 gone 'rebased rb' rb
+
+# --- a branch under bisect shows as detached too; BISECT_START is the only record of the branch to return to (claude-ship
+# #306). bl: bisected in a linked worktree. bm: bisected in the main checkout. cp: a cherry-pick stopped on a conflict
+# keeps HEAD on the branch, so the worktree list holds it without a file read.
+unit bl
+commit "$tmp/wt-bl" 3
+pr bl MERGED 951
+git -C "$tmp/wt-bl" bisect start >/dev/null
+git -C "$tmp/wt-bl" bisect bad >/dev/null
+git -C "$tmp/wt-bl" bisect good main >/dev/null 2>&1
+if git -C "$tmp/wt-bl" symbolic-ref -q HEAD >/dev/null; then
+	echo "FAIL: the bisect fixture did not leave a detached HEAD"
+	fail=1
+fi
+unit cp
+git -C "$work" worktree add -q --detach "$tmp/wt-side" main
+echo conflict >>"$tmp/wt-side/f"
+git -C "$tmp/wt-side" commit -q -am side
+side=$(git -C "$tmp/wt-side" rev-parse HEAD)
+git -C "$work" worktree remove --force "$tmp/wt-side"
+pr cp MERGED 953
+git -C "$tmp/wt-cp" cherry-pick "$side" >/dev/null 2>&1
+[ -f "$work/.git/worktrees/wt-cp/CHERRY_PICK_HEAD" ] || { echo "FAIL: the cherry-pick fixture did not stop on a conflict"; fail=1; }
+git -C "$work" switch -q -c feat/bm main
+commit "$work" 4
+pr bm MERGED 952
+git -C "$work" bisect start >/dev/null
+git -C "$work" bisect bad >/dev/null
+git -C "$work" bisect good main >/dev/null 2>&1
+if git -C "$work" symbolic-ref -q HEAD >/dev/null; then
+	echo "FAIL: the main checkout's bisect fixture did not leave a detached HEAD"
+	fail=1
+fi
+run
+want 'branches of a bisect and a cherry-pick in progress' 0 "kept: $tmp/wt-bl (none) detached HEAD or no branch
+kept: $tmp/wt-cp feat/cp modified or untracked files, or unreadable"
+alive 'bisecting worktree' bl
+alive 'cherry-picking worktree' cp
+git -C "$work" rev-parse -q --verify refs/heads/feat/bm >/dev/null || { echo "FAIL: the branch under bisect in the main checkout was deleted"; fail=1; }
+# Once the bisects are over (reset returns to the branch) and the cherry-pick is aborted, the merged branches go.
+git -C "$tmp/wt-bl" bisect reset >/dev/null 2>&1
+git -C "$work" bisect reset >/dev/null 2>&1
+[ "$(git -C "$tmp/wt-bl" symbolic-ref -q HEAD)" = refs/heads/feat/bl ] || { echo "FAIL: bisect reset did not return the worktree to feat/bl"; fail=1; }
+[ "$(git -C "$work" symbolic-ref -q HEAD)" = refs/heads/feat/bm ] || { echo "FAIL: bisect reset did not return the main checkout to feat/bm"; fail=1; }
+git -C "$work" switch -q main
+git -C "$tmp/wt-cp" cherry-pick --abort
+run
+want 'bisects and cherry-pick over' 0 "removed: $tmp/wt-bl feat/bl
+removed: $tmp/wt-cp feat/cp
+deleted: feat/bm"
+gone 'bisected bl' bl
+gone 'cherry-picked cp' cp
+git -C "$work" rev-parse -q --verify refs/heads/feat/bm >/dev/null && { echo "FAIL: the branch bm is still there"; fail=1; }
 
 # --- a failure stops the sweep before any further removal (fail closed).
 unit f1
