@@ -2064,8 +2064,11 @@ fi
 findings=$(mark_rejected "$findings" "$verdicts")
 
 report="$state/$head.md"
-printf '%s' "$findings" | jq -r '.[] |
+# The heading is parsed by skills/ship/gate-stats.sh and stays as it is. The Confidence line (claude-ship #116) is shown
+# for the reader and changes nothing: `?` is a value that is missing or bad, not a low one.
+printf '%s' "$findings" | jq -r "$confidence_jq"'.[] |
 	"## \(.severity)\(if .rejected then " (rejected by the verifier)" else "" end): \(.file):\(.line)\n\(.summary)\n\nFailure: \(.failure_scenario)\n" +
+	"Confidence: finder \(.confidence | conf), verifier \(.verdict.confidence | conf)\n" +
 	(if .rejected then "Verifier: \(.verdict.reason) (\(.verdict.evidence))\n" else "" end)' >"$report"
 
 # Confirmed P3s become issues, once each.
@@ -2101,7 +2104,8 @@ fi
 
 {
 	echo "Blocked by the pre-push review gate: $blocking blocking finding(s) (review cost \$$cost)."
-	printf '%s' "$findings" | jq -r '.[] | select((.severity | IN("P0", "P1", "P2")) and (.rejected | not)) | "- [\(.severity)] \(.file):\(.line) \(.summary)"'
+	printf '%s' "$findings" | jq -r "$confidence_jq"'.[] | select((.severity | IN("P0", "P1", "P2")) and (.rejected | not))
+		| "- [\(.severity)] \(.file):\(.line) \(.summary) (confidence: finder \(.confidence | conf), verifier \(.verdict.confidence | conf))"'
 	echo
 	echo "Full report: $report"
 	echo "Fix each valid finding test-first, sweep the branch for the same class of bug, and push all the fixes at once."
