@@ -87,7 +87,8 @@ miss pitfall-status-stale .github/workflows/ci.yml cancel-in-progress: true
 
 # pitfall-current-checkout: gh pr with a subcommand that acts on a PR and no number before its flags or end, whether a
 # flag takes a value (--json f, -R o/r) or not; a pipe after a space counts, a quoted mention, a numbered or placeholder
-# call (also after an option's value), a comment, and tests/ are not.
+# call (also after an option's value), a comment, and tests/ are not. -m (edit) and -c, --comment (close, reopen) take a
+# value only for those subcommands: for merge, review and view they are flags, so a number after them is the PR's.
 hit pitfall-current-checkout hooks/x.sh gh pr checks --watch
 hit pitfall-current-checkout scripts/x.sh gh pr merge --squash --delete-branch
 hit pitfall-current-checkout hooks/x.sh gh pr view | jq .title
@@ -122,6 +123,13 @@ miss pitfall-current-checkout hooks/x.sh gh pr checks -i 30 "$pr"
 miss pitfall-current-checkout hooks/x.sh gh pr close "$pr" --comment done
 miss pitfall-current-checkout hooks/x.sh gh pr close --comment done "$pr"
 miss pitfall-current-checkout hooks/x.sh gh pr edit -m v1 "$pr"
+miss pitfall-current-checkout hooks/x.sh gh pr merge -m 123
+miss pitfall-current-checkout hooks/x.sh gh pr review --comment 123
+miss pitfall-current-checkout hooks/x.sh gh pr review -c 123 -b text
+miss pitfall-current-checkout hooks/x.sh gh pr view -c 123
+hit pitfall-current-checkout hooks/x.sh gh pr merge -m
+hit pitfall-current-checkout hooks/x.sh gh pr review --comment -b text
+hit pitfall-current-checkout hooks/x.sh gh pr view -c
 miss pitfall-current-checkout hooks/x.sh # gh pr checks --watch
 miss pitfall-current-checkout hooks/x.sh echo "run gh pr view --web"
 
