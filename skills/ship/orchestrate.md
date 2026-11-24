@@ -122,7 +122,12 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      `branch:` line. First check `ListAgents`: a live implementer is still working, so wait for it. If none is
      live, follow **A unit with no report** below. Don't start a replacement without it, since the branch may
      already hold commits or a PR.
-   - `clean`, with CI green: go to 6.
+   - **Background work (#308):** a completion notice that says the implementer is "waiting on its own background
+    work", or a `background:` line that names ids instead of `none`, means it isn't finished (an earlier one left
+    a `pgrep -f` loop running that never ends). Treat it as a stop sign: don't go to 6 or merge. Ask the implementer
+    (`SendMessage`) to `TaskStop` those shells and report again, or stop them yourself with `TaskStop`
+    (`ListAgents` doesn't list background shells), then read the new report.
+  - `clean`, with CI green: go to 6.
    - `ci: fail` (and no `handoff:` line, below): the implementer already ran the CI fix rounds (up to 2) and is reporting
      what is left. If it stopped, handle it per the stop table below ("CI fails for a reason outside the PR").
      Never read CI logs in the main session. In the fallback flow, run
@@ -229,7 +234,8 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    `codex-review` with `gh pr view <pr> --json statusCheckRollup`, or `~/.claude/skills/ship/codex-status.sh <pr>`, which
    outside GitHub Actions only prints the status and never sets it (on the bootstrap PR it prints `success` but sets nothing).
    - With `merge: yes`:
-     1. Remove the implementer's worktree (as in **Replacing an implementer**, step 2), after waiting for a
+     1. Stop the implementer's background shells (`TaskStop`, or ask it to; `ListAgents` doesn't list them), then
+        remove its worktree (as in **Replacing an implementer**, step 2), after waiting for a
         `ship-lint-author` started from its `pitfalls:` line that is still running (step 4: it reads the file there). Git
         won't delete a branch that a worktree still has checked out.
      2. From your own checkout, run `gh pr merge <pr> --squash --delete-branch`. Always name the PR: without a
@@ -256,7 +262,8 @@ So before starting the new one, every time (an escalation, or a lost agent id af
 2. First, if the implementer's report had a `pitfalls:` line (an escalation or a handoff report can), start the
    `ship-lint-author` it asks for (step 4) and wait for it, or wait for the one already running (`ListAgents`): its
    `source` is a file in this worktree, and it would read a path that no longer exists. Then remove the worktree with
-   `git worktree remove <path>`, never `--force`. Git refuses while the worktree has modified
+   `git worktree remove <path>`, never `--force`. Stop the old implementer's background shells first (`TaskStop`, or ask
+   it to: `ListAgents` doesn't list them), since a shell still running in the worktree holds it. Git refuses while the worktree has modified
    or untracked files; then stop and ask, since that's unfinished work. Ignored files (build output) are
    deleted with it.
 3. Start the new implementer with the plan file's path. It picks up the local branch.

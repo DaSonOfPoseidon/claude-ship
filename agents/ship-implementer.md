@@ -71,6 +71,11 @@ finding costs a full extra round, so care here is cheaper than speed.
   bug, and fix all of them now.
 - Commit per the plan's commit plan, following the repo's commit conventions: one logical step per commit.
   Never add trailers.
+- **Background commands.** Wait for a command you started in the background through the harness's completion
+  notification, and do other work or end the turn meanwhile. Never poll for it with `pgrep -f` or `pkill -f`: the
+  pattern matches the command line of the shell running the loop, so the loop never ends (#308). If a loop can't be
+  avoided, wait on the pid with `while kill -0 <pid>`. Before the final report, stop every background command you
+  started (`TaskStop`); the report says `background: none`, or names the ids still running and why.
 
 ## Push through the gate
 
@@ -224,6 +229,7 @@ branch: <name>   worktree: <path>   pr: <number or none>   codex requested: yes/
 commits: <sha> <subject>  (one per line)
 codex: <last ship-codex outcome> round <n>  (omit if it never ran)
 ci: pass | fail | pending  (the last ship-codex report's `ci:`; omit if it never ran)
+background: none | <ids still running, and why>  (the background commands you started)
 stop: / denied: / done: / file: <those lines of the last ship-codex report, word for word>  (omit if none)
 handoff: context <n>   round: <the last ship-codex report's round>   ci-fix-rounds: <CI fix rounds used so far, earlier implementers' included>  (only when handing off)
 fix: <the last ship-codex report's fix: lines, word for word>  (handoff only)

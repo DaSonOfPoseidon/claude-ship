@@ -344,3 +344,10 @@ review finds a new class.
   requires that status from GitHub Actions, and the newer one from another identity blocked the merge (claude-ship #290,
   #291). Make the publish step opt-in to where it is meant to run (Actions, or an explicit override), print everywhere else
   and say so, and test every environment: in the job, by hand, with the override, with the dry-run flag.
+
+- **`pgrep -f` matches the command line of the shell running it.** An implementer waited for its own background script with
+  `while pgrep -f <script>; do sleep 5; done`; the loop's own command line contains the script's name, so `pgrep` always
+  finds the shell that runs it and the loop never ends. It happened in claude-ship #307 and #321, and on #321 the
+  orchestrator merged while the loops still ran (claude-ship #308). Wait through the harness's completion notification, or on
+  a pid (`while kill -0 <pid>`), never on a pattern that the waiting command itself contains, and stop every background
+  command (`TaskStop`) before the report.
