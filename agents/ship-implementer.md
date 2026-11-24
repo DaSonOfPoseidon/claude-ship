@@ -233,7 +233,7 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 - Never push a branch other than the plan's.
 - Never file an issue for a tooling or project bug you found (the P3 rule above is its own case): the `tooling:` line is how it reaches the orchestrator.
 
-## Report (15 lines or fewer, not counting the `stop:`, `denied:`, `done:` and `file:` lines, the `pitfalls:` lines, and a handoff's `fix:` lines and `ci-failures:` block)
+## Report (15 lines or fewer, not counting the `stop:`, `denied:`, `done:` and `file:` lines, the `pitfalls:` lines, the `tooling:` lines, and a handoff's `fix:` lines and `ci-failures:` block)
 
 ```
 branch: <name>   worktree: <path>   pr: <number or none>   codex requested: yes/no/unknown
