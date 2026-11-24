@@ -334,7 +334,8 @@ def wv: [.Parts[]? | pv] | if any(. == null) then null else join("") end;
 # kept as text, `$HOME` and `${HOME}` on their own the home directory); anything else is dynamic and is not read: a variable,
 # a substitution, a glob, `$'...'`. The output, for the loop below: the verdict (deny, block, pass, or bad when the input is
 # no tree) on the first line, then the message of a block or a deny; or, for pass, `gh` (a gh event) or `nogh` (none), then
-# `ga N R` (N gapi events, R of them reads), then the strings to parse again, one JSON string per line.
+# `ga N R` (N gapi events, R of them reads), then `lit [Q, H]` (the literal data below, as JSON), then the strings to parse again,
+# one JSON string per line.
 tamper_jq="$tree_defs$path_defs"'
 # $HOME and ${HOME} on their own, with nothing else done to them, are the home directory.
 def hm: .Type == "ParamExp" and .Param.Value? == "HOME" and ((keys - ["Type", "Dollar", "Rbrace", "Short", "Param", "Pos", "End"]) | length) == 0;
@@ -570,6 +571,27 @@ def gapi:
 	| if $effs == null then empty
 	else ($effs[] | select((.w[0] | bn) == "gh") | (.w[1:] | gapi_args) as $a | select($a != null)
 		| {k: "gapi", r: ((.x | not) and ($a | rdok))}) end;
+# Literal data: the text of the single-quoted strings, the double-quoted strings with no expansion and the heredoc bodies with no
+# expansion that are arguments of a command, as [quoted, heredoc]. A `gh api` in them is no call (docs/gate.md › `gh api`), but only
+# when nothing in the command could run text as shell: so every command must be one the gate can unwrap, with a literal command word,
+# and no word of it may be a shell or `eval`/`source`/`.` (an argument of `docker exec c sh -c`, a script fed to `bash <<EOF`, a pipe
+# into `sh`). Otherwise there is no data and every `gh api` in the text must match a call the tree shows, as before. A heredoc counts
+# only on a plain command (`cat <<EOF`), not on a block, a loop or a subshell; a here-string, an assignment and a `case` word never do.
+def interp: test("^(sh|bash|dash|zsh|ksh|ash|csh|tcsh|fish|eval|source|\\.)$");
+def dataok:
+	([(.Args? // [])[] | wv // "\u0001"]) as $ws
+	| eff($ws; false) as $effs
+	| $effs != null and ($ws | all(bn | interp | not)) and ($effs | all((.w[0] // "x") | startswith("\u0001") | not));
+def litq: [(.Args? // [])[] | .Parts[]?
+	| if .Type == "SglQuoted" and (.Dollar | not) then .Value
+	elif .Type == "DblQuoted" and (.Dollar | not) and all(.Parts[]?; .Type == "Lit") then ([.Parts[]? | .Value] | join(""))
+	else empty end];
+def lith: [(.Redirs // [])[] | select(.Hdoc != null) | .Hdoc | select(all(.Parts[]?; .Type == "Lit")) | [.Parts[]? | .Value] | join("")];
+def lits:
+	if all(.. | objects | select(.Type == "CallExpr"); dataok) then
+		[[.. | objects | select(.Type == "CallExpr") | litq[]],
+		[.. | objects | select(has("Redirs") and (.Cmd.Type? == "CallExpr")) | lith[]]]
+	else [[], []] end;
 # The events of one statement, its commands and redirects all through it, with $cd the directory a `cd` before it left.
 def evat($cd): [.. | objects | (if .Type == "CallExpr" then (calls($cd), ghev, gapi) else empty end), (if has("Redirs") then redirs($cd) else empty end)];
 # The one `cd` the check follows, for the narrow targets only (the gate state and the settings, which the immutable flag does not
@@ -607,6 +629,7 @@ else
 		elif $b != null then "block", "`\($b.p)` and writes with `\($b.w)`"
 		else "pass", (if any($ev[]; .k == "gh") then "gh" else "nogh" end),
 			"ga \([$ev[] | select(.k == "gapi")] | length) \([$ev[] | select(.k == "gapi" and .r)] | length)",
+			"lit \(lits | tojson)",
 			($ev[] | select(.k == "str") | {v: .v} | tojson) end
 end'
 # Walks the tree, then the strings it runs as shell (`sh -c`, `eval`) to a depth of 3, each parsed again. A string
@@ -615,6 +638,7 @@ end'
 gh_seen=0
 ga_n=0
 ga_r=0
+lit_json='[[],[]]'
 tamper_nl=$(printf '\n_')
 tamper_nl=${tamper_nl%_}
 pending=
@@ -649,6 +673,14 @@ while [ -n "$cur" ]; do
 		case $ga_a$ga_b in *[!0-9]*) unreadable "command syntax tree" ;; esac
 		ga_n=$((ga_n + ga_a))
 		ga_r=$((ga_r + ga_b))
+		lit=${rest%%"$tamper_nl"*}
+		case $rest in
+		*"$tamper_nl"*) rest=${rest#*"$tamper_nl"} ;;
+		*) rest= ;;
+		esac
+		case $lit in "lit [["*) ;; *) unreadable "command syntax tree" ;; esac
+		# Only the command's own tree has data: a string run as shell is read for its `gh api` calls, never for data.
+		[ "$depth" != 0 ] || lit_json=${lit#lit }
 		;;
 	esac
 	case $verdict in
@@ -1055,6 +1087,34 @@ gh_api='(^|[^[:alnum:]_.-])gh(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:sp
 if [ -z "$cand" ] && { [ "$gh_seen" = 0 ] || ! printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; }; then
 	exit 0
 fi
+# Every `gh api` the text names is either literal data (a quoted string or a heredoc body, `lit_json`: docs/gate.md › `gh api`) or a
+# call the tree shows, and each of those is a read: the text scan can't read a call inside a substitution (`$(gh api ...)` cuts its
+# words), but the tree can, and a read writes nothing, so a dynamic path is fine. The text counts the larger of the raw and the
+# word-split form, less the data in it (quoted data is only in the raw form: its spaces are markers in the words). When the counts
+# differ, a `gh api` hides from the tree (a call next to another `gh` command that it can't unwrap, a string it could not parse, a
+# string with an expansion, a string an interpreter reads): the scan below decides, and blocks what it can't read. With no `gh api` in
+# the tree and none in the text outside data, nothing is left to scan.
+api_reads=0
+if [ "$gh_seen" = 1 ] && [ "$ga_n" = "$ga_r" ]; then
+	raw_n=$(printf '%s\n' "$cmd" | grep -Eo "$gh_api" | wc -l)
+	words_n=$(printf '%s\n' "$words" | grep -Eo "$gh_api" | wc -l)
+	lit_q=$(printf '%s' "$lit_json" | jq -r '.[0][]') || unreadable "command syntax tree"
+	lit_h=$(printf '%s' "$lit_json" | jq -r '.[1][]') || unreadable "command syntax tree"
+	lit_q=$(printf '%s\n' "$lit_q" | grep -Eo "$gh_api" | wc -l)
+	lit_h=$(printf '%s\n' "$lit_h" | grep -Eo "$gh_api" | wc -l)
+	# Data the raw text doesn't show that many times is no data the gate can place: count none of it.
+	if [ $((lit_q + lit_h)) -gt "$raw_n" ]; then
+		lit_q=0
+		lit_h=0
+	fi
+	net_raw=$((raw_n - lit_q - lit_h))
+	net_words=$((words_n - lit_h))
+	[ "$net_words" -le "$net_raw" ] || net_raw=$net_words
+	[ "$net_raw" -ne "$ga_n" ] || api_reads=1
+fi
+# What the scan below would have decided is settled, so a command that starts no review and has no call to scan passes before the
+# quoting check, which only guards the scan and the push.
+[ -n "$cand" ] || [ "$api_reads" = 0 ] || exit 0
 # Markers in the command, quoting the scanner can't read, or a push with literal separators, quotes, `$` or
 # newlines can't be checked word by word, so it blocks.
 if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_.-])(git|gh)([^[:alnum:]_-]|$)" &&
@@ -1295,17 +1355,6 @@ api_call() (
 	echo "repo $slug"
 )
 api_found=
-# Every `gh api` call is one the tree shows as a read: the text scan below can't read a call inside a substitution (`$(gh api
-# ...)` cuts its words), but the tree can, and a read writes nothing, so a dynamic path is fine. The tree must show every `gh api`
-# the text names (the larger of the raw and the word-split count), or one hides from it (`echo 'gh api'` next to a `gh issue
-# list`, a string it could not parse): then the scan below decides, and blocks what it can't read.
-api_reads=0
-if [ "$gh_seen" = 1 ] && [ "$ga_n" -gt 0 ] && [ "$ga_n" = "$ga_r" ]; then
-	raw_n=$(printf '%s\n' "$cmd" | grep -Eo "$gh_api" | wc -l)
-	words_n=$(printf '%s\n' "$words" | grep -Eo "$gh_api" | wc -l)
-	[ "$words_n" -le "$raw_n" ] || raw_n=$words_n
-	[ "$raw_n" -ne "$ga_n" ] || api_reads=1
-fi
 if [ "$gh_seen" = 1 ] && [ "$api_reads" = 0 ] && printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; then
 	# One line per simple command, each `gh api` call scanned on its own. A segment ending in `$` was cut by an
 	# unquoted `$(`, which hides the rest of its words, like a backtick.
