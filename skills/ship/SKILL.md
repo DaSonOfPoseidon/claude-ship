@@ -53,6 +53,7 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
 4. Create `docs/pitfalls.md` if it doesn't exist, with the title `# Pitfalls` and this intro: "Classes of
    bug that reviews have caught here. Check every change against them, and add an entry when a review
    finds a new class." AGENTS.md's Known pitfalls section links to it, and the gate shows it to reviewers.
+   An entry is `- **Title.** body` or a `## Title` heading with its body below; that is the form the lint hook reads.
    If it already exists with entries, offer the user once, after the bootstrap PR merges, a backfill that turns the entries
    that have a literal signature into lint rules (`pitfall-lint.md` › Backfill); don't start it unasked.
    Also create `docs/false-positives.md` with the title `# False positives` and this intro: "Findings

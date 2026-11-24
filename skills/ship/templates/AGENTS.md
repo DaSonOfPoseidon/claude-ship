@@ -26,7 +26,7 @@ or anything CI already checks (formatting, lints, tests).
 ### Known pitfalls
 
 Classes of bug past reviews caught here are in [`docs/pitfalls.md`](docs/pitfalls.md); check every change
-against them.
+against them. An entry is `- **Title.** body` or a `## Title` heading with its body below.
 
 ### Known false positives
 

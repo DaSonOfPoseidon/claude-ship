@@ -242,6 +242,135 @@ mkdir -p "$tmp/plain/docs"
 printf -- '- **Only one.** Body.\n' >"$tmp/plain/docs/pitfalls.md"
 pend pending-outside-git "$tmp/plain" "Only one."
 
+# put <text>: the working tree's docs/pitfalls.md becomes <text> (not committed).
+put() { printf '%s\n' "$1" >"$repo/docs/pitfalls.md"; }
+
+# unparsed <name> <dir>: `pending <dir>` exits 3, prints nothing on stdout and says the format on stderr.
+unparsed() {
+	(cd "$tmp/notrepo" && sh "$script" pending "$2") >"$tmp/out" 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != 3 ] || [ -s "$tmp/out" ] || ! grep -qF 'pitfall-lint: docs/pitfalls.md has content but no entries this parser reads' "$tmp/err"; then
+		echo "FAIL ($1): exit $rc, wanted 3, no stdout and the format message"
+		sed 's/^/  out: /' "$tmp/out"
+		sed 's/^/  err: /' "$tmp/err"
+		fail=1
+	fi
+}
+
+# A file of only `##` entries: every heading is an entry (a title is trimmed; `###` and `#` never are).
+fixture
+put '# Pitfalls
+
+Intro.
+
+## Entry A.
+
+Body of A.
+
+##   Entry `B` with ticks, and a period.
+
+Body.
+
+### A sub heading
+Body.
+
+## Entry C
+- not a bold bullet, so this section holds no `- **` entry
+'
+pend pending-heading-entries "$repo" 'Entry A.
+Entry `B` with ticks, and a period.
+Entry C'
+lint_file '# pitfall: Entry `B` with ticks, and a period. -> r1
+# pitfall: Entry A. -> none: x'
+pend pending-heading-ledger-word-for-word "$repo" "Entry C"
+
+# A mixed file: `##` group headers over `- **` entries are not entries, a standalone `##` is, and `###` is neither.
+fixture
+put '# Pitfalls
+
+## Group one
+
+Text of the group.
+
+- **True A.** Body.
+- **True B.** Body.
+
+### Sub heading
+
+- **True C.** Body.
+
+## Standalone entry
+
+Body.
+
+## Group two
+- **True D.** Body.
+
+# Part two
+
+## Last standalone
+Body.'
+pend pending-mixed-group-headers "$repo" 'True A.
+True B.
+True C.
+Standalone entry
+True D.
+Last standalone'
+
+# An entry whose title never closed, then a `##` heading right after it, and a group header at the end of the file.
+fixture
+put '- **Wrapped title
+## Entry H
+Body.
+## Group at the end
+- **Z.** Body.'
+pend pending-heading-ends-an-open-title "$repo" 'Entry H
+Z.'
+
+# A file with only a title and an intro has no entries and says nothing.
+fixture
+put '# Pitfalls
+
+Classes of bug that reviews have caught here.'
+pend pending-intro-only "$repo" ""
+fixture
+put ''
+pend pending-empty-file "$repo" ""
+
+# Content that no entry form covers: exit 3 and the message, never an empty queue.
+fixture
+put '# Pitfalls
+
+* **Star bullet.** Body.
+* **Another.** Body.'
+unparsed pending-star-bullets "$repo"
+fixture
+put '# Pitfalls
+
+1. First pitfall.
+2. Second.'
+unparsed pending-numbered-list "$repo"
+fixture
+put '# Pitfalls
+
+### Level three
+
+Body.'
+unparsed pending-deeper-headings-only "$repo"
+fixture
+put '# Pitfalls
+
++ plus bullet'
+unparsed pending-plus-bullet "$repo"
+fixture
+put '# Pitfalls
+
+- plain bullet without bold'
+unparsed pending-plain-bullet "$repo"
+# a ledger doesn't change that
+lint_file '# pitfall: Entry A. -> r1'
+unparsed pending-unparsed-with-a-ledger "$repo"
+
 # usage
 (cd "$tmp/notrepo" && sh "$script") >/dev/null 2>&1
 [ $? = 2 ] || {
@@ -347,6 +476,55 @@ add_entry 'Quote " and $x `y`.' "Body."
 hook "$repo/docs/pitfalls.md"
 advised hook-special-title
 says hook-special-title-named 'Quote " and $x `y`.'
+
+# a `##` entry is advised like a bullet one; a group header is not an entry
+fixture
+printf '\n## Group\n\n- **Entry D.** Body.\n\n## Entry E, standalone\n\nBody.\n' >>"$repo/docs/pitfalls.md"
+hook "$repo/docs/pitfalls.md"
+advised hook-heading-entries
+says hook-heading-entry-named "Entry E, standalone"
+says hook-bullet-under-group-named "Entry D."
+lacks hook-group-header-is-not-an-entry "Group"
+
+# content that no entry form covers: one note per session, then silence
+fixture
+put '# Pitfalls
+
+* **Star bullet.** Body.'
+hook "$repo/docs/pitfalls.md"
+advised hook-unparsed-note
+says hook-unparsed-says-so "has content but no entries this parser reads"
+says hook-unparsed-names-the-heading-form "## Title"
+says hook-unparsed-names-the-bullet-form "- **Title.** body"
+hook "$repo/docs/pitfalls.md"
+silent hook-unparsed-once-per-session
+hook "$repo/docs/pitfalls.md" sess-other
+advised hook-unparsed-new-session
+# a repo that isn't opted in, or an author that isn't installed, hears nothing
+fixture
+put '# Pitfalls
+
+* **Star bullet.** Body.'
+printf 'false' >"$tmp/vars/CLAUDE_AUTONOMOUS"
+hook "$repo/docs/pitfalls.md"
+silent hook-unparsed-autonomous-false
+printf 'true' >"$tmp/vars/CLAUDE_AUTONOMOUS"
+printf '# A\n\nno rules here\n' >"$repo/AGENTS.md"
+hook "$repo/docs/pitfalls.md"
+silent hook-unparsed-no-code-review-rules
+no_gh hook-unparsed-no-code-review-rules
+printf '# A\n\n## Code Review Rules\n' >"$repo/AGENTS.md"
+mv "$HOME/.claude/agents/ship-lint-author.md" "$tmp/agent.md"
+hook "$repo/docs/pitfalls.md"
+silent hook-unparsed-without-the-agent
+mv "$tmp/agent.md" "$HOME/.claude/agents/ship-lint-author.md"
+# a file with only a title and an intro stays silent
+fixture
+put '# Pitfalls
+
+Intro.'
+hook "$repo/docs/pitfalls.md"
+silent hook-intro-only
 
 # a file that isn't the toplevel docs/pitfalls.md: silent, and no gh call
 fixture

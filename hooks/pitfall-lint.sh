@@ -2,14 +2,18 @@
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
 # Links docs/pitfalls.md to the hygiene lint's rules (claude-ship #313; docs/scripts.md, skills/ship/pitfall-lint.md).
-# An entry of docs/pitfalls.md is a line starting `- **`; its title is the text up to the next `**` outside backticks (a
-# title may wrap onto the following lines, which are joined with single spaces). The ledger is the comment lines
+# An entry of docs/pitfalls.md is either a line starting `- **`, whose title is the text up to the next `**` outside backticks (a
+# title may wrap onto the following lines, which are joined with single spaces), or a `## Title` heading, whose title is the
+# heading text trimmed. A `##` heading whose section (up to the next `#` or `##` heading) holds a `- **` entry is a group
+# header, not an entry; `#` and `###` headings never are. A file with list items or headings of level 2 or deeper and no entry
+# is in a format this parser doesn't read: `pending` exits 3 on it (the hook says so once per session). The ledger is the comment lines
 #   # pitfall: <title> -> <rule-id>[, <rule-id>]      or      # pitfall: <title> -> none: <reason>
 # in .github/claude-ship/lint (hooks/lint-rules), taken from the checkout and from the default branch together. An entry
 # is pending while no ledger line names its exact title.
 #
 #   pitfall-lint.sh pending [<dir>]   prints the pending titles of <dir>'s repository (default: the current directory),
-#                                     one per line; exit 0, or 2 when it can't tell.
+#                                     one per line; exit 0, 2 when it can't tell, or 3 when the file has content but no entries
+#                                     it reads (a message on stderr).
 #   pitfall-lint.sh hook              PostToolUse hook (stdin: the tool call's JSON). After a Write, Edit or MultiEdit of
 #                                     the toplevel docs/pitfalls.md that adds an entry which is pending and not in HEAD,
 #                                     it asks the session for a background `ship-lint-author`, once per session and
@@ -109,6 +113,12 @@ titles() {
 			}
 			open = 1
 		}
+		# A `## ` heading is an entry unless its section (up to the next heading of level 1 or 2) holds a `- **` entry: then it
+		# is a group header. A heading is printed when its section ends, which is before any later entry, so the order holds.
+		function flush() {
+			if (head != "" && !group) print head
+			head = ""; group = 0
+		}
 		{
 			sub(/\r$/, "")
 			if (open) {
@@ -123,8 +133,19 @@ titles() {
 					next
 				}
 			}
-			if ($0 ~ /^- \*\*/) { tick = 0; acc = ""; scan(substr($0, 5)) }
-		}' "$1"
+			if ($0 ~ /^#?#([ \t]|$)/) {
+				flush()
+				if ($0 ~ /^##([ \t]|$)/) {
+					line = $0
+					sub(/^##[ \t]*/, "", line)
+					sub(/[ \t]+$/, "", line)
+					head = line
+				}
+				next
+			}
+			if ($0 ~ /^- \*\*/) { group = 1; tick = 0; acc = ""; scan(substr($0, 5)) }
+		}
+		END { flush() }' "$1"
 }
 
 # grep_ledger <file>: appends the file's ledger lines to $t/ledger.
@@ -163,6 +184,21 @@ fi
 
 # pending: the titles of the current file that no ledger line names: `# pitfall: <title> -> <something>` from column 0.
 titles "$pitfalls" >"$t/titles" || die "can't read docs/pitfalls.md"
+# A file that has list items or headings of level 2 or deeper and yields no entry is in a format the parser doesn't read, which is
+# not the same as a file with nothing to do (a title and an intro): say so rather than hand back an empty queue (claude-ship #325).
+unparsed=
+if [ ! -s "$t/titles" ]; then
+	grep -Eq '^([-*+][[:space:]]|[0-9]+\.[[:space:]]|##)' "$pitfalls"
+	case $? in
+	0) unparsed=1 ;;
+	1) ;;
+	*) die "can't read docs/pitfalls.md" ;;
+	esac
+fi
+if [ -n "$unparsed" ] && [ "$mode" = pending ]; then
+	echo "pitfall-lint: docs/pitfalls.md has content but no entries this parser reads" >&2
+	exit 3
+fi
 awk '
 	# Not NR == FNR: that also holds for the second file when the first is empty.
 	FILENAME == ARGV[1] { led[++nl] = $0; next }
@@ -184,26 +220,30 @@ fi
 [ -f "${CLAUDE_HOME:-$HOME/.claude}/agents/ship-lint-author.md" ] || exit 0
 # Only the opted-in repos (the gate's own test: a `## Code Review Rules` in AGENTS.md; CLAUDE_AUTONOMOUS is checked below).
 [ -f "$top/AGENTS.md" ] && grep -q '^## Code Review Rules' "$top/AGENTS.md" || exit 0
-# The new titles are the pending ones that HEAD's docs/pitfalls.md lacks, so an edit of an old entry, or a whole-file Write
-# in a repo that was never backfilled, advises only for what this edit added. A repo with no commit has no HEAD to compare.
-git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1 || exit 0
-inhead=$(git ls-tree --full-tree --name-only HEAD -- docs/pitfalls.md) || exit 0
-: >"$t/old"
-if [ -n "$inhead" ]; then
-	git show HEAD:docs/pitfalls.md >"$t/old.md" 2>/dev/null || exit 0
-	titles "$t/old.md" >"$t/old" || exit 0
-fi
-awk 'FILENAME == ARGV[1] { old[$0] = 1; next } !($0 in old)' "$t/old" "$t/pending" >"$t/new" || exit 0
-
 # Skip the titles already advised in this session (one mark file per session, repo and title).
 marks="${TMPDIR:-/tmp}/claude-ship-pitfall"
 hsum() { printf '%s' "$1" | cksum | tr ' ' -; }
 topsum=$(hsum "$top")
 : >"$t/todo"
-while IFS= read -r title; do
-	[ -e "$marks/$session-$topsum-$(hsum "$title")" ] || printf '%s\n' "$title" >>"$t/todo"
-done <"$t/new"
-[ -s "$t/todo" ] || exit 0
+if [ -n "$unparsed" ]; then
+	# Nothing parses, so there is no entry to advise: one note per session and repo that says so.
+	[ ! -e "$marks/$session-$topsum-unparsed" ] || exit 0
+else
+	# The new titles are the pending ones that HEAD's docs/pitfalls.md lacks, so an edit of an old entry, or a whole-file Write
+	# in a repo that was never backfilled, advises only for what this edit added. A repo with no commit has no HEAD to compare.
+	git rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1 || exit 0
+	inhead=$(git ls-tree --full-tree --name-only HEAD -- docs/pitfalls.md) || exit 0
+	: >"$t/old"
+	if [ -n "$inhead" ]; then
+		git show HEAD:docs/pitfalls.md >"$t/old.md" 2>/dev/null || exit 0
+		titles "$t/old.md" >"$t/old" || exit 0
+	fi
+	awk 'FILENAME == ARGV[1] { old[$0] = 1; next } !($0 in old)' "$t/old" "$t/pending" >"$t/new" || exit 0
+	while IFS= read -r title; do
+		[ -e "$marks/$session-$topsum-$(hsum "$title")" ] || printf '%s\n' "$title" >>"$t/todo"
+	done <"$t/new"
+	[ -s "$t/todo" ] || exit 0
+fi
 
 # CLAUDE_AUTONOMOUS, read as orchestrate-hint.sh does: a variable that isn't set is off, and a lookup that fails otherwise
 # (network, rate limit) is silence now and a new question at the next edit.
@@ -221,6 +261,15 @@ lookup() {
 }
 autonomous=$(lookup CLAUDE_AUTONOMOUS) || exit 0
 [ "$autonomous" = true ] || exit 0
+
+if [ -n "$unparsed" ]; then
+	jq -nc --arg src "$pitfalls" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: (
+		$src + " has content but no entries this parser reads, so no pitfall can be linked to a lint rule. An entry is a line `- **Title.** body` "
+		+ "or a `## Title` heading (skills/ship/pitfall-lint.md). Don'"'"'t stop your current task for this: mention it to the user, who can reformat the file.")}}' || exit 0
+	mkdir -p "$marks" 2>/dev/null || exit 0
+	: >"$marks/$session-$topsum-unparsed" 2>/dev/null
+	exit 0
+fi
 
 # At most 20 titles at a time; the rest is advised by the next edit, since only the named ones get a mark.
 head -n 20 "$t/todo" >"$t/named"

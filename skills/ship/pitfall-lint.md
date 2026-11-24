@@ -7,7 +7,8 @@ rule fits. This file is the procedure that links the two (claude-ship #313). It 
 
 ## The ledger
 
-An entry is a line of `docs/pitfalls.md` that starts `- **`, and its bold text is its title. The outcome for each entry is
+An entry of `docs/pitfalls.md` is a line that starts `- **` (its bold text is its title) or a `## Title` heading (its text is
+the title). A `##` heading over `- **` entries is a group header, not an entry. The outcome for each entry is
 recorded as a comment line at column 0 of `.github/claude-ship/lint` (the lint skips comments, so it needs no parser):
 
 ```
@@ -58,7 +59,9 @@ For a repo whose entries have no ledger lines yet (the bootstrap offers it once,
    the default branch, and the authors' ledger lines are on `lint/pitfall-backfill` until the PR merges. With no such
    branch yet, run `~/.claude/hooks/pitfall-lint.sh pending <toplevel>`. With one (an earlier, unfinished backfill), check it
    out in a temporary worktree (`git worktree add <scratch dir> lint/pitfall-backfill`), run `pending <scratch dir>` there, and
-   remove the worktree (`git worktree remove`, never `--force`). Nothing printed means there is nothing to do.
+   remove the worktree (`git worktree remove`, never `--force`). Nothing printed with exit 0 means there is nothing to do. Exit 3
+   (`has content but no entries this parser reads`) means the file is in a format the parser doesn't read, which is not an empty
+   queue: stop, report the format to the user, and don't start an author. The hook's note says the same once per session.
 2. Run authors **one at a time**, 8 titles each (the next 8 lines of the queue), all with `branch: lint/pitfall-backfill`
    and `source: <toplevel>/docs/pitfalls.md`. They share a branch, and a branch can be checked out in one worktree only: after a
    finished author (step 3), remove its worktree (`git worktree list`, then `git worktree remove <path>`, never

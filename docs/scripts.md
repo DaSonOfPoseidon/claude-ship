@@ -543,10 +543,13 @@ tells the user once, offering to add the section from `templates/AGENTS.md` and 
 Links `docs/pitfalls.md` to the hygiene lint's rules (claude-ship #313). It reads a repo's entries and the ledger and has two
 modes; neither writes to the repo.
 
-**Titles.** An entry is a line starting `- **`. Its title is the text after that up to the next `**` outside backticks, so a
-title may hold a quoted `` `**` ``. When the closing `**` isn't on the line, the title continues on the following lines, each
-trimmed and joined with a single space; a blank line, a heading or the next `- ` line ends an entry that never closed (it has
-no title). Titles are compared as exact strings.
+**Titles.** An entry is a line starting `- **` or a `## ` heading. A bullet's title is the text after the `- **` up to the next
+`**` outside backticks, so a title may hold a quoted `` `**` ``. When the closing `**` isn't on the line, the title continues on
+the following lines, each trimmed and joined with a single space; a blank line, a heading or the next `- ` line ends an entry
+that never closed (it has no title). A heading's title is its text with the whitespace around it trimmed. A `##` heading whose
+section (up to the next `#` or `##` heading) holds a `- **` entry is a group header and no entry; `#` and `###` and deeper
+headings never are. Titles are compared as exact strings. A file that has list items (`- `, `* `, `+ `, `1. `) or headings of
+level 2 or deeper but yields no title is in a format the parser doesn't read (claude-ship #325), and counts as such, not as empty.
 
 **Ledger.** The `# pitfall: <title> -> <outcome>` lines (from column 0, with something after the `->`) of two files, whose union
 counts: the checkout's `.github/claude-ship/lint` and the default branch's. The default branch is found as `lint.sh` finds it,
@@ -555,8 +558,9 @@ while the checkout is older). A ledger line for an entry that no longer exists i
 `# pitfall: <title> -> ` (not a split of the line), so a title that holds ` -> ` is no problem.
 
 **`pending [<dir>]`** prints the titles of `<dir>`'s repository (default: the current directory; outside git, `<dir>` itself)
-that no ledger line names, one per line: the queue of a backfill. No `docs/pitfalls.md` prints nothing. Exit 0, or 2 when it
-can't read a file or git (a message on stderr), or on a usage error.
+that no ledger line names, one per line: the queue of a backfill. No `docs/pitfalls.md`, or one with a title and an intro only, prints nothing. Exit 0; 3 with
+`pitfall-lint: docs/pitfalls.md has content but no entries this parser reads` on stderr when the file is in a format it doesn't
+read (see Titles); 2 when it can't read a file or git (a message on stderr), or on a usage error.
 
 **`hook`** is the `PostToolUse` hook for `Write|Edit|MultiEdit` (`settings/claude-ship.json`, no `onFailure`; the settings are
 managed, so it runs on every edit in every repo). Hooks can't start agents, so it can only ask, as
@@ -575,7 +579,9 @@ mark, so the next edit asks again). The advice is an `additionalContext` that na
 next edit; the titles are marked as data from the file), the file's absolute path, the toplevel and the default branch, and
 says: don't stop the task; start a background `ship-lint-author` with them; a `ship-implementer` doesn't start one but puts
 the titles on a `pitfalls:` line of its report; ship the author's `branch:` as its own PR after the task
-(`skills/ship/pitfall-lint.md`). A payload that isn't an object, a field of another type, a session id with other than id
+(`skills/ship/pitfall-lint.md`). When no entry parses but the file has content (the exit-3 case of `pending`), there are no titles
+to advise, so after the same checks (agent, `## Code Review Rules`, `CLAUDE_AUTONOMOUS`) it gives one `additionalContext` note that
+says so and names both entry forms, once per session and repo (a mark `<session>-<repo>-unparsed`), with no HEAD comparison. A payload that isn't an object, a field of another type, a session id with other than id
 characters, no `jq`, `REVIEW_GATE_INNER` set, any git or gh failure: no output, exit 0.
 
 ## `agents/ship-lint-author.md` and `skills/ship/pitfall-lint.md`

@@ -376,8 +376,8 @@ Tune any of them in your own file, for example `new-suppression off tests/*`, `s
 ## Pitfalls and lint rules
 
 `docs/pitfalls.md` lists classes of bug past reviews caught; some have a literal signature that the hygiene lint could flag.
-`hooks/pitfall-lint.sh` links the two (claude-ship #313). An entry is a line starting `- **`, and its bold text is its title.
-The ledger is the `# pitfall: <title> -> <rule-id>[, <rule-id>]` (or `-> none: <reason>`) comment lines of
+`hooks/pitfall-lint.sh` links the two (claude-ship #313). An entry is a line starting `- **` (its bold text is its title) or a `## Title` heading. A file with content but no entry in
+either form makes `pending` exit 3 instead of printing an empty queue. The ledger is the `# pitfall: <title> -> <rule-id>[, <rule-id>]` (or `-> none: <reason>`) comment lines of
 `.github/claude-ship/lint` (`hooks/lint-rules` has the grammar). An entry is *pending* while no ledger line names its exact
 title. The ledger is read from the checkout's file and the default branch's together.
 
