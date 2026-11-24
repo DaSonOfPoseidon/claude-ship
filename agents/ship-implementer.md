@@ -72,10 +72,11 @@ finding costs a full extra round, so care here is cheaper than speed.
 - Commit per the plan's commit plan, following the repo's commit conventions: one logical step per commit.
   Never add trailers.
 - **Background commands.** Wait for a command you started in the background through the harness's completion
-  notification, and do other work or end the turn meanwhile. Never poll for it with `pgrep -f` or `pkill -f`: the
-  pattern matches the command line of the shell running the loop, so the loop never ends (#308). If a loop can't be
-  avoided, wait on the pid with `while kill -0 <pid>`. Before the final report, stop every background command you
-  started (`TaskStop`); the report says `background: none`, or names the ids still running and why.
+  notification while you have other work, or in the foreground, in chunks under the tool's timeout, on its output file
+  or its pid (`until grep -q <marker> <file>`, `while kill -0 <pid>`). Never poll with `pgrep -f` or `pkill -f`: the
+  pattern matches the command line of the shell running the loop, so the loop never ends (#308). Never end your turn
+  to wait for one: your caller would get an interim result (#147). Before the final report, stop every background
+  command you started (`TaskStop`); the report says `background: none`, or names the ids still running and why.
 
 ## Push through the gate
 
