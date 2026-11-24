@@ -181,8 +181,10 @@ review finds a new class.
   claude-ship #171), so a nested agent's foreground rule needs a hook that denies `run_in_background`
   (`hooks/codex-bash.sh`). And never tell an agent to end its turn on background work, even as a fallback:
   that instruction is what made #147 happen. Under Claude Code's fork mode, nested Agent calls start in the
-  background however the child waits, so the foreground wait alone doesn't make the report the parent's result;
-  the user setting `CLAUDE_CODE_FORK_SUBAGENT=0` does (claude-ship #160).
+  background however the child waits, so the foreground wait alone doesn't make the report the parent's result. The
+  setting `CLAUDE_CODE_FORK_SUBAGENT=0` (the owner's decision, claude-ship #160) makes it the Agent result in headless
+  sessions. In interactive sessions it reaches the implementer as a hand-back message, which the implementer acts on
+  (the 2026-10-30 live check on PR #180, and the 2026-11-20 runs on PRs #290 and #292).
 - **A new script is committed without its execute bit.** Written with an editor, it lands as `100644`, and
   `install.sh` copies modes as they are, so a hook registered as a command fails with `Permission denied`
   while tests that run it with `sh` pass (claude-ship #69). Commit scripts as `100755`

@@ -126,6 +126,10 @@ wait for the review yourself and the orchestrator sees only your final report.
    SendMessage ("send your final report"), wait for that result, and act only on a report with an `outcome:`.
    Text with no `outcome:` line is interim, not a result. If the resumed `ship-codex` again returns no
    `outcome:`, hand back with `codex: no final report (interim results only)` and never request a review yourself.
+   In interactive sessions the Agent call to `ship-codex` returns at once even with `CLAUDE_CODE_FORK_SUBAGENT=0`, so
+   that return is the interim text above, and the report then arrives as a hand-back message from that `ship-codex`
+   agent. A hand-back with an `outcome:` line is its report: act on it exactly as an Agent result. Resume it with
+   SendMessage only when no hand-back has arrived yet; the rules above still apply to text with no `outcome:`.
    Report `codex requested: unknown`, since that round may have ended anywhere, before the request or in its waits, and
    list the thread ids you replied to as `replied:`. The orchestrator picks the PR up again as its Resuming
    step says, with a fresh `ship-codex`.
