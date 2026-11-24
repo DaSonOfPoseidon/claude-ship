@@ -18,8 +18,9 @@ verify_schema='{"type":"object","required":["verdicts"],"properties":{"verdicts"
 # the verifier) may carry (claude-ship #116). It is shown and logged, never acted on: nothing here decides whether a finding
 # blocks (blocking_of, mark_rejected). `conf` renders a value for a person (an integer 0-100 as itself, anything else
 # (missing, null, a string, a float, out of range) as `?`, which means unknown, never low), `confn` for the cost row (the
-# integer, or null). Put it in front of a jq program: jq "$confidence_jq"' ... | conf'.
-confidence_jq='def confok: type == "number" and . == floor and . >= 0 and . <= 100; def conf: if confok then tostring else "?" end; def confn: if confok then . else null end;'
+# integer, or null); both go through `floor`, so a literal 80.0 prints and logs as 80 on every jq (1.7 keeps the literal's
+# spelling, 1.6 doesn't). Put it in front of a jq program: jq "$confidence_jq"' ... | conf'.
+confidence_jq='def confok: type == "number" and . == floor and . >= 0 and . <= 100; def conf: if confok then floor | tostring else "?" end; def confn: if confok then floor else null end;'
 
 # The reasoning effort the finder runs at (`claude --effort`, run_claude's last argument): the user's decision of
 # 2026-11-24 (claude-ship #72), under measurement. The verifier and the docs check pass none, so they run at their model's

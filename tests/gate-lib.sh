@@ -509,7 +509,7 @@ conf_check() {
 	}
 }
 f='{"file":"a","line":1,"severity":"P2","summary":"s","failure_scenario":"f"'
-conf_check finder "$(conf_row finder '{"total_cost_usd":0.5,"structured_output":{"findings":['"$f"',"confidence":80},'"$f"'},'"$f"',"confidence":"80"},'"$f"',"confidence":80.5},'"$f"',"confidence":-1},'"$f"',"confidence":101},'"$f"',"confidence":null},'"$f"',"confidence":0}]}}')" '[80,null,null,null,null,null,null,0]'
+conf_check finder "$(conf_row finder '{"total_cost_usd":0.5,"structured_output":{"findings":['"$f"',"confidence":80},'"$f"'},'"$f"',"confidence":"80"},'"$f"',"confidence":80.5},'"$f"',"confidence":-1},'"$f"',"confidence":101},'"$f"',"confidence":null},'"$f"',"confidence":0},'"$f"',"confidence":80.0}]}}')" '[80,null,null,null,null,null,null,0,80]'
 conf_check docs-check "$(conf_row docs-check '{"structured_output":{"findings":['"$f"',"confidence":55}]}}')" '[55]'
 conf_check verifier "$(conf_row verifier '{"structured_output":{"verdicts":[{"index":0,"verdict":"confirmed","reason":"r","confidence":65},{"index":1,"verdict":"uncertain","reason":"r"}]}}')" '[65,null]'
 conf_check none "$(conf_row finder '{"structured_output":{"findings":[]}}')" '[]'
