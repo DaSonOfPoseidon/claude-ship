@@ -328,7 +328,12 @@ gone 'i5' i5
 # rb: rebased in a linked worktree (merge backend, stopped by an `edit`). ra: named by the main checkout's rebase-apply.
 unit rb
 pr rb MERGED 941
-GIT_SEQUENCE_EDITOR='sed -i s/^pick/edit/' git -C "$tmp/wt-rb" rebase -q -i main >/dev/null 2>&1
+# The todo editor is a script, not `sed -i` (GNU-only: BSD sed takes the next word as a backup suffix).
+cat >"$tmp/edit-todo.sh" <<'EOT'
+#!/bin/sh
+sed 's/^pick/edit/' "$1" >"$1.t" && mv "$1.t" "$1"
+EOT
+GIT_SEQUENCE_EDITOR="sh $tmp/edit-todo.sh" git -C "$tmp/wt-rb" rebase -q -i main >/dev/null 2>&1
 if git -C "$tmp/wt-rb" symbolic-ref -q HEAD >/dev/null; then
 	echo "FAIL: the rebase fixture did not stop with a detached HEAD"
 	fail=1
