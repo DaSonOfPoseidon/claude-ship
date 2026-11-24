@@ -222,9 +222,11 @@ For orchestrated mode, also register the hint hook:
 {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "~/.claude/hooks/orchestrate-hint.sh"}]}]}}
 ```
 
-The PR loop (orchestrated mode) also needs `CLAUDE_CODE_FORK_SUBAGENT` set to `"0"` in the settings' `env`. Under
-Claude Code's fork mode a subagent's Agent call returns at once, so the implementer doesn't get `ship-codex`'s
-report as its result (claude-ship #160). Other users of the gate don't need it.
+The PR loop (orchestrated mode) keeps `CLAUDE_CODE_FORK_SUBAGENT` set to `"0"` in the settings' `env` (the owner's
+decision, claude-ship #160). Under Claude Code's fork mode a subagent's Agent call returns at once; with the setting,
+headless sessions get `ship-codex`'s report as the Agent result. In interactive sessions the report reaches the
+implementer as a hand-back message, which the implementer acts on (`agents/ship-implementer.md`, step 2). Other users of
+the gate don't need the setting.
 
 ```json
 {"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}}

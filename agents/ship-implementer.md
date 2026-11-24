@@ -129,6 +129,10 @@ wait for the review yourself and the orchestrator sees only your final report.
    Report `codex requested: unknown`, since that round may have ended anywhere, before the request or in its waits, and
    list the thread ids you replied to as `replied:`. The orchestrator picks the PR up again as its Resuming
    step says, with a fresh `ship-codex`.
+   In interactive sessions the Agent call to `ship-codex` returns at once even with `CLAUDE_CODE_FORK_SUBAGENT=0`, so
+   that return is the interim text above, and the report then arrives as a hand-back message from that `ship-codex`
+   agent. A hand-back with an `outcome:` line is its report: act on it exactly as an Agent result. Resume it with
+   SendMessage only when no hand-back has arrived yet; the rules above still apply to text with no `outcome:`.
    Never start a second `ship-codex` for this PR while one is running. Don't request or wait for Codex any
    other way, and never post `@codex review` by hand.
 3. Act on the outcome:

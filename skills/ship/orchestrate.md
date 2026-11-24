@@ -21,9 +21,11 @@ $3.12 to $1.34).
 Only the user sets the variables (`! gh variable set CLAUDE_ORCHESTRATE --body true`). Without the loop, the
 ship skill's steps run as usual, for one PR at a time in your own context.
 
-The loop also needs the user setting `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}` in `~/.claude/settings.json`.
-Under fork mode a subagent's Agent call returns at once, so without it `ship-codex`'s report reaches you instead
-of the implementer, and you must forward its `fix` lines to the implementer with SendMessage (claude-ship #160).
+The loop keeps `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}` set in `~/.claude/settings.json` (the owner's decision,
+claude-ship #160). Under Claude Code's fork mode a subagent's Agent call returns at once; with the setting, headless
+sessions get `ship-codex`'s report as the Agent result. In interactive sessions the report reaches the implementer as a
+hand-back message, which the implementer acts on as its step 2 says. Forward a `fix` line to the implementer with
+SendMessage only when it ended before the hand-back came.
 
 ## Who does what
 
@@ -123,11 +125,11 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      live, follow **A unit with no report** below. Don't start a replacement without it, since the branch may
      already hold commits or a PR.
    - **Background work (#308):** a completion notice that says the implementer is "waiting on its own background
-    work", or a `background:` line that names ids instead of `none`, means it isn't finished (an earlier one left
-    a `pgrep -f` loop running that never ends). Treat it as a stop sign: don't go to 6 or merge. Ask the implementer
-    (`SendMessage`) to `TaskStop` those shells and report again, or stop them yourself with `TaskStop`
-    (`ListAgents` doesn't list background shells), then read the new report.
-  - `clean`, with CI green: go to 6.
+     work", or a `background:` line that names ids instead of `none`, means it isn't finished (an earlier one left
+     a `pgrep -f` loop running that never ends). Treat it as a stop sign: don't go to 6 or merge. Ask the implementer
+     (`SendMessage`) to `TaskStop` those shells and report again, or stop them yourself with `TaskStop`
+     (`ListAgents` doesn't list background shells), then read the new report.
+   - `clean`, with CI green: go to 6.
    - `ci: fail` (and no `handoff:` line, below): the implementer already ran the CI fix rounds (up to 2) and is reporting
      what is left. If it stopped, handle it per the stop table below ("CI fails for a reason outside the PR").
      Never read CI logs in the main session. In the fallback flow, run
