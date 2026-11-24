@@ -116,7 +116,7 @@ and their values.
 | `git push origin "$b"`, `cd "$d" && git push`, `cd a && cd b && git push`, `git -C a -C b push` | blocked: the gate can't tell which repo, or what, it pushes |
 | `--all`, `--tags`, `--mirror`, another remote, `--no-verify`, `GIT_DIR=x git push`, a redirect to a file | blocked (Push shape) |
 | `git add -A && git commit -m x && git push`, `git push; echo`, `(cd x; git push)`, `bash -c 'git push'`, `xargs git push`, `timeout 60 git push`, `./scripts/release.sh`, an alias, `gh pr create --fill` | passes; the pre-push check judges the push, if one happens |
-| a heredoc or an argument that only mentions `git push` or `gh api` (#193, #192) | passes |
+| a heredoc or an argument that only mentions `git push` or `gh api` (#193, #192), also next to a `gh` command (#135) | passes |
 
 `git commit && git push` is the case that matters most: the gate would review the HEAD from before the commit, so it does
 not look at the chain, and the hook refuses the push if the new commit has no review (`tests/git-hook.sh` runs that chain
@@ -137,12 +137,22 @@ the words after an `echo` or `printf`, or a quoted `grep` pattern that only ment
 data and pass. A scanned call writes when its method isn't GET (gh's
 default once it has fields or an `--input`), and passes only if it is one of the writes the ship skill makes (REST allowlist
 below). A call the text scan can't read, because it sits in a command substitution (`echo "$(gh api …)"`), still passes when
-the tree shows every `gh api` call the text names and each is a read: no `-X`, `--method`, `-f`, `-F`, `--field`, `--raw-field`
+the tree shows every `gh api` call the text names (less the data, below) and each is a read: no `-X`, `--method`, `-f`, `-F`, `--field`, `--raw-field`
 or `--input` (also inside a short-flag cluster such as `-iF`), and every word that isn't literal starts with literal text that
 is no option, as a path with a variable does (`repos/o/r/issues/$n/…`), so `-X$m` and a bare `$flags` are not reads. A call
 with a wrapper the gate doesn't unwrap, or one `xargs` feeds, isn't a read; nor is a `gh api` the tree doesn't show (in a string
-it couldn't parse, or next to another `gh` command, as in `gh issue list; echo 'gh api'`): the text scan decides those, and
-blocks what it can't read. Only gh's global options may stand between `gh` and `api`: `-R X`, `--repo X`, `--repo=X`,
+it couldn't parse, or behind a wrapper it can't unwrap, as in `gh issue list; flock l gh api …`): the text scan decides those,
+and blocks what it can't read.
+**Data.** Next to a `gh` command, a `gh api` in a single-quoted string, a double-quoted string with no expansion, or a heredoc body
+with no expansion that is an argument of a plain command is data too (`gh pr create --title "fix: stop gh api reads"`,
+`gh issue list; echo 'gh api'`, a `--body-file - <<'EOF'` body with backticks and `|`, #135): the gate counts the `gh api` text
+outside such data, and the tree must show each of those. An expansion in the string (`"gh api $x"`), a `$'…'` string, a here-string,
+a heredoc on a block or a loop, and an assignment are no data, so those still go to the text scan, which blocks what it can't
+read. There is no data at all when any command in it is one the gate can't unwrap or name (`sudo -Z …`, `$x …`), or when a
+word of one is a shell, `eval`, `source` or `.`: that covers `sh -c "…"`, `bash <<EOF`, `echo "…" | sh` and `docker exec c sh -c`, so
+every `gh api` in the text must match a call the tree shows, as before. Text a script reads (`echo "…" | ./run.sh`) is a form
+outside AGENTS.md › Gate scope. When the text names no `gh api` outside data and the tree shows no call, there is nothing to scan,
+and a command that starts no review passes before the quoting check (a heredoc body with an apostrophe is no quoting problem). Only gh's global options may stand between `gh` and `api`: `-R X`, `--repo X`, `--repo=X`,
 `--hostname X` and `--hostname=X` (`gh -R o/r api …` is a `gh api` call, judged like `gh api …`). The tree reads one as a `gh api`
 call when each has a literal value that is no option; any other word before `api` (`--help`, `-X`, an unknown option) or a
 dynamic value (`-R $r`) makes it no `gh api` call for the tree, so the text scan decides, and it blocks (`api_global`).

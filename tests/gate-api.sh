@@ -106,7 +106,7 @@ bash 2 'echo "$(gh api repos/acme/app/contents/x --method=PUT)"'
 bash 2 'echo "$(gh api repos/acme/app/contents/x --input body.json)"'
 bash 2 'echo "$(gh api repos/acme/app/git/refs$x -X POST)"'
 bash 2 'echo "$(gh api repos/acme/app/pulls/1)" "$(gh api -X DELETE repos/acme/app/git/refs/heads/x)"'
-bash 2 'echo "$(gh api repos/acme/app/pulls/1)"; echo "gh api"'
+bash 2 'echo "$(gh api repos/acme/app/pulls/1)"; echo "$x gh api"'
 bash 2 'echo "$(xargs gh api repos/acme/app/pulls/1)"'
 bash 2 'echo "$(sh -c "gh api -X DELETE repos/acme/app/git/refs/heads/x")"'
 
@@ -141,7 +141,7 @@ bash 2 'gh -R acme/app --help api repos/acme/app'
 bash 2 'gh -R acme/app -X DELETE api repos/acme/app/x'
 bash 2 'gh -R -X api repos/acme/app/x'
 bash 2 'gh -R acme/app api; gh -R $r api repos/acme/app/pulls/1'
-bash 2 'echo "$(gh -R acme/app api repos/acme/app/pulls/1)"; echo "gh -R x api"'
+bash 2 'echo "$(gh -R acme/app api repos/acme/app/pulls/1)"; echo "gh -R $x api"'
 
 # `-R` names the repo the opt-in lookup asks about, besides the ones where the command runs and the endpoint names: either one
 # opted in applies the allowlist. Here only acme/app opted in, and the command runs in no repo.
@@ -176,12 +176,73 @@ bash 2 'echo "gh api" && gh api -X DELETE repos/o/r/git/refs/heads/x'
 bash 2 'sh -c "gh api -X DELETE repos/o/r/git/refs/heads/x"'
 bash 2 'flock /tmp/l gh api -X DELETE repos/o/r/git/refs/heads/x'
 # A gh call that shows `gh api` in its raw text, where the word-split form loses it, can't be scanned and says so once.
-bash 2 "gh issue list; echo 'gh api'"
+bash 2 "gh issue list; sh -c 'echo gh api'"
 grep -q 'Blocked: this `gh api` call isn'\''t one the review gate can read\. ' "$tmp/err" || {
 	echo "FAIL: the unreadable gh api message reads wrong:"
 	sed 's/^/  /' "$tmp/err"
 	fail=1
 }
+
+# A `gh api` inside literal data is no call, also next to a gh command: a single-quoted or double-quoted string with no expansion,
+# or a heredoc body, that is an argument of a command which does not run it as shell (claude-ship #135). The gate counts the
+# `gh api` text outside such data, and the tree must show each one.
+bash 0 'gh pr create --title "fix: stop gh api reads" --body x'
+bash 0 "gh pr create --title 'fix: stop gh api reads' --body x"
+bash 0 'gh issue comment 1 --body "run gh api -X DELETE repos/a/b and see"'
+bash 0 'gh issue list; echo '\''gh api'\'''
+bash 0 'echo "$(gh api repos/acme/app/pulls/1)"; echo "gh api"'
+bash 0 'echo "$(gh -R acme/app api repos/acme/app/pulls/1)"; echo "gh -R x api"'
+bash 0 'gh pr create --title "gh api x" --body y; gh api repos/acme/app/pulls/1'
+bash 0 'gh pr create --title "gh api x" --body y && gh api repos/acme/app/issues/1/comments -f body="see gh api here"'
+bash 0 'gh issue list; cat >f <<'\''EOF'\''
+Never run gh api -X DELETE repos/a/b here.
+EOF
+gh issue list'
+bash 0 'gh issue comment 1 --body-file - <<'\''EOF'\''
+use `gh api` | jq, not $(gh api -X DELETE repos/a/b)
+EOF'
+bash 0 'gh issue comment 1 --body-file - <<'\''EOF'\''
+it'\''s `gh api -X DELETE x` | y & z
+EOF'
+bash 0 'gh pr create --title "gh api" --body "$(cat <<'\''EOF'\''
+the `gh api` | call, $x
+EOF
+)"'
+# A real call still blocks next to such data, and so does anything the tree can't place: an expansion in the string, a string
+# an interpreter reads, a command the gate can't unwrap or name, or a call the tree doesn't show.
+bash 2 'gh pr create --title "gh api x" --body y; gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'gh pr create --title "gh api x" --body y; gh api repos/o/r/contents/x -f content=y'
+bash 2 'gh pr create --title "gh api" --body y; flock /tmp/l gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'gh pr create --title "gh api $x" --body y'
+bash 2 'gh pr create --title "gh api $(date)" --body y'
+bash 2 'gh pr create --title "gh api `date`" --body y'
+bash 2 'gh pr create --title $'\''gh api'\'' --body y'
+bash 2 'gh issue list; sh -c "gh api -X DELETE repos/o/r/git/refs/heads/x"'
+bash 2 "gh issue list; sh -c 'gh api -X DELETE repos/o/r/git/refs/heads/x'"
+bash 2 'gh issue list; eval "gh api -X DELETE repos/o/r/git/refs/heads/x"'
+bash 2 'gh issue list; eval gh api -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'gh issue list; echo "gh api -X DELETE repos/o/r/git/refs/heads/x" | sh'
+bash 2 'gh issue list; echo "gh api -X DELETE repos/o/r/git/refs/heads/x" | bash -s'
+bash 2 'gh issue list; bash <<'\''EOF'\''
+gh api -X DELETE repos/o/r/git/refs/heads/x
+EOF'
+bash 2 'gh issue list; sh <<EOF
+gh api -X DELETE repos/o/r/git/refs/heads/x
+EOF'
+bash 2 'gh issue list; . /dev/stdin <<'\''EOF'\''
+gh api -X DELETE repos/o/r/git/refs/heads/x
+EOF'
+bash 2 'gh issue list; docker exec c sh -c "gh api -X DELETE repos/o/r/git/refs/heads/x"'
+bash 2 'gh issue list; x="gh api"; $x -X DELETE repos/o/r/git/refs/heads/x'
+bash 2 'gh issue list; $x "gh api -X DELETE repos/o/r/git/refs/heads/x"'
+bash 2 'gh issue list; sudo -Z echo "gh api"'
+bash 2 'gh issue list; cat <<<"gh api"'
+bash 2 'gh issue list; { cat; } <<'\''EOF'\''
+gh api -X DELETE repos/o/r/git/refs/heads/x
+EOF'
+bash 2 'gh issue list; cat <<EOF
+gh api -X DELETE repos/o/r/git/refs/heads/x $x
+EOF'
 
 # MCP write tools block by name, whatever the server is called.
 for t in mcp__github__push_files mcp__GitHub__push_files mcp__gh__create_pull_request \
