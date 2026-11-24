@@ -768,7 +768,8 @@ on the files that stay). It then runs the gate's
 stages with the gate's flags: the Sonnet finder, then the Haiku verifier when the finder found something (a docs case
 gets the Haiku claims check and no verifier). The finder runs at the gate's effort (none: the model's default); `--effort-finder <level>`
 (`low`, `medium`, `high`, `xhigh`, `max`, or `default` to pass no `--effort`) measures another one, and a value
-outside those is a usage error (exit 2). The verifier and the docs check pass no effort, as in the gate. Cost rows
+outside those is a usage error (exit 2), and so is a level with a `--prompt-dir` lib that has no `finder_effort` (from before #343: it
+would drop the level without a word). The verifier and the docs check pass no effort, as in the gate. Cost rows
 go to a temporary file, not to `~/.claude/state/review-costs.jsonl`.
 
 **Scoring.** A finding matches an expected one when the file is the same and its line is within 3 lines. An expected
