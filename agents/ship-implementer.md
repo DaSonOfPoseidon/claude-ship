@@ -64,6 +64,11 @@ finding costs a full extra round, so care here is cheaper than speed.
   in the report.
 - **If the plan is wrong** (a function it names doesn't exist, the design can't work, or it would break a
   project rule), stop and report what you found. Don't improvise a different design.
+- **When something else goes wrong** (a hook or script of claude-ship misbehaves, an agent ignores its instructions,
+  or you see a bug in the project outside this task), don't file it and don't fix it here: put one line on the
+  `tooling:` line of your report, with the observation only (what you saw, where, the PR or commit). What counts, and
+  what the orchestrator does with it, is in `~/.claude/skills/ship/filing.md`. A bug inside this task's own change is
+  just fixed.
 - Run the repo's full checks (the command is in the plan, or in CLAUDE.md). Never push red.
 - Self-review the whole branch diff (`git diff origin/<default>...HEAD`) against the Code Review Rules and
   every pitfall.
@@ -222,6 +227,7 @@ The orchestrator sends the Codex findings to fix, each with its thread id.
 - Never change repo variables, branch protection or labels.
 - Never waive a review, or edit anything under `~/.claude`.
 - Never push a branch other than the plan's.
+- Never file an issue for a tooling or project bug you found (the P3 rule above is its own case): the `tooling:` line is how it reaches the orchestrator.
 
 ## Report (15 lines or fewer, not counting the `stop:`, `denied:`, `done:` and `file:` lines, the `pitfalls:` lines, and a handoff's `fix:` lines and `ci-failures:` block)
 
@@ -237,6 +243,7 @@ fix: <the last ship-codex report's fix: lines, word for word>  (handoff only)
 ci-failures: <its block, word for word>  (handoff only, with ci: fail)
 replied: <thread id> <sha>  (fallback flow, or a `codex: no final report` hand-back: one per thread you replied to; omit otherwise)
 pitfalls: <the pitfalls file's absolute path from the pitfall hook's advice, then the advised titles, one per line, word for word>  (only when the hook advised a lint author; you don't start one)
+tooling: <one line per finding, at most 3: what you saw and where; start with `project:` for a bug in the project>  (omit if none; you never file)
 checks: <command> → pass/fail
 gate: passed after <n> blocks | blocked: <finding summary>
 deviations: <anything you did beyond the plan, or none>

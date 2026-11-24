@@ -128,7 +128,7 @@ if ! GIT_CONFIG_GLOBAL="$tmp/gitconfig-main" CLAUDE_HOME="$tmp/dest" sh "$tmp/ch
 	fail=1
 fi
 for f in main-installer-ran bin/shfmt hooks/review-gate.sh hooks/review-lib.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
-	skills/ship/orchestrate.md skills/ship/codex-status.sh agents/ship-explorer.md agents/ship-implementer.md \
+	skills/ship/orchestrate.md skills/ship/filing.md skills/ship/codex-status.sh agents/ship-explorer.md agents/ship-implementer.md \
 	agents/ship-codex.md agents/ship-lint-author.md hooks/codex-bash.sh hooks/pitfall-lint.sh agents/mine.md; do
 	[ -e "$tmp/dest/$f" ] || {
 		echo "FAIL: $f wasn't deployed"
