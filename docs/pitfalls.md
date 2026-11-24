@@ -353,3 +353,9 @@ review finds a new class.
   orchestrator merged while the loops still ran (claude-ship #308). Wait through the harness's completion notification, or on
   a pid (`while kill -0 <pid>`), never on a pattern that the waiting command itself contains, and stop every background
   command (`TaskStop`) before the report.
+
+- **awk reads an operand `name=value` as an assignment, not a file.** The patch check of `hooks/lint.sh` ran
+  `awk … "$t/patch" "$hbase"` with the edited file's bare name; for a file named `config=prod.js` awk set a variable,
+  read nothing, exited 1, and the fallback brought back the false hit the patch check was added to remove (claude-ship
+  #309, from #310). A file operand that may be relative and may hold a `=` gets a `./` prefix (a `/` before the `=` is never
+  an assignment), or comes from an absolute path (`$tmp/…` of `mktemp -d`, a git toplevel). Test with a file named `x=y`.

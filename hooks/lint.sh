@@ -303,7 +303,9 @@ END {
 	}
 }
 EOF
-			if HOOK_REL=$hrel awk -v pf="$t/patch" -f "$t/patch.awk" "$t/patch" "$hbase" >"$t/pdiff" 2>/dev/null; then
+			# `./`: a bare `name=value` operand is a variable assignment to awk, so a file of that name would never be read (#309).
+			# hbase is a basename, so it is always relative.
+			if HOOK_REL=$hrel awk -v pf="$t/patch" -f "$t/patch.awk" "$t/patch" "./$hbase" >"$t/pdiff" 2>/dev/null; then
 				cp "$t/pdiff" "$t/diff" || die "can't write a temp file"
 			fi
 		fi

@@ -1475,6 +1475,37 @@ want hook-patch-multi 0
 hdec hook-patch-multi block
 hreason hook-patch-multi 'm.js:3: debug-leftover (error)'
 hctx hook-patch-multi 'm.js:4: narration (warn)'
+# A file named like an awk assignment (`name=value`) is read as a file when the patch is checked against it (#309). Without
+# the `./` awk took the operand for a variable assignment, read no file, dropped the patch and the fallback came back.
+# An untracked one, then a tracked one: the earlier uncommitted line holds the short new text `a`, the edit wrote the one below.
+eq='config=prod.js'
+printf '%s\ny;\na\n' "$ebs" >"$repo/$eq"
+eqj=$(hjson Edit "$repo/$eq" "$repo" 'a' '')
+hook "$eqj"
+want hook-patch-eqname-none 0
+hdec hook-patch-eqname-none block
+hreason hook-patch-eqname-none "$eq:1: debug-leftover (error)"
+hook "$(withpatch "$eqj" '[{"oldStart":1,"oldLines":2,"newStart":2,"newLines":2,"lines":[" y;","+a"]}]')"
+want hook-patch-eqname 0
+silent hook-patch-eqname
+printf 'x;\ny;\n' >"$repo/$eq"
+git -C "$repo" add -- "$eq"
+commit
+printf 'x;\n%s\ny;\na\n' "$ebs" >"$repo/$eq"
+hook "$(withpatch "$eqj" "$good")"
+want hook-patch-eqname-tracked 0
+silent hook-patch-eqname-tracked
+# The patch's own written line is a violation: reported at the patch's number, under the file's name (no `./`).
+printf 'x;\n%s\ny;\n%s\n' "$ebs" "$dbg" >"$repo/$eq"
+hook "$(withpatch "$(hjson Edit "$repo/$eq" "$repo" "$dbg" '')" '[{"oldStart":2,"oldLines":1,"newStart":3,"newLines":2,"lines":[" y;","+'"$dbg"'"]}]')"
+want hook-patch-eqname-hit 0
+hdec hook-patch-eqname-hit block
+hreason hook-patch-eqname-hit "$eq:4: debug-leftover (error)"
+if jq -r '.reason // ""' "$tmp/out" | grep -qF -- "./$eq"; then
+	echo "FAIL (hook-patch-eqname-hit): the file name is shown with a ./ prefix"
+	sed 's/^/  out: /' "$tmp/out"
+	fail=1
+fi
 # A file under skip, and a lint turned off: nothing.
 printf '%s\n' "$dbg" >"$repo/x.min.js"
 hook "$(hjson Write "$repo/x.min.js" "$repo" "$dbg")"
