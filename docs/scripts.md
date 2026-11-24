@@ -551,6 +551,10 @@ that never closed (it has no title). A heading's title is its text with the whit
 section (up to the next `#` or `##` heading) holds a `- **` entry is a group header and no entry; `#` and `###` and deeper
 headings never are. Titles are compared as exact strings. A file that has list items (`- `, `* `, `+ `, `1. `) or headings of
 level 2 or deeper but yields no title is in a format the parser doesn't read (claude-ship #325), and counts as such, not as empty.
+Fenced code (claude-ship #326) is skipped: a line of three or more backticks or tildes, indented at most three spaces, opens a fence, which a
+line of the same character, at least as long and with nothing after it, closes (an unclosed fence runs to the end of the file; a
+backtick fence line with a backtick after the marker is inline code, no fence). Inside it nothing counts: no entry, heading or group, and
+not as content either, except in a fence that never closes: its list items and headings count as content the parser did not read (exit 3).
 
 **Ledger.** The `# pitfall: <title> -> <outcome>` lines (from column 0, with something after the `->`) of two files, whose union
 counts: the checkout's `.github/claude-ship/lint` and the default branch's. The default branch is found as `lint.sh` finds it,

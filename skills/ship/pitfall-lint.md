@@ -8,8 +8,8 @@ rule fits. This file is the procedure that links the two (claude-ship #313). It 
 ## The ledger
 
 An entry of `docs/pitfalls.md` is a line that starts `- **` (its bold text is its title) or a `## Title` heading (its text is
-the title). A `##` heading over `- **` entries is a group header, not an entry. The outcome for each entry is
-recorded as a comment line at column 0 of `.github/claude-ship/lint` (the lint skips comments, so it needs no parser):
+the title), outside fenced code (``` or ~~~ blocks are skipped). A `##` heading over `- **` entries is a group header, not an entry. The
+outcome for each entry is recorded as a comment line at column 0 of `.github/claude-ship/lint` (the lint skips comments, so it needs no parser):
 
 ```
 # pitfall: <bold title> -> <rule-id>[, <rule-id>]

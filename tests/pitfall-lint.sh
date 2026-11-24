@@ -104,10 +104,12 @@ hook() {
 	rc=$?
 }
 
-# raw <input>: runs the hook on the given text as stdin.
+# raw <input>: runs the hook on the given text as stdin, in $rawdir (default: $tmp/notrepo, which holds no repo). A hook that gets
+# no usable cwd falls back to its own, and the test's own cwd is wherever it was started: never what a case may read (#341).
+rawdir=
 raw() {
 	rm -f "$tmp/gh-calls"
-	printf '%s' "$1" | TMPDIR=$tmp/state PATH=$tmp/bin:$PATH sh "$script" hook >"$tmp/out" 2>"$tmp/err"
+	(cd "${rawdir:-$tmp/notrepo}" && printf '%s' "$1" | TMPDIR=$tmp/state PATH=$tmp/bin:$PATH sh "$script" hook) >"$tmp/out" 2>"$tmp/err"
 	rc=$?
 }
 
@@ -326,6 +328,140 @@ Body.
 - **Z.** Body.'
 pend pending-heading-ends-an-open-title "$repo" 'Entry H
 Z.'
+
+# Fenced code is skipped (claude-ship #326): a ``` or ~~~ line (0-3 spaces in) opens a fence that a line of the same character, at
+# least as long and with only blanks after it, closes. Nothing inside counts: no entry, no heading, no group.
+fixture
+put '# Pitfalls
+
+## Real entry
+
+Body, with an example:
+
+```sh
+## Fake heading
+# a comment
+- **Fake bullet.** body
+```
+
+After the fence.'
+pend pending-fence-in-a-heading-entry "$repo" "Real entry"
+
+# a group header over `- **` entries, with a fenced `# x` line between two of them: still a group
+fixture
+put '## Group
+
+- **Entry A.** Body.
+
+```
+# x
+## Fake
+```
+
+- **Entry B.** Body.'
+pend pending-fence-between-group-entries "$repo" "Entry A.
+Entry B."
+
+# a `- **` line in a ~~~ fence is no entry, and a ``` line in it does not close it
+fixture
+put '- **Real.** Body.
+
+~~~
+```
+- **Fake.** Body.
+~~~
+
+- **After.** Body.'
+pend pending-tilde-fence "$repo" "Real.
+After."
+
+# a 4-backtick fence stays open through a ``` line, a shorter close, and a close with an info string
+fixture
+put '- **Real.** Body.
+
+````md
+```
+- **Fake one.** Body.
+```
+- **Fake two.** Body.
+````js
+- **Fake three.** Body.
+````
+
+- **After.** Body.'
+pend pending-long-fence "$repo" "Real.
+After."
+
+# an indented (4 spaces) ``` line is indented code, not a fence; 3 spaces is a fence
+fixture
+put '- **One.** Body.
+
+    ```
+- **Two.** Body.
+   ```
+- **Fake.** Body.
+   ```
+- **Three.** Body.'
+pend pending-indented-fence "$repo" "One.
+Two.
+Three."
+
+# a backtick fence line with a backtick after the marker is inline code, not a fence
+fixture
+put '- **One.** Body.
+```code``` inline
+- **Two.** Body.'
+pend pending-inline-code-is-no-fence "$repo" "One.
+Two."
+
+# an entry whose title never closed ends at a fence, as at a blank line
+fixture
+put '- **Wrapped title
+```
+- **Fake.** Body.
+```
+- **After.** Body.'
+pend pending-fence-ends-an-open-title "$repo" "After."
+
+# an unclosed fence runs to the end of the file; the entries before it are listed
+fixture
+put '- **Real A.** Body.
+- **Real B.** Body.
+
+```
+- **Hidden.** Body.'
+pend pending-unclosed-fence "$repo" "Real A.
+Real B."
+
+# a file whose only list items are inside a fence has nothing to do: exit 0 and no output, not exit 3
+fixture
+put '# Pitfalls
+
+Intro, then an example:
+
+```
+- **Example.** Body.
+## Example heading
+1. one
+```'
+pend pending-only-fenced-items "$repo" ""
+# but items hidden by a fence that never closes are content this parser does not read
+fixture
+put '# Pitfalls
+
+```
+- **Example.** Body.'
+unparsed pending-only-items-in-an-unclosed-fence "$repo"
+# and a list item outside the fence still counts as content
+fixture
+put '# Pitfalls
+
+```
+- **Example.** Body.
+```
+
+* **Star.** Body.'
+unparsed pending-fence-and-unread-items "$repo"
 
 # A file with only a title and an intro has no entries and says nothing.
 fixture
@@ -607,6 +743,15 @@ inner=
 silent hook-review-gate-inner
 no_gh hook-review-gate-inner
 
+# fenced code is skipped here too: an entry D with a fenced example is the only new title
+fixture
+printf -- '- **Entry D.** Body of D, with an example:\n\n```sh\n## Fake heading\n- **Fake bullet.** body\n```\n' >>"$repo/docs/pitfalls.md"
+hook "$repo/docs/pitfalls.md" sess-fence
+advised hook-fence-advises
+says hook-fence-names-the-real-entry "Entry D."
+lacks hook-fence-skips-the-heading "Fake heading"
+lacks hook-fence-skips-the-bullet "Fake bullet."
+
 # bad input: every one exits 0 and prints nothing
 raw ''
 silent hook-empty-input
@@ -628,6 +773,14 @@ raw "$(jq -nc --arg d "$repo" '{session_id: "s", cwd: $d, tool_input: {file_path
 silent hook-newline-in-path
 raw "$(jq -nc '{session_id: "s", cwd: 5, tool_input: {file_path: "docs/pitfalls.md"}}')"
 silent hook-cwd-number
+# a cwd that isn't a string falls back to the hook's own directory: from a repo with a new entry it advises
+fixture
+add_entry "Entry D." "Body of D."
+rawdir=$repo
+raw "$(jq -nc '{session_id: "s", cwd: 5, tool_input: {file_path: "docs/pitfalls.md"}}')"
+rawdir=
+advised hook-cwd-number-falls-back-to-pwd
+says hook-cwd-number-falls-back-names-the-title "Entry D."
 
 # usage of hook with an argument
 printf '{}' | sh "$script" hook extra >/dev/null 2>&1
