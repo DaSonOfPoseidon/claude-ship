@@ -21,8 +21,9 @@ done
 case "\$*" in *graphql*) echo graphql >>"$tmp/calls" ;; esac
 case "\$*" in
 *'graphql'*)
-	# No unresolved threads unless a test writes threads.json (the response's shape, not the script's filter).
-	[ -f "$tmp/threads.json" ] || exit 0
+	# No unresolved threads unless a test writes threads.json (the response's shape, not the script's filter);
+	# fail.threads still makes the call fail.
+	[ -f "$tmp/threads.json" ] || [ -f "$tmp/fail.threads" ] || exit 0
 	f=threads
 	;;
 *'/activity'*) f=activity ;;
@@ -45,8 +46,19 @@ case "\$*" in
 *'/issues/1/comments'*) f=comments ;;
 *) echo "unexpected gh call: \$*" >&2; exit 1 ;;
 esac
-# A test makes one endpoint fail by creating fail.<name> (pr, comments or reviews).
-[ ! -f "$tmp/fail.\$f" ] || { echo "gh: HTTP 502 (\$f)" >&2; exit 1; }
+# A test makes one endpoint fail by creating fail.<name> (pr, comments, reviews, activity, threads or reactions):
+# empty, it fails every call; holding a number N, it fails the next N calls and then lets them through.
+if [ -f "$tmp/fail.\$f" ]; then
+	n=\$(cat "$tmp/fail.\$f")
+	if [ -z "\$n" ]; then
+		echo "gh: HTTP 502 (\$f)" >&2
+		exit 1
+	elif [ "\$n" -gt 0 ]; then
+		echo \$((n - 1)) >"$tmp/fail.\$f"
+		echo "gh: HTTP 502 (\$f)" >&2
+		exit 1
+	fi
+fi
 jq -r "\$expr" "$tmp/\$f.json"
 EOF
 chmod +x "$tmp/bin/gh"
@@ -581,19 +593,65 @@ with_msg "Codex can't review fork PRs" fork f/r '' expect failure 'reads: fork, 
 reads 'fork failed' 0
 ROW=
 
-# A failed read stops the run before any status is set, whichever endpoint it was (set -e on each read). Run as in
-# Actions, which is the path that posts.
-# The fixtures of a blank row with a request, which reads the reviews too.
-expect success 'reads: fixtures for the failing reads' '—' $p $c "$r1" "$m"
-for ep in pr comments reviews; do
+# A failed read is retried (#338), and a read that still fails stops the run before any status is set, whichever
+# endpoint it was (set -e on each read). Run as in Actions, which is the path that posts. The sleep between tries is 0.
+CODEX_STATUS_RETRY_SLEEP=0
+export CODEX_STATUS_RETRY_SLEEP
+# fixtures <endpoint>: the state in which the script reads that endpoint. A blank row with a request reads the reviews
+# too; the reactions are read only for a request that is old, with a 👀 on it and nothing else from Codex to see.
+EMPTY_THREADS='{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+fixtures() {
+	rm -f "$tmp/reactions.json"
+	echo "$EMPTY_THREADS" >"$tmp/threads.json"
+	if [ "$1" = reactions ]; then
+		echo '[{"content":"eyes","user":{"login":"chatgpt-codex-connector[bot]"}}]' >"$tmp/reactions.json"
+		AGE=7200
+		EYES=1
+		expect pending 'reads: fixtures for the reactions' "$other" "$pushed" $c "$(ago 360) OWNER" ''
+		AGE=0
+		EYES=0
+	else
+		expect success 'reads: fixtures for the failing reads' '—' $p $c "$r1" "$m"
+	fi
+}
+# call_re <endpoint>: the call log's line for it.
+call_re() {
+	case $1 in
+	pr) echo '^repos/o/r/pulls/1$' ;;
+	reviews) echo '^repos/o/r/pulls/1/reviews$' ;;
+	comments) echo '^repos/o/r/issues/1/comments$' ;;
+	activity) echo '^repos/o/r/activity?' ;;
+	threads) echo '^graphql$' ;;
+	reactions) echo '^repos/o/r/issues/comments/777/reactions$' ;;
+	esac
+}
+# what <endpoint>: how the error names the read.
+what() {
+	case $1 in
+	pr) echo 'the pull request' ;;
+	activity) echo 'push activity' ;;
+	threads) echo 'review threads' ;;
+	*) echo "$1" ;;
+	esac
+}
+# run_in_actions <endpoint>: runs the script as in Actions; sets rc, out (stdout), err (stderr) and attempts (the
+# calls to that endpoint).
+run_in_actions() {
 	: >"$tmp/calls"
-	: >"$tmp/fail.$ep"
-	out=$(REPO=o/r GITHUB_ACTIONS=true PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>&1)
+	out=$(REPO=o/r GITHUB_ACTIONS=true PATH=$tmp/bin:$PATH sh "$root/scripts/codex-status.sh" 1 2>"$tmp/err")
 	rc=$?
-	if [ "$rc" -eq 0 ]; then
+	err=$(cat "$tmp/err")
+	attempts=$(grep -c "$(call_re "$1")" "$tmp/calls")
+}
+for ep in pr comments reviews activity threads reactions; do
+	fixtures "$ep"
+	# Always failing: three tries, then a failed run that says which read it was and what gh said, and no status.
+	: >"$tmp/fail.$ep"
+	run_in_actions "$ep"
+	[ "$rc" -ne 0 ] || {
 		echo "FAIL: the run succeeded with $ep failing"
 		fail=1
-	fi
+	}
 	case $out in
 	*success:* | *pending:* | *failure:*)
 		echo "FAIL: a state was printed with $ep failing: $out"
@@ -604,8 +662,51 @@ for ep in pr comments reviews; do
 		echo "FAIL: a status was posted with $ep failing"
 		fail=1
 	fi
+	case $err in
+	*"codex-status: reading $(what "$ep") for #1 failed after 3 tries: gh: HTTP 502 ($ep)"*) ;;
+	*)
+		echo "FAIL: the error doesn't name the $ep read and gh's message: $err"
+		fail=1
+		;;
+	esac
+	[ "$attempts" -eq 3 ] || {
+		echo "FAIL: $ep always failing was tried $attempts times, not 3"
+		fail=1
+	}
+	# Failing once, or twice, then answering: the normal result, after 2 or 3 tries.
+	for n in 1 2; do
+		echo "$n" >"$tmp/fail.$ep"
+		run_in_actions "$ep"
+		[ "$rc" -eq 0 ] || {
+			echo "FAIL: the run failed with $ep failing $n time(s): $err"
+			fail=1
+		}
+		case $out in
+		success:* | pending:* | failure:*) ;;
+		*)
+			echo "FAIL: no state line with $ep failing $n time(s): $out"
+			fail=1
+			;;
+		esac
+		grep -q 'statuses state=' "$tmp/calls" || {
+			echo "FAIL: no status posted with $ep failing $n time(s)"
+			fail=1
+		}
+		[ "$attempts" -eq $((n + 1)) ] || {
+			echo "FAIL: $ep failing $n time(s) was tried $attempts times, not $((n + 1))"
+			fail=1
+		}
+	done
 	rm -f "$tmp/fail.$ep"
 done
+# A read that succeeds is made once, an empty answer included (an empty list is data, not a failure).
+fixtures reviews
+run_in_actions reviews
+[ "$attempts" -eq 1 ] || {
+	echo "FAIL: a read that succeeded was tried $attempts times"
+	fail=1
+}
+rm -f "$tmp/threads.json" "$tmp/reactions.json"
 
 # The summary's body and its edit time come from one comment, however the body is written: a newline, a tab and a
 # quote inside it must not move the row or the time (the body goes through the tagged line as JSON).

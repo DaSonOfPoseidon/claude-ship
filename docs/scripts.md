@@ -132,6 +132,18 @@ count as a trusted request or an owner's approval. The local jq only decodes a s
 line of JSON (so a newline in it can't forge a tag). Each read is its own assignment, so `set -e` stops on a failed
 call before anything is posted; reading a pipeline's last exit status would turn an empty result into "no findings".
 
+**Retried reads (#338).** Every read (the repository when `REPO` is unset, the PR, the reviews, the push activity, the
+comments, the review threads and a request's reactions) goes through `gh_read <what> <gh args…>`, which tries a failed
+`gh` call up to 3 times in all, `CODEX_STATUS_RETRY_SLEEP` seconds apart (5 by default; the tests set 0). GitHub's API
+now and then answers with a 5xx or an empty body, which gh's `--jq` reports as `unexpected end of JSON input`, and
+the first such answer used to fail the whole `codex-review / codex-status` job. An empty answer that *succeeded* is not
+retried: an empty list is valid data for several reads. After the third failure the script prints
+`codex-status: reading <what> for #<pr> failed after 3 tries: <gh's last stderr, one line>` on stderr (`<what>` is
+`the repository`, `the pull request`, `reviews`, `push activity`, `comments`, `review threads` or `reactions`, so a
+red job says which read broke) and stops with a failure: no state line and no status, as before, so the check stays
+red (fail closed). The status POST is a write and is never retried. The helper is called as the whole right side of an
+assignment (`x=$(gh_read …)`), where a non-zero status stops the script under `set -e`.
+
 ## `skills/ship/ci-failures.sh`
 
 Sends CI failures to the implementer instead of the main session (#118). `ci-failures.sh <pr> [owner/repo] [--wait]`
