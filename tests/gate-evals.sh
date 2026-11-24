@@ -365,6 +365,39 @@ run --case caught --prompt-dir "$tmp/hooks2"
 	fail=1
 }
 
+# --effort-finder with a --prompt-dir lib from before #343 (no finder_effort line, and a run_claude that ignores a 9th
+# argument, claude-ship #342): a real level exits 2 before any reviewer runs, `default` passes nothing and runs, and a
+# finder_effort in the environment doesn't make up the support the lib lacks.
+cp "$tmp/claude.main" "$tmp/bin/claude"
+mkdir "$tmp/hooks4"
+cp "$root"/hooks/* "$tmp/hooks4/"
+grep -v '^finder_effort=' "$tmp/hooks4/review-lib.sh" >"$tmp/hooks4/review-lib.new"
+mv "$tmp/hooks4/review-lib.new" "$tmp/hooks4/review-lib.sh"
+rm -f "$tmp/argv"
+run --case caught --effort-finder max --prompt-dir "$tmp/hooks4"
+if [ "$rc" != 2 ] || [ -e "$tmp/argv" ] || ! grep -qF -e '--effort-finder needs a review-lib.sh with effort support' "$tmp/err"; then
+	echo "FAIL: --effort-finder max with a lib that has no effort: exit $rc (want 2, with no reviewer run), message: $(cat "$tmp/err")"
+	fail=1
+fi
+export finder_effort=high
+run --case caught --effort-finder max --prompt-dir "$tmp/hooks4"
+if [ "$rc" != 2 ] || [ -e "$tmp/argv" ]; then
+	echo "FAIL: --effort-finder max, finder_effort=high in the environment, a lib with no effort: exit $rc (want 2, with no reviewer run)"
+	fail=1
+fi
+run --case caught --prompt-dir "$tmp/hooks4"
+if [ "$rc" != 0 ] || [ -z "$(calls sonnet)" ] || [ -n "$(effort_of sonnet)" ]; then
+	echo "FAIL: no --effort-finder, finder_effort=high in the environment, a lib with no effort: exit $rc, the finder ran at '$(effort_of sonnet)' (want none)"
+	fail=1
+fi
+unset finder_effort
+rm -f "$tmp/argv"
+run --case caught --effort-finder default --prompt-dir "$tmp/hooks4"
+if [ "$rc" != 0 ] || [ -z "$(calls sonnet)" ] || [ -n "$(calls sonnet | grep -e '--effort')" ]; then
+	echo "FAIL: --effort-finder default with a lib that has no effort: exit $rc, the finder's call must run with no --effort flag"
+	fail=1
+fi
+
 # --check sets cases up and runs no reviewer.
 rm -f "$tmp/custom" "$tmp/argv"
 cp "$tmp/claude.main" "$tmp/bin/claude"

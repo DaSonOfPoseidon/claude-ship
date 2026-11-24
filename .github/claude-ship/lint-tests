@@ -67,9 +67,10 @@ hit pitfall-pipeline-status hooks/x.sh x=$(gh api "repos/$slug/pulls" | wc -l)
 hit pitfall-pipeline-status hooks/x.sh echo "x=$(gh api repos/o/r | wc -l)"
 miss pitfall-pipeline-status hooks/x.sh x="$(gh api --jq '.[] | .id' "repos/$slug/pulls")"
 
-# pitfall-missing-arg-exit: a positional-argument guard that exits 1 on the same line: -z or a count test, or -n with a ||
-# before the exit (exit 1 when the argument is missing); -n then && exit 1 (exit when it is present), exit 2, a test of
-# another value, and tests/ are not.
+# pitfall-missing-arg-exit: a positional-argument guard that exits 1 on the same line: -z or -n as a test (after [, [[ or
+# test, with an optional !), or a count test; -n needs a || before the exit (exit 1 when the argument is missing). -n then
+# && exit 1 (exit when it is present), exit 2, a test of another value, a command's own -n or -z option (grep, sed, echo,
+# sort) and tests/ are not.
 hit pitfall-missing-arg-exit hooks/x.sh [ -z "$1" ] && exit 1
 hit pitfall-missing-arg-exit scripts/x.sh if [ "$#" -lt 2 ]; then echo usage >&2; exit 1; fi
 miss pitfall-missing-arg-exit tests/x.sh [ -z "$1" ] && exit 1
@@ -82,6 +83,15 @@ miss pitfall-missing-arg-exit hooks/x.sh [ -n "$1" ] && echo x; exit 1
 miss pitfall-missing-arg-exit hooks/x.sh [ -n "$1" ] || exit 2
 hit pitfall-missing-arg-exit hooks/x.sh [ -z "$2" ] && exit 1
 miss pitfall-missing-arg-exit hooks/x.sh # [ -z "$1" ] && exit 1
+hit pitfall-missing-arg-exit hooks/x.sh test -n "$1" || exit 1
+hit pitfall-missing-arg-exit hooks/x.sh [[ -n "$1" ]] || exit 1
+hit pitfall-missing-arg-exit hooks/x.sh [ ! -n "$1" ] || exit 1
+hit pitfall-missing-arg-exit hooks/x.sh test -z "$1" && exit 1
+miss pitfall-missing-arg-exit hooks/x.sh grep -n "$1" file || exit 1
+miss pitfall-missing-arg-exit hooks/x.sh sed -n "$1p" f || exit 1
+miss pitfall-missing-arg-exit hooks/x.sh echo -n "$1" || exit 1
+miss pitfall-missing-arg-exit hooks/x.sh grep -z "$1" f && exit 1
+miss pitfall-missing-arg-exit hooks/x.sh sort -z "$1" f || exit 1
 
 # pitfall-status-stale: cancel-in-progress true in a codex workflow, quoted or not; false, a comment and other workflows are not.
 hit pitfall-status-stale .github/workflows/codex-status.yml cancel-in-progress: true

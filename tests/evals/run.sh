@@ -11,7 +11,8 @@
 # builds the prompt as the gate would at that base (hooks/review-lib.sh: the rules, with their path rules applied, checklist, pitfalls and false positives are read from
 # `base`, not from the working tree), and runs the gate's stages with the gate's flags: the Sonnet finder, then the
 # Haiku verifier (a docs case gets the Haiku claims check and no verifier). The finder runs at the gate's effort (none
-# by default: the model's own); --effort-finder takes low, medium, high, xhigh or max, or `default` to pass no --effort. The verifier and docs check pass
+# by default: the model's own); --effort-finder takes low, medium, high, xhigh or max, or `default` to pass no --effort (a
+# level needs a --prompt-dir lib that defines finder_effort, so one from before #343 exits 2). The verifier and docs check pass
 # none. --prompt-dir takes the lib and the prompts
 # from another directory, so a changed prompt can be measured before it is deployed. Cost rows go to a temporary file,
 # not to the gate's review-costs.jsonl.
@@ -201,11 +202,18 @@ trap 'interrupted 143' TERM
 
 # The gate's own functions, schemas and prompts, from --prompt-dir. Cost rows go to a temporary file.
 costs=$work/review-costs.jsonl
+# finder_effort is unset first, so only a lib that defines it (the current one does, empty) counts as supporting effort.
+unset finder_effort
 # shellcheck disable=SC1091 # the lib is chosen at run time
 . "$promptdir/review-lib.sh"
 dir=$promptdir
-# The finder's effort: the gate's unless given; `default` passes none. A lib from an older --prompt-dir has no effort to
-# pass (its run_claude ignores a 9th argument), so it stays empty.
+# The finder's effort: the gate's unless given; `default` passes none. A lib from an older --prompt-dir (before #343) has no
+# finder_effort, and its run_claude ignores a 9th argument: a level asked for would be dropped without a word, so it is a
+# setup error (claude-ship #342); `default` and no flag pass nothing, which such a lib runs as it always did.
+if [ -z "${finder_effort+set}" ] && [ -n "$effort_given" ] && [ "$effort_finder" != default ]; then
+	echo "run.sh: --effort-finder needs a review-lib.sh with effort support (claude-ship #72); $promptdir has none" >&2
+	exit 2
+fi
 [ -n "$effort_given" ] || effort_finder=${finder_effort:-}
 [ "$effort_finder" != default ] || effort_finder=
 
