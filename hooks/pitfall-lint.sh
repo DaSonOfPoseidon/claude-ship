@@ -5,7 +5,7 @@
 # An entry of docs/pitfalls.md is either a line starting `- **`, whose title is the text up to the next `**` outside backticks (a
 # title may wrap onto the following lines, which are joined with single spaces), or a `## Title` heading, whose title is the
 # heading text trimmed. A `##` heading whose section (up to the next `#` or `##` heading) holds a `- **` entry is a group
-# header, not an entry; `#` and `###` headings never are. A file with list items or headings of level 2 or deeper and no entry
+# header, not an entry; `#` and `###` headings never are. Fenced code (``` or ~~~, claude-ship #326) is skipped. A file with list items or headings of level 2 or deeper and no entry
 # is in a format this parser doesn't read: `pending` exits 3 on it (the hook says so once per session). The ledger is the comment lines
 #   # pitfall: <title> -> <rule-id>[, <rule-id>]      or      # pitfall: <title> -> none: <reason>
 # in .github/claude-ship/lint (hooks/lint-rules), taken from the checkout and from the default branch together. An entry
@@ -93,9 +93,26 @@ pitfalls=$top/docs/pitfalls.md
 
 t=$(mktemp -d) || die "mktemp failed"
 
-# titles <file>: the entries' titles, one per line (the parser is described in the header).
+# titles <file> [<content file>]: the entries' titles, one per line (the parser is described in the header). When a content file is
+# named, awk creates it if the file has content outside fences (a list item or a heading of level 2 or deeper), so the caller can
+# tell a file with nothing to do from one in a format this parser doesn't read. A fence left open at the end of the file counts
+# its content too: that can hide entries, and it must not read as a file with nothing to do.
 titles() {
-	awk '
+	awk -v cf="${2:-}" '
+		# fence(s): whether s is a fence line (0-3 spaces, then three or more backticks or tildes), as CommonMark reads it. Sets
+		# fch (the marker), flen (its length) and ftail (what follows it).
+		function fence(s,   n) {
+			# (not /^ ? ? ?/: mawk reads that as one optional space)
+			match(s, /^( |  |   )?/)
+			s = substr(s, RLENGTH + 1)
+			fch = substr(s, 1, 1)
+			if (fch != "`" && fch != "~") return 0
+			n = 1
+			while (substr(s, n + 1, 1) == fch) n++
+			flen = n
+			ftail = substr(s, n + 1)
+			return n >= 3
+		}
 		function scan(s,   i, n, c) {
 			n = length(s)
 			for (i = 1; i <= n; i++) {
@@ -121,6 +138,21 @@ titles() {
 		}
 		{
 			sub(/\r$/, "")
+			# Inside a fence nothing counts: no entry, heading, flush or group. Its closing line is a fence of the same character, at
+			# least as long as the opening one, with only blanks after it.
+			if (infence) {
+				if (fence($0) && fch == mch && flen >= mlen && ftail ~ /^[ \t]*$/) infence = 0
+				else if ($0 ~ /^([-*+][ \t]|[0-9]+\.[ \t]|##)/) fcontent = 1
+				next
+			}
+			# An opening backtick fence has no backtick after it (else it is inline code).
+			if (fence($0) && (fch != "`" || index(ftail, "`") == 0)) {
+				# An entry whose title never closed ends here, as it does at a blank line.
+				open = 0; tick = 0; acc = ""
+				infence = 1; mch = fch; mlen = flen; fcontent = 0
+				next
+			}
+			if ($0 ~ /^([-*+][ \t]|[0-9]+\.[ \t]|##)/) seen = 1
 			if (open) {
 				# A blank line, a heading or the next entry ends an entry whose title never closed.
 				if ($0 ~ /^[ \t]*$/ || $0 ~ /^#/ || $0 ~ /^- /) { open = 0; tick = 0; acc = "" }
@@ -145,7 +177,10 @@ titles() {
 			}
 			if ($0 ~ /^- \*\*/) { group = 1; tick = 0; acc = ""; scan(substr($0, 5)) }
 		}
-		END { flush() }' "$1"
+		END {
+			flush()
+			if (cf != "" && (seen || (infence && fcontent))) { print "" >cf; close(cf) }
+		}' "$1"
 }
 
 # grep_ledger <file>: appends the file's ledger lines to $t/ledger.
@@ -183,18 +218,11 @@ if [ -n "$ref" ]; then
 fi
 
 # pending: the titles of the current file that no ledger line names: `# pitfall: <title> -> <something>` from column 0.
-titles "$pitfalls" >"$t/titles" || die "can't read docs/pitfalls.md"
+titles "$pitfalls" "$t/content" >"$t/titles" || die "can't read docs/pitfalls.md"
 # A file that has list items or headings of level 2 or deeper and yields no entry is in a format the parser doesn't read, which is
 # not the same as a file with nothing to do (a title and an intro): say so rather than hand back an empty queue (claude-ship #325).
 unparsed=
-if [ ! -s "$t/titles" ]; then
-	grep -Eq '^([-*+][[:space:]]|[0-9]+\.[[:space:]]|##)' "$pitfalls"
-	case $? in
-	0) unparsed=1 ;;
-	1) ;;
-	*) die "can't read docs/pitfalls.md" ;;
-	esac
-fi
+if [ ! -s "$t/titles" ] && [ -e "$t/content" ]; then unparsed=1; fi
 if [ -n "$unparsed" ] && [ "$mode" = pending ]; then
 	echo "pitfall-lint: docs/pitfalls.md has content but no entries this parser reads" >&2
 	exit 3
