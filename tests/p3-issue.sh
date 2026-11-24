@@ -37,7 +37,22 @@ case "\$1 \$2" in
 	fi
 	printf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/vnd.github.raw\\r\\n\\r\\n'
 	cat "$tmp/map" ;;
-"pr list") echo "\${PR_MS:-}" ;;
+"pr list")
+	# gh pr list ... --json milestone,isCrossRepository --jq <expr>: PR_MS is the milestone of one PR of this
+	# repository, PR_JSON the whole list instead (a fork's PR among it), and PR_FAIL makes gh fail. The caller's own
+	# --jq runs over the list, as gh does.
+	[ -z "\${PR_FAIL:-}" ] || exit 1
+	json=\${PR_JSON:-}
+	if [ -z "\$json" ]; then
+		json='[]'
+		[ -z "\${PR_MS:-}" ] || json='[{"isCrossRepository":false,"milestone":{"title":"'"\$PR_MS"'"}}]'
+	fi
+	expr=
+	while [ \$# -gt 0 ]; do
+		[ "\$1" = --jq ] && expr=\$2
+		shift
+	done
+	printf '%s' "\$json" | jq -r "\$expr" ;;
 "pr view")
 	# gh pr view <pr> -R slug --json milestone|commits --jq ...: PRV_MS is the PR's milestone, PRV_COMMITS its
 	# commit messages (one per line, the way the --jq prints them).
@@ -259,6 +274,18 @@ export V_CLAUDE_P3_MILESTONE=auto
 PR_MS=X MS_3=Y expect src/x.c review:p3,milestone:later,status:ready X
 MS_3=Y expect src/x.c review:p3,milestone:later,status:ready Y
 expect src/x.c review:p3,milestone:later,status:ready ''
+# A fork's PR from a branch of the same name is never taken (claude-ship #317): ours is, wherever it comes in the
+# list; with only the fork's, the fixed issue's milestone answers; an entry without the field could be a fork's,
+# and a failed lookup is no milestone either.
+FORK='{"isCrossRepository":true,"milestone":{"title":"F"}}'
+OURS='{"isCrossRepository":false,"milestone":{"title":"X"}}'
+PR_JSON="[$FORK,$OURS]" expect src/x.c review:p3,milestone:later,status:ready X
+PR_JSON="[$OURS,$FORK]" expect src/x.c review:p3,milestone:later,status:ready X
+PR_JSON="[$FORK]" MS_3=Y expect src/x.c review:p3,milestone:later,status:ready Y
+PR_JSON="[$FORK]" expect src/x.c review:p3,milestone:later,status:ready ''
+PR_JSON='[{"milestone":{"title":"F"}}]' MS_3=Y expect src/x.c review:p3,milestone:later,status:ready Y
+PR_JSON="[$OURS,"'{"milestone":{"title":"F"}}]' MS_3=Y expect src/x.c review:p3,milestone:later,status:ready Y
+PR_FAIL=1 MS_3=Y expect src/x.c review:p3,milestone:later,status:ready Y
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "fix: y (closes #4)"
 MS_3=Y MS_4=Y expect src/x.c review:p3,milestone:later,status:ready Y
 MS_3=Y MS_4=Z expect src/x.c review:p3,milestone:later,status:ready ''

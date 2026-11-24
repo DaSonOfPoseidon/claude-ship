@@ -153,8 +153,12 @@ if [ "$(var CLAUDE_P3_MILESTONE)" = auto ]; then
 	else
 		branch=$(git symbolic-ref -q --short HEAD)
 		if [ -n "$branch" ]; then
-			milestone=$(gh pr list -R "$slug" --head "$branch" --state open --json milestone \
-				--jq '.[0].milestone.title // empty' 2>/dev/null)
+			# --head also matches a fork's PR from a branch of the same name: isCrossRepository drops those, and a list
+			# with an entry lacking the field gives no milestone (claude-ship #317).
+			milestone=$(gh pr list -R "$slug" --head "$branch" --state open --json milestone,isCrossRepository \
+				--jq 'if type == "array" and all(.[]; .isCrossRepository | type == "boolean")
+					then map(select(.isCrossRepository == false)) | .[0].milestone.title // empty
+					else error("not a list of PRs with isCrossRepository") end' 2>/dev/null)
 		fi
 		if [ -z "$milestone" ] && [ -n "$base" ]; then
 			log=$(git log --format=%s "$base..HEAD") && milestone=$(printf '%s\n' "$log" | fixed_milestone)

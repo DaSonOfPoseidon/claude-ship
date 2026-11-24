@@ -1912,7 +1912,11 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 		echo "Blocked: couldn't read the current branch." >&2
 		exit 2
 	}
-	pr=$(gh pr list -R "$slug" --head "$branch" --state open --json number --jq '.[0].number // empty') || {
+	# --head matches a fork's PR from a branch of the same name too: isCrossRepository drops those, and an entry
+	# without the field (it could be a fork's) fails the lookup, which blocks (claude-ship #317).
+	pr=$(gh pr list -R "$slug" --head "$branch" --state open --json number,isCrossRepository --jq 'if type == "array" and all(.[]; .isCrossRepository | type == "boolean")
+		then map(select(.isCrossRepository == false)) | .[0].number // empty
+		else error("not a list of PRs with isCrossRepository") end') || {
 		echo "Blocked: couldn't read the open PR for $branch from GitHub. Check \`gh auth status\` and retry the push." >&2
 		exit 2
 	}
