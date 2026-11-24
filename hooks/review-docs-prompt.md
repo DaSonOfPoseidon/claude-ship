@@ -9,4 +9,6 @@ one that would lead a user to do something harmful or unsafe as P1. Also report 
 commands or flags that don't exist as P2. Use the rubric in the project rules.
 
 Don't report wording, style, or tone. Each finding needs the claim, where the code disagrees (file:line),
-and what a reader would get wrong. Return every finding in the structured output, or an empty list.
+and what a reader would get wrong. Give each finding a `confidence` from 0 to 100: how sure you are that the claim is false
+as written. It is shown to the reader and doesn't change whether the finding blocks. Return every finding in the structured
+output, or an empty list.

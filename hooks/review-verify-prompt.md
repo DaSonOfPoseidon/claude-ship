@@ -12,4 +12,6 @@ Give each finding exactly one verdict:
 - `uncertain`: you couldn't decide. It counts as confirmed.
 
 Don't change a finding's severity, merge findings, or add new ones. Keep each reason to one or two sentences.
+Give each verdict a `confidence` from 0 to 100: how sure you are of that verdict. It is shown to the reader and doesn't
+change what the verdict does.
 Return one verdict per finding, with its index, in the structured output.

@@ -85,7 +85,11 @@ report() {
 $r
 EOF
 		if [ -n "$rej" ]; then sev="$sev (rejected by the verifier)"; fi
-		printf '## %s: %s:%s\nA summary.\n\nFailure: something.\n\n' "$sev" "$file" "$line" >>"$S/$h.md"
+		printf '## %s: %s:%s\nA summary.\n\nFailure: something.\n' "$sev" "$file" "$line" >>"$S/$h.md"
+		# The Confidence line (#116) sits under the heading's block; $noconf leaves it out, as reports from before it do.
+		if [ -z "${noconf:-}" ]; then printf 'Confidence: finder 80, verifier ?\n' >>"$S/$h.md"; fi
+		if [ -n "$rej" ]; then printf 'Verifier: a reason (%s:%s)\n' "$file" "$line" >>"$S/$h.md"; fi
+		printf '\n' >>"$S/$h.md"
 	done
 }
 
@@ -196,6 +200,14 @@ block rate: 50% (1/2)'
 cp "$tmp/out" "$tmp/out.main"
 run -C "$tmp/wt" 10
 check 'from a worktree' 0 "$(cat "$tmp/out.main")"
+
+# A report from before the Confidence line has the same heading and reads the same.
+noconf=1
+report "$s1" 'P1|a.sh|50'
+report "$s2" 'P2|b.sh|10|rejected'
+noconf=
+run 10
+check 'main case, reports without a Confidence line' 0 "$(cat "$tmp/out.main")"
 
 # A PR given twice (or with leading zeros: 010 is 10) counts once, in the same row and the same total.
 run 10 10

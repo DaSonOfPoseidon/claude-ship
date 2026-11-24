@@ -411,8 +411,10 @@ entries, and it runs only in an opted-in repo or when the user asks.
 
 ## Costs
 
-Every reviewer run appends `{date, repo, head, stage, model, effort, rc, cost_usd, findings}` to
-`~/.claude/state/review-costs.jsonl`.
+Every reviewer run appends `{date, repo, head, stage, model, effort, rc, cost_usd, findings, confidences}` to
+`~/.claude/state/review-costs.jsonl`. `confidences` lists each finding's (or verdict's) 0-100 confidence, `null` where the
+reviewer gave none; it is shown with the finding too, and display only: there is no threshold, and nothing about
+blocking depends on it.
 
 To measure what a PR cost to build, run `~/.claude/skills/ship/token-report.sh <pr>...` from a checkout of the
 repo. It reads that repo's Claude Code transcripts, the cost log above and `gh`, and prints each PR's tokens and

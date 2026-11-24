@@ -2,8 +2,8 @@
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
 # The review gate's reviewer pieces, shared by hooks/review-gate.sh and the eval runner (tests/evals/run.sh), so the
-# runner measures the prompts and flags the gate really uses. Sourced, never run: it defines functions, two schemas and
-# the finder's effort, and does nothing else. Design notes: docs/gate.md › Reviewer pipeline, and › Changing prompts or models.
+# runner measures the prompts and flags the gate really uses. Sourced, never run: it defines functions, two schemas, the
+# confidence jq definitions and the finder's effort, and does nothing else. Design notes: docs/gate.md › Reviewer pipeline, and › Changing prompts or models.
 #
 # The functions read the caller's variables, named in each header. They never exit the shell: a failure is a
 # non-zero status (or an empty result) for the caller to turn into a block, an error or a skipped case.
@@ -11,8 +11,16 @@
 # shellcheck disable=SC2034,SC2154 # the variables are shared with the sourcing script, so each file sees only half
 
 # JSON schemas of the finder's (and docs check's) and the verifier's structured output.
-findings_schema='{"type":"object","required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","required":["file","line","severity","summary","failure_scenario"],"properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"enum":["P0","P1","P2","P3"]},"category":{"type":"string"},"summary":{"type":"string"},"failure_scenario":{"type":"string"}}}}}}'
-verify_schema='{"type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["index","verdict","reason"],"properties":{"index":{"type":"integer"},"verdict":{"enum":["confirmed","rejected","uncertain"]},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}'
+findings_schema='{"type":"object","required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","required":["file","line","severity","summary","failure_scenario"],"properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"enum":["P0","P1","P2","P3"]},"category":{"type":"string"},"summary":{"type":"string"},"failure_scenario":{"type":"string"},"confidence":{"type":"integer","minimum":0,"maximum":100}}}}}}'
+verify_schema='{"type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["index","verdict","reason"],"properties":{"index":{"type":"integer"},"verdict":{"enum":["confirmed","rejected","uncertain"]},"evidence":{"type":"string"},"reason":{"type":"string"},"confidence":{"type":"integer","minimum":0,"maximum":100}}}}}}'
+
+# jq definitions for the optional `confidence` (0-100) a finding (from the finder or the docs check) and a verdict (from
+# the verifier) may carry (claude-ship #116). It is shown and logged, never acted on: nothing here decides whether a finding
+# blocks (blocking_of, mark_rejected). `conf` renders a value for a person (an integer 0-100 as itself, anything else
+# (missing, null, a string, a float, out of range) as `?`, which means unknown, never low), `confn` for the cost row (the
+# integer, or null); both go through `floor`, so a literal 80.0 prints and logs as 80 on every jq (1.7 keeps the literal's
+# spelling, 1.6 doesn't). Put it in front of a jq program: jq "$confidence_jq"' ... | conf'.
+confidence_jq='def confok: type == "number" and . == floor and . >= 0 and . <= 100; def conf: if confok then floor | tostring else "?" end; def confn: if confok then floor else null end;'
 
 # The reasoning effort the finder runs at (`claude --effort`, run_claude's last argument): the user's decision of
 # 2026-11-24 (claude-ship #72), under measurement. The verifier and the docs check pass none, so they run at their model's
@@ -351,8 +359,10 @@ run_claude() {
 	rc=$?
 	mkdir -p "$(dirname "$costs")"
 	jq -c --arg repo "$7" --arg head "$8" --arg stage "$1" --arg model "$2" --arg rc "$rc" --arg effort "${9:-default}" \
-		'{date: (now | todate), repo: $repo, head: $head, stage: $stage, model: $model, effort: $effort, rc: ($rc | tonumber),
-		  cost_usd: (.total_cost_usd // null), findings: ((.structured_output.findings // .structured_output.verdicts // []) | length)}' \
+		"$confidence_jq"'(.structured_output.findings // .structured_output.verdicts // []) as $items
+		| {date: (now | todate), repo: $repo, head: $head, stage: $stage, model: $model, effort: $effort, rc: ($rc | tonumber),
+		  cost_usd: (.total_cost_usd // null), findings: ($items | length),
+		  confidences: (if $items | type == "array" then $items | map(if type == "object" then .confidence | confn else null end) else [] end)}' \
 		"$5" >>"$costs" 2>/dev/null
 	return "$rc"
 }

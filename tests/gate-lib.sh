@@ -369,6 +369,24 @@ x.sh')" code
 	false_positives=
 	build_verify_prompt "$tmp/v2.md" "$vf" 'diff text'
 	check verify-no-fp "$(grep -cF 'Known false positives' "$tmp/v2.md")" 0
+	# A confidence (claude-ship #116) is shown, never acted on: an integer 0-100 prints as itself and anything else (missing,
+	# null, a string, a float, out of range, another type) prints `?`.
+	for pair in '80:80' '0:0' '100:100' '80.0:80' 'null:?' '"80":?' '80.5:?' '-1:?' '101:?' 'true:?' '[80]:?' '{}:?' '1e400:?'; do
+		check "confidence-render ${pair%%:*}" "$(jq -nr "$confidence_jq ${pair%%:*} | conf")" "${pair#*:}"
+	done
+	check confidence-render-missing "$(printf '{}' | jq -r "$confidence_jq .confidence | conf")" '?'
+	# The verifier never sees the finder's confidence (it would anchor the verdict): its view of a finding is fixed fields.
+	vf='[{"severity":"P2","file":"x.sh","line":1,"summary":"s","failure_scenario":"f","confidence":87}]'
+	false_positives=
+	build_verify_prompt "$tmp/v3.md" "$vf" 'diff text'
+	check verify-no-finder-confidence "$(sed -n '/^## Findings to verify/,/^## Diff under review/p' "$tmp/v3.md" | grep -ciE '87|confidence')" 0
+	check verify-finding-shown "$(grep -cF '### 0: [P2] x.sh:1' "$tmp/v3.md")" 1
+	# Blocking ignores it: a finding at confidence 0 still blocks, and a rejection still needs its file:line citation.
+	marked=$(mark_rejected '[{"severity":"P2","confidence":0},{"severity":"P1","confidence":0},{"severity":"P2","confidence":100},{"severity":"P2","confidence":0}]' \
+		'[{"index":0,"verdict":"confirmed","reason":"r","confidence":0},{"index":1,"verdict":"uncertain","reason":"r","confidence":0},{"index":2,"verdict":"rejected","reason":"r","evidence":"no line cited","confidence":100},{"index":3,"verdict":"rejected","reason":"r","evidence":"x.sh:2","confidence":0}]')
+	check confidence-rejected "$(printf '%s' "$marked" | jq -c '[.[].rejected]')" '[false,false,false,true]'
+	check confidence-blocking "$(blocking_of "$marked")" 3
+	check confidence-kept "$(printf '%s' "$marked" | jq -c '[.[].verdict.confidence]')" '[0,0,100,0]'
 ) || fail=1
 
 # A gate that can't read its lib blocks the push (a shell that fails to source a file exits with a status that lets
@@ -462,6 +480,45 @@ claude_run 'high x"y'
 # The row keeps its other fields.
 jq -e '.stage == "finder" and .model == "sonnet" and .repo == "acme/app" and .head == "abc123" and .rc == 0 and .cost_usd == 0.5 and .findings == 0' "$tmp/costs.jsonl" >/dev/null || {
 	echo "FAIL (effort): the cost row lost a field: $(cat "$tmp/costs.jsonl")"
+	fail=1
+}
+
+# The cost row lists the run's per-item confidences (claude-ship #116): a finding's for a finder or docs-check run, a verdict's
+# for a verifier run, each an integer 0-100 or null for a missing or bad value, [] for none or an output that isn't a list.
+# conf_row <stage> <claude's output>: the row's `confidences`, as one line.
+conf_row() {
+	rm -f "$tmp/costs.jsonl"
+	printf '%s' "$2" >"$tmp/cfake"
+	cat >"$tmp/cbin/claude" <<EOT
+#!/bin/sh
+cat >/dev/null
+cat "$tmp/cfake"
+EOT
+	(
+		PATH=$tmp/cbin:$PATH
+		costs=$tmp/costs.jsonl
+		. "$root/hooks/review-lib.sh"
+		run_claude "$1" haiku "$tmp/cprompt" '{}' "$tmp/cout" 60 acme/app abc123
+	)
+	jq -c '.confidences' "$tmp/costs.jsonl" 2>/dev/null
+}
+conf_check() {
+	[ "$2" = "$3" ] || {
+		echo "FAIL (confidences $1): got '$2', want '$3'"
+		fail=1
+	}
+}
+f='{"file":"a","line":1,"severity":"P2","summary":"s","failure_scenario":"f"'
+conf_check finder "$(conf_row finder '{"total_cost_usd":0.5,"structured_output":{"findings":['"$f"',"confidence":80},'"$f"'},'"$f"',"confidence":"80"},'"$f"',"confidence":80.5},'"$f"',"confidence":-1},'"$f"',"confidence":101},'"$f"',"confidence":null},'"$f"',"confidence":0},'"$f"',"confidence":80.0}]}}')" '[80,null,null,null,null,null,null,0,80]'
+conf_check docs-check "$(conf_row docs-check '{"structured_output":{"findings":['"$f"',"confidence":55}]}}')" '[55]'
+conf_check verifier "$(conf_row verifier '{"structured_output":{"verdicts":[{"index":0,"verdict":"confirmed","reason":"r","confidence":65},{"index":1,"verdict":"uncertain","reason":"r"}]}}')" '[65,null]'
+conf_check none "$(conf_row finder '{"structured_output":{"findings":[]}}')" '[]'
+conf_check no-output "$(conf_row finder '{"total_cost_usd":0.1}')" '[]'
+conf_check not-a-list "$(conf_row finder '{"structured_output":{"findings":"x"}}')" '[]'
+conf_check not-objects "$(conf_row finder '{"structured_output":{"findings":[1,"a",null,{"confidence":7}]}}')" '[null,null,null,7]'
+# The row keeps all its other fields, effort included.
+jq -e '.stage == "finder" and .model == "haiku" and .repo == "acme/app" and .head == "abc123" and .effort == "default" and .rc == 0 and .findings == 4' "$tmp/costs.jsonl" >/dev/null || {
+	echo "FAIL (confidences): the cost row lost a field: $(cat "$tmp/costs.jsonl")"
 	fail=1
 }
 
