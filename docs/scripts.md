@@ -428,8 +428,8 @@ still missed, so a printed PR with subagent or gate rows but no `main` row print
 **Gate runs** (#110). The gate's reviewers leave no transcript, but `hooks/review-gate.sh` appends one row per run
 to `~/.claude/state/review-costs.jsonl` (`$CLAUDE_REVIEW_COSTS` overrides the path, for tests). Each PR gets `gate
 <stage>` rows (grouped by stage and model; the token columns show `-`, the cost is the sum of `cost_usd`), counted
-in the total's requests and cost. Rows also carry the run's `effort` (`high` for the finder, `default` for a run with no
-`--effort`, #72) and their `confidences` (the reviewers' per-item confidence, #116, display only); this report reads neither, and rows from before them have none. A run with `cost_usd: null` makes its row and the total `?`, and a run that
+in the total's requests and cost. Rows also carry the run's `effort` (`default` for a run with no
+`--effort`, as every reviewer runs now, #72) and their `confidences` (the reviewers' per-item confidence, #116, display only); this report reads neither, and rows from before them have none. A run with `cost_usd: null` makes its row and the total `?`, and a run that
 failed (`rc` not 0) still counts when its output is JSON; a run with no JSON output (e.g. killed by `timeout`) logs no row, so its cost is missing from the report. A row is the PR's when its repo is this one (compared without case: the gate logs the slug as spelled in the push
 URL, `gh` gives GitHub's) and either its `head` is one of the
 PR's commits (from the `gh pr view` call that reads the window, no extra call) or its head is no commit of any PR
@@ -706,7 +706,7 @@ hook decides, not what Claude Code does with it.
 
 `review-lib.sh` holds what the gate and the eval runner share: the prompt builders, the two output schemas (each with an
 optional, display-only `confidence`, #116, rendered by the jq definitions in `confidence_jq`), the
-reviewer run (`run_claude`, with its flags, the finder's `--effort` and its cost row) and the rules that turn verdicts into findings and a block
+reviewer run (`run_claude`, with its flags, the optional `--effort` and its cost row) and the rules that turn verdicts into findings and a block
 count. It is sourced, never run, and reads the caller's variables (named in each function's header) instead of taking
 a dozen arguments; shellcheck can't follow the sourcing, so both files disable SC2034 and SC2154. Its functions return
 a status or print nothing on failure and never exit, because the gate turns that into a block and the runner into an

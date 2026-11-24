@@ -10,8 +10,8 @@
 # findings a reviewer should report. The runner makes a temporary detached worktree at `base`, commits the diff there,
 # builds the prompt as the gate would at that base (hooks/review-lib.sh: the rules, with their path rules applied, checklist, pitfalls and false positives are read from
 # `base`, not from the working tree), and runs the gate's stages with the gate's flags: the Sonnet finder, then the
-# Haiku verifier (a docs case gets the Haiku claims check and no verifier). The finder runs at the gate's effort (high);
-# --effort-finder takes low, medium, high, xhigh or max, or `default` to pass no --effort. The verifier and docs check pass
+# Haiku verifier (a docs case gets the Haiku claims check and no verifier). The finder runs at the gate's effort (none
+# by default: the model's own); --effort-finder takes low, medium, high, xhigh or max, or `default` to pass no --effort. The verifier and docs check pass
 # none. --prompt-dir takes the lib and the prompts
 # from another directory, so a changed prompt can be measured before it is deployed. Cost rows go to a temporary file,
 # not to the gate's review-costs.jsonl.

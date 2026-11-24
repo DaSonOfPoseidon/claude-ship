@@ -978,8 +978,9 @@ expect_budget REVIEW_GATE_MIN_SECS=0 2 none none 'at least 1'
 # A clock that has used the whole budget blocks as 'ran out of time'.
 expect_budget FAKE_DATE_STEP=2200 2 none none 'ran out of time'
 
-# Reasoning effort (claude-ship #72): only the finder runs at --effort high; the verifier and the docs check pass no
-# --effort, and every cost row says which effort its run had (`default` when none was passed). The fake claude in ebin
+# Reasoning effort (claude-ship #72): no reviewer passes --effort by default (the finder runs at its model's default;
+# `high` was tried in #72 and reverted on the evals), and every cost row says which effort its run had (`default` when
+# none was passed). The fake claude in ebin
 # logs each call's arguments as one record, then finds one thing (finder), confirms it (verifier) or finds nothing (docs
 # check).
 mkdir -p "$tmp/ebin"
@@ -1030,16 +1031,12 @@ effort_run x.sh
 	sed 's/^/  /' "$tmp/err"
 	fail=1
 }
-grep ' sonnet ' "$tmp/ecalls" | grep -q ' --effort high ' || {
-	echo "FAIL: the finder's call has no '--effort high': $(grep ' sonnet ' "$tmp/ecalls")"
-	fail=1
-}
-[ "$(grep -c -e '--effort' "$tmp/ecalls")" = 1 ] || {
-	echo "FAIL: more than the finder's call passes --effort:"
+[ -z "$(grep -e '--effort' "$tmp/ecalls")" ] || {
+	echo "FAIL: a reviewer call passes --effort by default:"
 	sed 's/^/  /' "$tmp/ecalls"
 	fail=1
 }
-effort_rows 'finder=high verifier=default'
+effort_rows 'finder=default verifier=default'
 effort_run README.md
 [ "$(wc -l <"$tmp/ecalls")" = 1 ] && ! grep -q -e '--effort' "$tmp/ecalls" || {
 	echo "FAIL: the docs check's call passes --effort (or there is not exactly one call):"
