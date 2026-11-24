@@ -50,7 +50,7 @@ miss gnu-stat-c hooks/x.sh # stat -c is GNU-only
 miss gnu-stat-c hooks/x.sh wc -c < "$f"
 
 # pitfall-pipeline-status: a gh call piped inside $( ), assigned or not, with quoted arguments or inside double quotes; a
-# quoted pipe, a fallback, a single-quoted mention and a comment are not.
+# quoted pipe, a fallback, a single-quoted mention and a comment are not; balanced single-quoted words before the $( don't hide it.
 hit pitfall-pipeline-status hooks/x.sh x=$(gh api repos/o/r/pulls | wc -l)
 hit pitfall-pipeline-status scripts/x.sh n=$(gh -R o/r api pulls/1/reviews | jq length)
 miss pitfall-pipeline-status tests/x.sh x=$(gh api repos/o/r/pulls | wc -l)
@@ -58,17 +58,24 @@ miss pitfall-pipeline-status hooks/x.sh # x=$(gh api repos/o/r/pulls | wc -l)
 miss pitfall-pipeline-status hooks/x.sh x=$(gh api --jq '.[] | .id' repos/o/r/pulls)
 miss pitfall-pipeline-status hooks/x.sh x=$(gh api repos/o/r/pulls || echo 0)
 miss pitfall-pipeline-status hooks/x.sh echo 'x=$(gh api repos/o/r | wc -l)'
+hit pitfall-pipeline-status hooks/x.sh n=$(gh api "repos/$r/pulls" | wc -l)
+hit pitfall-pipeline-status hooks/x.sh jq -r '.x' f >/dev/null; n=$(gh api repos/o/r/pulls | wc -l)
+hit pitfall-pipeline-status hooks/x.sh echo 'a' && x=$(gh api repos/o/r/pulls | wc -l)
+miss pitfall-pipeline-status hooks/x.sh echo 'a' 'x=$(gh api repos/o/r | wc -l)'
 hit pitfall-pipeline-status hooks/x.sh x="$(gh api repos/o/r/pulls | wc -l)"
 hit pitfall-pipeline-status hooks/x.sh x=$(gh api "repos/$slug/pulls" | wc -l)
 hit pitfall-pipeline-status hooks/x.sh echo "x=$(gh api repos/o/r | wc -l)"
 miss pitfall-pipeline-status hooks/x.sh x="$(gh api --jq '.[] | .id' "repos/$slug/pulls")"
 
-# pitfall-missing-arg-exit: a positional-argument guard that exits 1 on the same line; exit 2, a test of another value, and tests/ are not.
+# pitfall-missing-arg-exit: a positional-argument guard (-z or a count test) that exits 1 on the same line; exit 2, -n, a test of another value, and tests/ are not.
 hit pitfall-missing-arg-exit hooks/x.sh [ -z "$1" ] && exit 1
 hit pitfall-missing-arg-exit scripts/x.sh if [ "$#" -lt 2 ]; then echo usage >&2; exit 1; fi
 miss pitfall-missing-arg-exit tests/x.sh [ -z "$1" ] && exit 1
 miss pitfall-missing-arg-exit hooks/x.sh [ -z "$1" ] && exit 2
 miss pitfall-missing-arg-exit hooks/x.sh [ -f "$f" ] || exit 1
+miss pitfall-missing-arg-exit hooks/x.sh [ -n "$1" ] || exit 1
+miss pitfall-missing-arg-exit hooks/x.sh [ -n "$2" ] && shift || exit 1
+hit pitfall-missing-arg-exit hooks/x.sh [ -z "$2" ] && exit 1
 miss pitfall-missing-arg-exit hooks/x.sh # [ -z "$1" ] && exit 1
 
 # pitfall-status-stale: cancel-in-progress true in a codex workflow, quoted or not; false, a comment and other workflows are not.
@@ -89,12 +96,32 @@ hit pitfall-current-checkout hooks/x.sh n=$(gh pr view --json number --jq .numbe
 hit pitfall-current-checkout scripts/x.sh gh pr checks -R owner/repo
 hit pitfall-current-checkout scripts/x.sh gh pr checks --repo "$slug" --interval 30 --watch
 hit pitfall-current-checkout hooks/x.sh gh pr view --json number --jq '.number | tostring'
+hit pitfall-current-checkout hooks/x.sh gh pr view --json headRefOid --jq .headRefOid
+hit pitfall-current-checkout hooks/x.sh gh pr merge --squash -R o/r
+hit pitfall-current-checkout hooks/x.sh gh pr edit --add-label bug
+hit pitfall-current-checkout hooks/x.sh gh pr edit --remove-label bug --add-reviewer alice --remove-reviewer bob
+hit pitfall-current-checkout hooks/x.sh gh pr edit --add-assignee @me --remove-assignee bob
+hit pitfall-current-checkout hooks/x.sh gh pr edit --add-project Roadmap --remove-project Old
+hit pitfall-current-checkout hooks/x.sh gh pr edit --milestone v1
+hit pitfall-current-checkout hooks/x.sh gh pr edit -m v1 -B main
+hit pitfall-current-checkout hooks/x.sh gh pr checks -i 30
+hit pitfall-current-checkout hooks/x.sh gh pr close --comment "done"
+hit pitfall-current-checkout hooks/x.sh gh pr close -c done --delete-branch
+hit pitfall-current-checkout hooks/x.sh gh pr reopen -c again
+hit pitfall-current-checkout hooks/x.sh gh pr diff --exclude '*.md'
+hit pitfall-current-checkout hooks/x.sh gh pr comment --attach shot.png#alt
 miss pitfall-current-checkout tests/x.sh gh pr checks --watch
 miss pitfall-current-checkout hooks/x.sh gh pr checks "$pr" --watch
 miss pitfall-current-checkout hooks/x.sh gh pr view 12 --json headRefOid
 miss pitfall-current-checkout hooks/x.sh gh pr view -R owner/repo 12 --json headRefOid
 miss pitfall-current-checkout hooks/x.sh gh pr checks --repo "$slug" "$pr" --watch
 miss pitfall-current-checkout hooks/x.sh gh pr view --json number "$pr"
+miss pitfall-current-checkout hooks/x.sh gh pr edit 12 --add-label bug
+miss pitfall-current-checkout hooks/x.sh gh pr edit --add-label bug "$pr"
+miss pitfall-current-checkout hooks/x.sh gh pr checks -i 30 "$pr"
+miss pitfall-current-checkout hooks/x.sh gh pr close "$pr" --comment done
+miss pitfall-current-checkout hooks/x.sh gh pr close --comment done "$pr"
+miss pitfall-current-checkout hooks/x.sh gh pr edit -m v1 "$pr"
 miss pitfall-current-checkout hooks/x.sh # gh pr checks --watch
 miss pitfall-current-checkout hooks/x.sh echo "run gh pr view --web"
 
