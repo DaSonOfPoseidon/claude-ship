@@ -10,6 +10,9 @@ The review → push → Codex process Claude Code follows in every opted-in repo
   [`docs/gate.md`](docs/gate.md#changing-prompts-or-models)).
 - `skills/ship/`: the `ship` skill (bootstrap a repo, request Codex reviews, triage by the outcome table,
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
+- `skills/ship/filing.md`: when a session files an issue unasked (a bug in claude-ship's tooling, an agent that didn't
+  follow its instructions, a bug in the project outside the task), how, and where. Installed with the skill, so any
+  session can read it.
 - `skills/ship/orchestrate.md`, `agents/`, `hooks/orchestrate-hint.sh`, `hooks/explorer-bash.sh` and
   `hooks/codex-bash.sh`: the optional orchestrated mode (below).
 - `hooks/pitfall-lint.sh`: lists the `docs/pitfalls.md` entries that no lint rule covers, and asks the session for a lint

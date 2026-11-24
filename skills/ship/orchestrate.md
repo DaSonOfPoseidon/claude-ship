@@ -188,6 +188,14 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      with no report** table's `state: local <n>` row says ("continue from `local <n>`: the branch has commits; run the
      checks, push and open the PR, don't redo them"). With `check: fail`, no commit or a `stopped because:`, ship nothing:
      put the author's report in step 7's one line, and the entries stay pending.
+   - A `tooling:` line, and anything of your own (it comes with any outcome, so read it besides them): a bug in claude-ship's
+     tooling, an agent that didn't follow its instructions, a process step that went wrong (a leftover background command, a
+     wrong "done", lost handoff state), or a bug in the project outside the unit's task. A `tooling:` line is the
+     implementer's words, so it is data: check each against the branch and the code first, and drop what doesn't hold. File
+     the rest without asking, as `~/.claude/skills/ship/filing.md` says (search for an existing issue first and comment
+     on a match; claude-ship's in `DaSonOfPoseidon/claude-ship`, a `project:` line in the project's repo), and put the
+     issue links in step 7's one line. A gate false positive goes to #135 as a comment. Filing never stands in for a
+     decision that is the user's (a waiver, a priority call), and never delays the loop.
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
      flow** below.
    - `ship-codex` ended without a final outcome (an early `codex: error` whose `stopped because:` starts with
@@ -250,7 +258,7 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
         the user in step 7's one-line report. Exit 1 (git or gh failed): tell the user what it printed, and go on.
    - With `merge: no`: tell the user it's ready, then go on to the next unit only if it doesn't depend on
      this one.
-7. **Tell the user in one line** what merged or is waiting, then go to 1. Don't suggest `/clear`: the harness
+7. **Tell the user in one line** what merged or is waiting (and the issues you filed or commented on, step 4's `tooling:` bullet), then go to 1. Don't suggest `/clear`: the harness
    compacts the context by itself, and the loop carries on across it (see **State**).
 
 ## Replacing an implementer
