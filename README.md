@@ -1,6 +1,166 @@
 # claude-ship
 
-The review → push → Codex process Claude Code follows in every opted-in repo:
+The review → push → Codex process Claude Code follows in every opted-in repo: a pre-push review gate, git hooks, a hygiene
+lint, the `ship` skill with its agents, and a GitHub status that blocks merges until Codex has reviewed. This section says
+what each feature does, what triggers it and what it puts in Claude's context. The sections after it are the reference.
+
+## What runs, and when
+
+**Trigger legend**
+
+| Trigger | Meaning |
+|---|---|
+| **Auto** | Runs on its own on any machine where `./install.sh` ran. No repo setting needed. |
+| **Opt-in** | Runs on its own once a setting is on: a repo variable, a repo file or a `settings.json` entry. |
+| **Ask** | Runs only when the user says so: a phrase, or a command anyone may run. |
+| **User-only** | Claude is blocked from running it. Only the user's `!` command does. |
+
+### A. Install and tamper protection (`install.sh`, `settings/claude-ship.json`)
+
+| Feature | Trigger | Scope |
+|---|---|---|
+| Deploy `origin/main` into `~/.claude` (hooks, ship agents, skill, shfmt, git-hook stubs) | Ask: the user runs `./install.sh` after each merge | Never deploys a branch |
+| Managed-settings drop-in registers the gate (PreToolUse) and two edit hooks (PostToolUse: the lint and the pitfall check) | Auto, after an install as root | Every Claude Code user of the machine; user and project settings can't turn it off. It does **not** register the orchestrate hint hook |
+| Global `core.hooksPath` set to `~/.claude/git-hooks` | Auto, when unset | Any other value leaves the pre-push check off, and the gate blocks pushes |
+| `chattr +i` on everything installed | Auto, after an install as root | The user lifts it with `! sudo chattr -i <path>` |
+| `~/.claude/claude-ship/lint` created once | Auto | The user's file, never overwritten |
+| Settings check: prints a missing gate entry, hint hook or `CLAUDE_CODE_FORK_SUBAGENT=0` | Auto, in the install output | Never edits `settings.json` |
+
+### B. Review gate (`hooks/review-gate.sh`, PreToolUse on Bash, Write, Edit, MultiEdit, NotebookEdit and GitHub MCP writes)
+
+**Every repo, every matching tool call (Auto):**
+
+| Check | Effect |
+|---|---|
+| `jq` missing, or the tool call unreadable | Blocks every call |
+| `~/.claude/bin/shfmt` missing, or a Bash command it can't parse | Blocks every Bash call |
+| Write or Edit of a protected path (`~/.claude/{hooks,git-hooks,skills/ship,agents/ship-*,bin,claude-ship,settings*}`, `.git/review-gate/`, `/etc/claude-code`), or text that sets `disableAllHooks` | Blocks |
+| Bash that writes those paths literally (`cp`, `mv`, `ln`, a redirect, `sed -i`…) | Blocks |
+| The review gate's `--waive` or `--prune`, `gh variable set/delete/remove` on `CLAUDE_AUTONOMOUS`, `CLAUDE_ORCHESTRATE` or `CLAUDE_P3_*`, running `codex-allow.sh`, `chattr` | Blocks (these are User-only) |
+| `git commit --no-verify` or `-n`, `git push --no-verify`, a write of `core.hooksPath` | Blocks |
+
+**Only in repos where `CLAUDE_AUTONOMOUS` is `true` (Opt-in):**
+
+| Check | Effect |
+|---|---|
+| A canonical `git push` starts a headless review: a Sonnet finder (P0–P3) and a Haiku verifier; a docs-only change gets a Haiku claims check | Confirmed P0–P2 block; confirmed P3s are filed as issues by `p3-issue.sh`; a pass is recorded in `.git/review-gate/` |
+| Push shape: HEAD's branch to origin only, or one tag whose commit is on the default branch | Anything else blocks |
+| `core.hooksPath` must point at the deployed stubs | The push blocks otherwise |
+| GitHub MCP write tools (`push_files`, `create_pull_request`, `merge_pull_request`…) | Block |
+| `gh api` writes outside the ship skill's allowlist | Block |
+| `AGENTS.md` › `## Code Review Rules` must exist | Pushes block until the skill's bootstrap writes it |
+
+The reviewer sessions get the rules and context from the default branch: the Code Review Rules, an optional `### Path rules`
+subsection, `docs/pitfalls.md`, `docs/false-positives.md` (both optional), the repo's open P3 issues (so they aren't filed
+twice) and the branch diff.
+
+### C. Git hooks (`hooks/git-hook.sh`, run through the `~/.claude/git-hooks` stubs)
+
+| Feature | Trigger | Scope |
+|---|---|---|
+| Chains to the repo's own `.git/hooks/<name>` (git stops reading it once `core.hooksPath` is set); for Claude's commits and pushes it runs after the lint or the review check passes | Auto | Every repo, everyone's git |
+| `pre-push`: refuses a push of a commit with no `.pass` or `.waived` in the review state, however the push started (`gh pr create` included) | Opt-in: the destination repo has `CLAUDE_AUTONOMOUS` `true` | Claude's pushes only |
+| `pre-commit`: lints the staged lines and refuses the commit on an error-level hit | Auto | Claude's commits, every repo |
+| The user's own pushes and commits | Never checked | A command the user runs with `!` counts as Claude's |
+
+### D. Hygiene lint (`hooks/lint.sh`, `hooks/lint-rules`)
+
+| Feature | Trigger | What enters Claude's context |
+|---|---|---|
+| PostToolUse `lint.sh hook` after every Write, Edit and MultiEdit | Auto, every repo | An error is `decision: block` feedback ("Fix these now"); a warning is extra context; a clean edit adds nothing |
+| The `pre-commit` lint (C above) | Auto | The refusal text in the Bash output |
+| Built-in rules (`hooks/lint-rules`) | Auto | |
+| Install layer `~/.claude/claude-ship/lint` | Opt-in: edit the file | |
+| Repo layer `.github/claude-ship/lint`, read from the default branch | Opt-in: commit the file | |
+| `lint.sh staged`, `diff`, `rules`, `check` | Ask: anyone can run them | |
+
+### E. Pitfalls to lint rules (`hooks/pitfall-lint.sh`, `agents/ship-lint-author.md`, `skills/ship/pitfall-lint.md`)
+
+| Feature | Trigger | Scope |
+|---|---|---|
+| PostToolUse `pitfall-lint.sh hook`: an edit that adds an entry to `docs/pitfalls.md` adds context asking for a background `ship-lint-author` | Opt-in: `CLAUDE_AUTONOMOUS` `true`, Code Review Rules present and the agent installed | Once per session and entry; never blocks |
+| `ship-lint-author` agent (Haiku, own worktree, commits, never pushes) | Auto, as the follow-up Claude starts after the hook's advice | The session ships its branch as its own PR |
+| Backfill of existing entries | Ask: the bootstrap offers it once | 8 titles per author |
+| `pitfall-lint.sh pending` | Ask | CLI |
+
+### F. The `ship` skill (`skills/ship/SKILL.md` and its scripts)
+
+| Feature | Trigger | Scope |
+|---|---|---|
+| The skill's description in the session's skill list | Auto, in principle | **Known issue:** Claude Code's built-in `/ship` shadows it in the list ([#350](https://github.com/DaSonOfPoseidon/claude-ship/issues/350)). Claude learns of the skill from the user's global `CLAUDE.md` (the user's own file, not deployed) and the hint hook |
+| Step 0: check `CLAUDE_AUTONOMOUS` once per session | Auto, when committing or pushing in a GitHub repo | Driven by the skill and that `CLAUDE.md` |
+| Commit on its own, then review, push, `@codex review` and triage, at most 3 rounds | Opt-in: `CLAUDE_AUTONOMOUS` `true` | Otherwise Claude asks before committing |
+| Codex triage by the outcome table (SKILL.md › Triage): rounds 1–2 fix P0–P2; a P3 is fixed only when the same round fixes a P0–P2, else filed; round 3 files P2/P3 and asks about P0/P1 | Opt-in, every Codex round | Codex's findings only (the gate's own P3s are always filed). The rule lives in the skill, so every opted-in repo gets it |
+| A finding judged not valid: reply and add a `docs/false-positives.md` entry; a new bug class: a `docs/pitfalls.md` entry | Opt-in, every round | |
+| Bootstrap (`chore/review-setup`: `AGENTS.md` rules, workflow caller, pitfalls and false-positives files, `review:p3` label) | Opt-in: runs by itself when `AGENTS.md` lacks Code Review Rules | |
+| Branch protection requiring `codex-review` | Ask: Claude asks after the bootstrap merges | |
+| Codex round 4 and later | User-only: `! ~/.claude/skills/ship/codex-allow.sh <pr> <owner/repo>` | |
+| Waive a gate finding | User-only: the gate's `--waive` option, run with `!` (Waivers, `docs/gate.md`) | |
+| Prune the gate's old state | User-only: the gate's `--prune` option, run with `!` | |
+| P3 labels and milestone (`CLAUDE_P3_LABELS`, `CLAUDE_P3_TYPE_LABEL`, `CLAUDE_P3_MILESTONE`, `.github/claude-ship/p3-labels`) | Opt-in | See Per-repo opt-in, below |
+| Filing claude-ship and project bugs unasked (`filing.md`) | Auto, as the skill and the global `CLAUDE.md` instruct | |
+| `token-report.sh`, `gate-stats.sh` | Ask | Read-only reports |
+
+### G. Orchestrated PR loop (`skills/ship/orchestrate.md`, `hooks/orchestrate-hint.sh`, `agents/ship-*`)
+
+| Feature | Trigger | What enters Claude's context |
+|---|---|---|
+| `UserPromptSubmit` hint in plan mode | Opt-in: `CLAUDE_AUTONOMOUS` **and** `CLAUDE_ORCHESTRATE` both `true`, plus the hint hook registered in `settings.json` (it is not in the drop-in) | "Orchestrated mode is on… read `orchestrate.md`…", once per session and repo; with no `## PR loop` section in `AGENTS.md`, also a note that the defaults apply |
+| The PR loop without `CLAUDE_ORCHESTRATE` | Ask: "the PR loop", "work the ready issues one PR at a time" | |
+| Resume after `/clear` | Ask: "continue the PR loop" | |
+| Local loop hint | Opt-in: `- mode: local` in the `## PR loop` section of `AGENTS.md` or `CLAUDE.md` (no variables) | "Local orchestrated mode is on…" |
+| Local loop otherwise | Ask: "the local loop" | |
+| `## PR loop` settings (checks, ready, skip and priority labels, `merge: yes`, handoff context) | Opt-in, in `AGENTS.md` | Defaults: no merge, `status:ready` |
+| Agents: `ship-explorer` (Haiku), `ship-implementer` (Sonnet), `ship-local-implementer`, `ship-codex` (Haiku), `ship-lint-author` | Auto once the loop runs: the orchestrator starts them | `ship-explorer` and `ship-codex` carry frontmatter hooks (`explorer-bash.sh`, `codex-bash.sh`) that restrict their Bash, active only inside those agents |
+| `CLAUDE_CODE_FORK_SUBAGENT=0` | Opt-in: the `env` of `settings.json` | Needed for nested agents' reports |
+
+### H. GitHub side (`action.yml`, `.github/workflows/codex-status.yml`, the caller template)
+
+| Feature | Trigger | Runs as |
+|---|---|---|
+| The `codex-review` commit status (Codex reviewed HEAD and every thread is resolved) | Opt-in: the caller workflow in the repo, which the bootstrap adds | GitHub Actions |
+| Merge blocked without it | Opt-in: branch protection | GitHub |
+| Fork-PR owner approval comments | Auto, inside the action | GitHub Actions |
+| Release by moving `v1` | Ask: Claude may run the three commands; the gate allows one tag push | git |
+| Codex "Automatic review" turned off | User sets it in Codex's settings | Codex |
+
+## What gets injected into Claude's context, and when
+
+| When | Source | Content |
+|---|---|---|
+| Session start | Claude Code itself | The `ship` skill's description (see #350) and the `ship-*` agents' descriptions |
+| Each prompt in plan mode, once per session and repo | `orchestrate-hint.sh` | The orchestrated or local loop hint |
+| Each blocked tool call | `review-gate.sh`, on stderr | Why it blocked, and the findings with their confidence |
+| After each Write, Edit and MultiEdit | `lint.sh hook` | Lint hits (block feedback or context) |
+| After an edit that adds a pitfall entry | `pitfall-lint.sh hook` | A request to start `ship-lint-author` |
+| A refused commit or push | `git-hook.sh`, in the Bash result | `claude-ship: commit refused: …` or the push refusal |
+| On demand | Skill files Claude reads | `SKILL.md`, `orchestrate.md`, `filing.md`, `pitfall-lint.md` |
+
+Some work runs in separate processes that add nothing to Claude's context: the gate's headless `claude -p` reviewer sessions,
+the git hook processes, GitHub Actions and the subagents. Every reviewer run is logged in `~/.claude/state/review-costs.jsonl`.
+
+## Turning things on
+
+In order; each step needs the one before it.
+
+1. **Install.** Run `./install.sh` as root (Install, below), restart Claude Code and check `/status` for the managed drop-in.
+   This alone turns on everything marked Auto. It also protects every repo from Claude's edits to the installed gate and from
+   the `--no-verify` and `core.hooksPath` slips.
+2. **Opt a repo in.** `! gh variable set CLAUDE_AUTONOMOUS --body true -R <owner/repo>` (Per-repo opt-in, below). From then on
+   pushes in that repo are reviewed and Claude commits on its own.
+3. **Bootstrap.** While `AGENTS.md` has no `## Code Review Rules`, the gate blocks pushes there; the `ship` skill's bootstrap
+   opens a `chore/review-setup` PR with them, the workflow caller and the pitfalls files. Merge that PR before step 4.
+4. **Branch protection.** Once the bootstrap PR has merged, require the `codex-review` status on the default branch, so a
+   merge waits for Codex. Not earlier: Codex reports a clean review by editing a comment, which runs the default branch's
+   workflow (the caller isn't there yet), so the bootstrap PR would never get a passing status and couldn't merge.
+5. **Optional**, each on its own:
+   - P3 issue labels: `CLAUDE_P3_LABELS`, `CLAUDE_P3_TYPE_LABEL`, `CLAUDE_P3_MILESTONE` and `.github/claude-ship/p3-labels`.
+   - Lint tuning: `~/.claude/claude-ship/lint` for this install, `.github/claude-ship/lint` for a repo (Hygiene lint, below).
+   - Orchestrated mode: `CLAUDE_ORCHESTRATE`, plus the hint hook in `~/.claude/settings.json` (it isn't in the drop-in).
+   - A `## PR loop` section in `AGENTS.md` for the loop's checks, labels and `merge: yes`.
+   - `"env": {"CLAUDE_CODE_FORK_SUBAGENT": "0"}` in `~/.claude/settings.json`, for the PR loop.
+
+## Where it lives
 
 - `hooks/review-gate.sh`: a PreToolUse hook that blocks a canonical `git push` until a headless
   review passes (any other push is refused by the pre-push check in `hooks/git-hook.sh`). A Sonnet finder
@@ -45,7 +205,8 @@ loop". The full process is in `skills/ship/orchestrate.md`. Without a master pla
 
 It starts by itself in plan mode, in repos where both `CLAUDE_AUTONOMOUS` and `CLAUDE_ORCHESTRATE` are `true`:
 the `orchestrate-hint.sh` hook (a `UserPromptSubmit` hook) points Claude to it once per session in each
-repo. In other opted-in repos, ask for "the PR loop". The hook adds nothing on any error; it's a convenience,
+repo. In other opted-in repos, ask for "the PR loop". The hint hook is not in the managed drop-in (which holds only the gate and the
+two edit hooks): register it in `~/.claude/settings.json` (Install, below). The hook adds nothing on any error; it's a convenience,
 and the gate still reviews every push.
 
 **Local mode** (claude-ship #82) gives a workspace without git or GitHub, such as a local project or data
@@ -104,7 +265,10 @@ resolve the action the same way, unless Settings → Actions → General → Acc
 
 ## Per-repo opt-in
 
-The gate and autonomous commits apply only where the repo variable `CLAUDE_AUTONOMOUS` is `true`:
+The push review, the pre-push check, the blocks on GitHub MCP writes and on `gh api` writes outside the ship skill's allowlist, and
+autonomous commits apply only where the repo variable `CLAUDE_AUTONOMOUS` is `true`. The gate's tamper protection (protected
+paths, `--no-verify`, the user-only commands) and the pre-commit lint apply in every repo, once `./install.sh` has run (the tables
+above give each check's scope):
 
 ```sh
 gh variable set CLAUDE_AUTONOMOUS --body true -R <owner/repo>
