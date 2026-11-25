@@ -742,6 +742,16 @@ done
 # that adds a field fails closed. The output is lines for the shell, a word with a newline in it is no line, so it fails the shape too;
 # none at all unless the command is a canonical push:
 #   cand          the command is a canonical push
+#   pushseen      not a canonical push, but a command in the tree is `git push` (git or PATH/git, `-C` and other global options
+#                 skipped): it shares the call with other commands. A push named only in text (`echo "git push"`, a heredoc, a
+#                 quoted `sh -c` string) is no command of the tree. compound_push_gate decides on it, with:
+#   pushn N       how many such pushes there are, numbered from 0
+#   pusharg K W   the words after `push` of push K, each a line; `pushbad K` instead when one is not literal (or has a newline)
+#   cdlead DIR    with `pushseen`: the one literal argument of the one `cd` of the tree, when it is a command of the call itself (not
+#                 in a subshell, a block, an `if`, a `||`) that every push follows (`echo x; cd a && git status; git push`)
+#   cdunsure      with `pushseen`: a `cd` (or pushd, popd) that is neither that nor one every push precedes (`git push; cd a`, which
+#                 leaves the push where the session is), or a push that names its repository (`-C`, `--git-dir`, `--work-tree`):
+#                 the directory the push runs in is not known
 #   cdn N         how many `cd` commands lead it (`cd a && cd b && git push` has two)
 #   cdt DIR       the one literal argument of the one `cd`, when it has exactly one
 #   Cn N          how many `-C` options the git command has
@@ -806,7 +816,7 @@ def gitopts($w):
 		elif $x == "-C" then go($i + 2; $c + [$w[$i + 1]])
 		elif ($x | test("^(-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--attr-source)$")) then go($i + 2; $c)
 		elif ($x | startswith("-")) then go($i + 1; $c)
-		else {sub: $x, cs: $c} end end;
+		else {sub: $x, cs: $c, i: $i} end end;
 	go(1; []);
 # The first command of a statement that is a pipeline, and the commands of `a && b && c` in order.
 def pipefirst: if .Cmd.Type == "BinaryCmd" and (.Cmd.Op == "|" or .Cmd.Op == "|&") then (.Cmd.X | pipefirst) else . end;
@@ -824,7 +834,26 @@ else
 	((if ((.Stmts // []) | length) == 1 then (.Stmts[0] | andchain) else [] end) as $ch
 	| ($ch[:-1]) as $init
 	| (if ($ch | length) > 0 then ($ch[-1] | pipefirst | gitinfo) else null end) as $g
-	| if $g == null or $g.sub != "push" or (($init | all(iscd)) | not) then empty
+	| if $g == null or $g.sub != "push" or (($init | all(iscd)) | not) then
+		([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push") | ($c | words)[($pg.i + 1):]]) as $ps
+		| if ($ps | length) == 0 then empty
+		else "pushseen", "pushn \($ps | length)",
+			($ps | to_entries[] | .key as $k
+				| if (.value | any(. == null or contains("\n"))) then "pushbad \($k)" else (.value[] | "pusharg \($k) \(.)") end),
+			([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push") | $c.Pos.Offset]) as $po
+			| ([.. | objects | select(.Type == "CallExpr" and (((.Args // [])[0] | if . == null then null else wv end) | . == "pushd" or . == "popd"))] | length) as $npd
+			| ([(.Stmts // [])[] | select(((.Background // false) | not) and ((.Negated // false) | not)) | andchain[] | select(((.Negated // false) | not) and iscd)]) as $tops
+			| ([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push")
+				| ($c | words)[1:$pg.i] | any(. != null and test("^(-C|--git-dir|--work-tree)"))] | any) as $own
+			| if $own then "cdunsure"
+			elif ($cds | length) == 0 and $npd == 0 then empty
+			elif ($cds | length) == 1 and $npd == 0 and ($tops | length) == 1 then
+				($tops[0].Cmd | words)[1:] as $cw | $tops[0].Cmd.Pos.Offset as $co
+				| if ($po | all(. > $co)) and ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cdlead \($cw[0])"
+				elif ($po | all(. < $co)) then empty
+				else "cdunsure" end
+			else "cdunsure" end
+		end
 	else "cand",
 		"cdn \($init | length)",
 		(if ($init | length) == 1 then (($init[0].Cmd | words)[1:]) as $cw
@@ -1078,14 +1107,97 @@ if [ -n "$hk_own" ] && { [ ! -x "$want_hooks/pre-push" ] || ! global_hooks; }; t
 		no_hooks "$cwd" "$(cd "$cwd" && git config --get core.hooksPath)"
 	fi
 fi
+# A tag push: succeeds when the command is exactly `git push [-f|--force] origin <tag>` or `... origin refs/tags/<tag>`
+# (push_jq's shape, literal words), <tag> being an existing local tag. No other option, refspec, remote or second ref. Such
+# a push doesn't send HEAD: its commit is judged by the pre-push check, which accepts it only if the remote already has it
+# on its default branch (hooks/git-hook.sh, docs/gate.md › Pre-push check), so the gate has no HEAD to review. A bare name
+# that is also a branch, or is HEAD, is not a tag here (git would call it ambiguous, or push HEAD).
+tag_push() {
+	[ "$push_shape" = ok ] || return 1
+	tp_pos=0
+	tp_name=
+	while IFS= read -r tp_a; do
+		case $tp_a in
+		'') continue ;;
+		-f | --force) ;;
+		-*) return 1 ;;
+		*)
+			tp_pos=$((tp_pos + 1))
+			case $tp_pos in
+			1) [ "$tp_a" = origin ] || return 1 ;;
+			2) tp_name=$tp_a ;;
+			*) return 1 ;;
+			esac
+			;;
+		esac
+	done <<EOF
+$(printf '%s\n' "$ptree" | sed -n 's/^a //p')
+EOF
+	[ "$tp_pos" = 2 ] || return 1
+	case $tp_name in
+	refs/tags/*) tp_ref=$tp_name ;;
+	HEAD) return 1 ;;
+	*)
+		tp_ref=refs/tags/$tp_name
+		git show-ref --verify -q "refs/heads/$tp_name" && return 1
+		;;
+	esac
+	git check-ref-format "$tp_ref" && git show-ref --verify -q "$tp_ref"
+}
+# What happens to a call that is not a canonical push (and starts no `gh api` check that decides first): it exits here, passing
+# unless the call runs `git push` next to other commands (push_jq's `pushseen`), in an opted-in repo whose HEAD has no pass.
+# The gate reviews only a canonical push, and the pre-push check (hooks/git-hook.sh) refuses a push with no pass however it
+# started; blocking up front saves running the commands before the push, which would otherwise run first (claude-ship #349).
+# The repo is the one a `cd` names that is the only one in the tree and runs before every push (`cdlead`), else the session's
+# (no `cd`, or only after the push); a `cd` placed any other way (`cdunsure`) leaves it unknown, so the call passes. Whatever can't be read
+# passes (no git repo, no GitHub origin, an unreadable or false CLAUDE_AUTONOMOUS, a `cd` that can't be entered): the pre-push
+# check decides, as it did before. Never returns.
+compound_push_gate() {
+	printf '%s\n' "$ptree" | grep -qx pushseen || exit 0
+	cp_all=$ptree
+	cp_dir=$cwd
+	printf '%s\n' "$ptree" | grep -qx cdunsure && exit 0
+	if [ "$(printf '%s\n' "$ptree" | grep -c '^cdlead ')" = 1 ]; then
+		cp_dir=$(tree_dirs cdlead | head -1)
+	fi
+	cd "$cp_dir" 2>/dev/null || exit 0
+	cp_head=$(git rev-parse HEAD 2>/dev/null) || exit 0
+	cp_state=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+	if [ -e "$cp_state/review-gate/$cp_head.pass" ] || [ -e "$cp_state/review-gate/$cp_head.waived" ]; then
+		exit 0
+	fi
+	# Pushes that are all tag pushes (tag_push) send no HEAD: the pre-push check judges the tag's commit, so they need no pass.
+	cp_n=$(printf '%s\n' "$cp_all" | sed -n 's/^pushn //p')
+	cp_tags=
+	case $cp_n in '' | *[!0-9]*) ;; *) [ "$cp_n" -gt 0 ] && cp_tags=1 ;; esac
+	cp_i=0
+	while [ -n "$cp_tags" ] && [ "$cp_i" -lt "$cp_n" ]; do
+		ptree=$(printf '%s\n' "$cp_all" | sed -n "s/^pusharg $cp_i /a /p")
+		push_shape=ok
+		if printf '%s\n' "$cp_all" | grep -qx "pushbad $cp_i" || ! tag_push; then
+			cp_tags=
+		fi
+		cp_i=$((cp_i + 1))
+	done
+	[ -z "$cp_tags" ] || exit 0
+	for cp_slug in $(push_slugs); do
+		case $cp_slug in '?'*) continue ;; esac
+		if cp_flag=$(autonomous "$cp_slug") && [ -n "$cp_flag" ]; then
+			echo "Blocked: this Bash call runs \`git push\` together with other commands, so the review gate can't review it, and the pre-push check would refuse it (HEAD has no passing review). Nothing in it ran. Run the push alone: \`git push ...\` or \`cd <dir> && git push ...\` (a \`2>&1 | tail -N\` after it is fine), and the other commands in their own calls." >&2
+			exit 2
+		fi
+	done
+	exit 0
+}
 # `gh`, then only options (each with an optional value, as the git pattern above), then `api`: `gh -R o/r api` is a `gh api` call too.
 # Group 2 is the options between them; api_scan checks that they are gh's global options (docs/gate.md › `gh api`).
 gh_api='(^|[^[:alnum:]_.-])gh(([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)*)[[:space:]]+api([^[:alnum:]_-]|$)'
 # Nothing else is the gate's to read: a command that is neither a canonical push nor a `gh api` call passes, whatever its text
-# says, since the pre-push check refuses an unreviewed push however it started (docs/gate.md › Command reading). A `gh api`
-# call is one with a `gh` in the tree (gh_seen), so a heredoc body or an `echo` that mentions it is data.
+# says, since the pre-push check refuses an unreviewed push however it started (docs/gate.md › Command reading), except a
+# `git push` command of the tree that shares the call with others, which compound_push_gate blocks when HEAD has no pass. A
+# `gh api` call is one with a `gh` in the tree (gh_seen), so a heredoc body or an `echo` that mentions it is data.
 if [ -z "$cand" ] && { [ "$gh_seen" = 0 ] || ! printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$gh_api"; }; then
-	exit 0
+	compound_push_gate
 fi
 # Every `gh api` the text names is either literal data (a quoted string or a heredoc body, `lit_json`: docs/gate.md › `gh api`) or a
 # call the tree shows, and each of those is a read: the text scan can't read a call inside a substitution (`$(gh api ...)` cuts its
@@ -1114,7 +1226,7 @@ if [ "$gh_seen" = 1 ] && [ "$ga_n" = "$ga_r" ]; then
 fi
 # What the scan below would have decided is settled, so a command that starts no review and has no call to scan passes before the
 # quoting check, which only guards the scan and the push.
-[ -n "$cand" ] || [ "$api_reads" = 0 ] || exit 0
+[ -n "$cand" ] || [ "$api_reads" = 0 ] || compound_push_gate
 # Markers in the command, quoting the scanner can't read, or a push with literal separators, quotes, `$` or
 # newlines can't be checked word by word, so it blocks.
 if printf '%s\n%s\n' "$cmd" "$words" | grep -Eq "$git_push|(^|[^[:alnum:]_.-])(git|gh)([^[:alnum:]_-]|$)" &&
@@ -1382,7 +1494,7 @@ if [ "$gh_seen" = 1 ] && [ "$api_reads" = 0 ] && printf '%s\n%s\n' "$cmd" "$word
 	fi
 fi
 api_write=$api_found
-[ -n "$api_write" ] || [ -n "$cand" ] || exit 0
+[ -n "$api_write" ] || [ -n "$cand" ] || compound_push_gate
 
 # Where a canonical push runs: the session's directory, then the `cd DIR` before it, then `git -C DIR`. Each DIR is one literal
 # path (`~` is the home directory, a relative one is taken from the session's directory), else the gate can't tell which repo
@@ -1469,7 +1581,7 @@ if [ -n "$api_write" ]; then
 			exit 2
 		fi
 	done
-	[ -n "$cand" ] || exit 0
+	[ -n "$cand" ] || compound_push_gate
 fi
 
 # From here on the command is a canonical push.
@@ -1523,44 +1635,6 @@ use_state
 }
 # shellcheck source=review-lib.sh
 . "$dir/review-lib.sh"
-
-# A tag push: succeeds when the command is exactly `git push [-f|--force] origin <tag>` or `... origin refs/tags/<tag>`
-# (push_jq's shape, literal words), <tag> being an existing local tag. No other option, refspec, remote or second ref. Such
-# a push doesn't send HEAD: its commit is judged by the pre-push check, which accepts it only if the remote already has it
-# on its default branch (hooks/git-hook.sh, docs/gate.md › Pre-push check), so the gate has no HEAD to review. A bare name
-# that is also a branch, or is HEAD, is not a tag here (git would call it ambiguous, or push HEAD).
-tag_push() {
-	[ "$push_shape" = ok ] || return 1
-	tp_pos=0
-	tp_name=
-	while IFS= read -r tp_a; do
-		case $tp_a in
-		'') continue ;;
-		-f | --force) ;;
-		-*) return 1 ;;
-		*)
-			tp_pos=$((tp_pos + 1))
-			case $tp_pos in
-			1) [ "$tp_a" = origin ] || return 1 ;;
-			2) tp_name=$tp_a ;;
-			*) return 1 ;;
-			esac
-			;;
-		esac
-	done <<EOF
-$(printf '%s\n' "$ptree" | sed -n 's/^a //p')
-EOF
-	[ "$tp_pos" = 2 ] || return 1
-	case $tp_name in
-	refs/tags/*) tp_ref=$tp_name ;;
-	HEAD) return 1 ;;
-	*)
-		tp_ref=refs/tags/$tp_name
-		git show-ref --verify -q "refs/heads/$tp_name" && return 1
-		;;
-	esac
-	git check-ref-format "$tp_ref" && git show-ref --verify -q "$tp_ref"
-}
 
 # A push may send only HEAD, to origin (or one tag, tag_push); prints why not and fails otherwise. The command must have the
 # shape push_jq reads from the tree (docs/gate.md › Push shape), and options outside the list block (--all, --mirror, --tags

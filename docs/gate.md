@@ -115,12 +115,13 @@ and their values.
 | `git push`, `git push -u origin HEAD`, `cd /abs/repo && git push`, `git -C ~/repo push`, `git push 2>&1 \| tail -5` | reviewed |
 | `git push origin "$b"`, `cd "$d" && git push`, `cd a && cd b && git push`, `git -C a -C b push` | blocked: the gate can't tell which repo, or what, it pushes |
 | `--all`, `--tags`, `--mirror`, another remote, `--no-verify`, `GIT_DIR=x git push`, a redirect to a file | blocked (Push shape) |
-| `git add -A && git commit -m x && git push`, `git push; echo`, `(cd x; git push)`, `bash -c 'git push'`, `xargs git push`, `timeout 60 git push`, `./scripts/release.sh`, an alias, `gh pr create --fill` | passes; the pre-push check judges the push, if one happens |
+| `git add -A && git commit -m x && git push`, `git status && git push`, `git push; echo`, `(cd x; git push)` (a `git push` command of the tree that shares its call) | blocked up front when HEAD has no pass and the repo is opted in ([A push that shares its call](#a-push-that-shares-its-call)); passes with a pass or waiver for HEAD, a tag push, or outside an opted-in repo |
+| `bash -c 'git push'`, `xargs git push`, `timeout 60 git push`, `./scripts/release.sh`, an alias, `gh pr create --fill` | passes; the pre-push check judges the push, if one happens |
 | a heredoc or an argument that only mentions `git push` or `gh api` (#193, #192), also next to a `gh` command (#135) | passes |
 
 `git commit && git push` is the case that matters most: the gate would review the HEAD from before the commit, so it does
-not look at the chain, and the hook refuses the push if the new commit has no review (`tests/git-hook.sh` runs that chain
-for real). `gh pr create` starts no review either: the PR covers a HEAD the hook already stopped from being pushed unreviewed.
+not review the chain. It blocks it up front when that HEAD has no pass; when it has one the chain passes, and the hook refuses
+the push if the new commit has no review (`tests/git-hook.sh` runs that chain for real). `gh pr create` starts no review either: the PR covers a HEAD the hook already stopped from being pushed unreviewed.
 
 The pre-push check is the layer that binds the cases the gate lets by. What the gate still reads in *every* command is the
 tamper check, the waiver and variable checks, the denials that keep the hooks on (`push --no-verify`, `commit --no-verify`
@@ -196,8 +197,9 @@ still runs over the whole command in both forms.
 
 **What may run next to the push.** The checks read git config, refs and files before the command runs, so
 anything earlier in the command can change what the push sends after they passed: `git show --output=…`, or
-`printf … > /tmp/settings` behind an `include.path`. Such a chain is not a canonical push, so the gate leaves it to the
-pre-push check, which judges the commit that is really pushed. A canonical push holds only:
+`printf … > /tmp/settings` behind an `include.path`. Such a chain is not a canonical push, so the gate reviews nothing for it;
+the pre-push check judges the commit that is really pushed, and [a compound push is blocked up
+front](#a-push-that-shares-its-call) when HEAD has no pass. A canonical push holds only:
 
 - the push,
 - at most one leading `cd <dir> &&`,
@@ -224,6 +226,35 @@ path is taken from the session's directory, and a `-C` one from the `cd` target.
 empty directory, a variable or a substitution can't be followed, so the gate blocks ("can't tell which repo this pushes"), in
 any repo, since the directory could be an opted-in one. A directory that can't be entered blocks too. A repo that hasn't opted
 in is none of the gate's business: a canonical push that doesn't fit the shape passes there, as `git push && echo done` does.
+
+### A push that shares its call
+
+A `git push` command of the tree (`git` or `PATH/git`, any global options before `push`) in a call that isn't a canonical push is
+a compound push: `git status && git push`, `git push; git rev-parse HEAD`, `(git status; git push)`, `git branch --unset-upstream
+&& git push`. `push_jq` reports it as `pushseen` (with each push's words, `pusharg`). Text that only names a push (`echo "git
+push"`, a heredoc body, `sh -c "git push"`, `git log --grep push`) is data, not a command of the tree, and doesn't count. The gate
+can't review such a push, and the pre-push check would refuse it when HEAD has no pass, but only after the commands before
+the push had run (claude-ship #349: the agents read that late refusal as an upstream problem; every refused push they hit was
+a compound command, and a canonical push from a worktree that tracks `origin/main` is reviewed like any other,
+tests/gate-worktree-upstream.sh). So `compound_push_gate` (`hooks/review-gate.sh`) decides first, once the call is known not to be a canonical push and
+no `gh api` check has blocked it:
+
+- the repo is the one a `cd` names when it is the only `cd` in the tree, a command of the call itself (not in a subshell, a
+  block, an `if` or a `||`), has one literal directory (as `tree_dirs`) and every push follows it (`cdlead`); with no `cd`, or
+  only one after every push (`git push; cd x`), it is the session's directory. Any other `cd` (or a `pushd`/`popd`), and a
+  push that names its own repository (`-C`, `--git-dir`, `--work-tree`), leave the directory unknown (`cdunsure`), and the call passes to the pre-push check;
+- it passes when that directory isn't a git repo or can't be entered, when HEAD has a `.pass` or a `.waived` in the common
+  directory's `review-gate/`, when every push in the call is a tag push (`tag_push`: the pre-push check judges the tag's
+  commit), and when no origin push URL is an opted-in repo (`CLAUDE_AUTONOMOUS` not `true`, or unreadable: the pre-push check
+  decides, as before);
+- otherwise it blocks, before anything in the call runs, saying to run the push alone (`git push ...` or `cd <dir> && git
+  push ...`, a `2>&1 | tail -N` after it is fine) and the other commands in their own calls.
+
+It only adds blocks, and only where the pre-push check would have refused the push anyway. A push the tree can't show (`sh -c`,
+`bash -c`, a script, `env git push`, a wrapper) is still left to the pre-push check, and so is a compound push with a pass for
+HEAD (`git commit && git push` after a reviewed HEAD passes the gate, and the check refuses the new commit). A `-C <dir>` on a
+compound push isn't followed: the directory is the `cd`'s or the session's. A call that also writes with `gh api` is decided by
+the `gh api` block first. The shapes that block as a canonical push (`FOO=1 git push`, `git push &`, `| sh`) keep their own messages.
 The `cd` and `-C` words come from the tree, so `-C "dir with space"` and a `git -C …` inside a quoted string can't change the
 directory.
 
@@ -287,7 +318,9 @@ gate's scope (AGENTS.md › Gate scope).
 One refused line refuses the whole push. The state is the common directory's, shared by the worktrees. Every push the
 gate lets through for an opted-in repo therefore leaves a `.pass` for HEAD, including a branch whose diff against the
 default branch is empty (nothing to review counts as passed). The refusal tells
-Claude to run a plain `git push` on its own so the gate reviews HEAD, not to skip the check, and to ask the user to waive
+Claude that the usual cause is a push that wasn't alone in its Bash call (or ran from a script), so the gate never reviewed it
+([a compound push](#a-push-that-shares-its-call) is blocked up front when it can be read, so this refusal is mostly for the
+rest); to run a plain `git push` on its own so the gate reviews HEAD, not to skip the check, and to ask the user to waive
 a wrong review. For a tag push (`refs/tags/*`) a waiver doesn't count, so that refusal says instead that a tag is pushed
 only when its commit is already on the remote's default branch, and to ask the user to push the tag if the check is wrong.
 

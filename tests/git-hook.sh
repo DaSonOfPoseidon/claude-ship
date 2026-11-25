@@ -174,6 +174,12 @@ grep -q 'plain `git push`' "$tmp/out" && grep -q -- '--no-verify' "$tmp/out" && 
 	sed 's/^/  /' "$tmp/out"
 	fail=1
 }
+# The usual cause is a push that shares its Bash call with other commands, which the gate never reviewed (#349).
+grep -q "wasn't alone in its Bash call" "$tmp/out" && grep -q 'with nothing before it' "$tmp/out" || {
+	echo "FAIL: the refusal doesn't name a push that wasn't alone as the usual cause"
+	sed 's/^/  /' "$tmp/out"
+	fail=1
+}
 
 mkrepo
 commit second
