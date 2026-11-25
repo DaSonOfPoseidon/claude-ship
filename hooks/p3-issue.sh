@@ -2,9 +2,10 @@
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
 # Files a review finding as an issue, labelled by the finding's file: p3-issue.sh <owner/repo> <finding.json> [<pr>],
-# where the JSON has `file`, `title` and `body`. Prints the issue's URL. The review gate files its confirmed P3s
-# with it, and the ship skill the Codex findings it defers. Without a PR it is run from the checkout whose branch
-# the finding is in (the gate, from the pushing checkout), and the milestone comes from that branch. With a PR it
+# where the JSON has `file`, `title` and `body`. Prints the issue's URL. p3-pending.sh files the review gate's confirmed
+# P3s with it when their PR is done (the gate itself, on a detached HEAD), and the ship skill the Codex findings it defers.
+# Without a PR it is run from the checkout whose branch the finding is in (the gate, from the pushing checkout), and the
+# milestone comes from that branch. With a PR it
 # reads the milestone from GitHub (the PR's, else its commits'), so it works from any checkout of the repository
 # (claude-ship #140: ship-codex can't cd).
 # Labels, milestone and fallbacks: README (Per-repo opt-in) and docs/scripts.md. Exits 1 if the JSON lacks

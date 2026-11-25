@@ -370,6 +370,9 @@ expect 0 'sh -c "cat ~/.claude/hooks/review-gate.sh 2>&1"'
 expect 0 "sh -c 'cat ~/.claude/hooks/review-gate.sh >&2'"
 expect 0 "sh -c 'ls ~/.claude/hooks'"
 expect 0 '~/.claude/hooks/p3-issue.sh acme/app /tmp/s/finding.json 2>&1'
+expect 0 '~/.claude/hooks/p3-pending.sh list'
+expect 0 '~/.claude/hooks/p3-pending.sh file 12 2>&1'
+expect 0 'sh ~/.claude/hooks/p3-pending.sh file 12 acme/app'
 # Running the ship scripts.
 expect 0 '~/.claude/skills/ship/codex-round.sh 12'
 expect 0 'sh ~/.claude/skills/ship/codex-wait.sh 12'
@@ -722,6 +725,7 @@ write 2 "$tmp/home/.claude/skills/claude-ship"
 write 0 "$tmp/home/.claude/skills/claude-ship-notes/x.md"
 write 0 "$tmp/home/.claude/skills/ship-notes/x.md"
 write 2 "$tmp/home/.claude/hooks/review-lib.sh"
+write 2 "$tmp/home/.claude/hooks/p3-pending.sh"
 write 2 "$tmp/home/.claude/bin/shfmt"
 # The install's lint config: weakening it would switch the pre-commit lint off for Claude's own commits.
 write 2 "$tmp/home/.claude/claude-ship/lint"

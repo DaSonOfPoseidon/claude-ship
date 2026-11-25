@@ -250,6 +250,13 @@ never had a worktree. Both passes compare with GitHub's default branch, fetched 
   only for `state: merged` with no `unpushed:` and no `diverged:` line; with one of those it prints `kept: - <branch>
   <reason>`. Any other state is the user's or a live unit's work, and prints nothing, so the `kept:` lines the loop
   passes to the user stay few. It costs two `gh` calls per local branch.
+- **A merged branch's pending P3s are filed first** (#352). Just before either pass deletes a branch whose PR is merged
+  (the worktree pass, before it unlocks or removes; the merged-branch pass, before `git branch -D`) it runs `p3-pending.sh
+  file <pr> <owner/repo>` and prints that script's lines as `p3: <line>`. This covers a PR the user merged by hand, which the
+  orchestrator's own step never saw. A failure (a filing, GitHub, or the script missing) keeps the branch and its worktree,
+  with `kept: … pending P3s weren't all filed (…)`, and a rerun tries again; filing is idempotent. With nothing pending the
+  script asks GitHub nothing, so the sweep's cost is unchanged. The script is found next to `hooks/` in a checkout, else in
+  `~/.claude/hooks`; `CLAUDE_P3_PENDING` names another (the tests'). A closed, unmerged PR's pending file is left alone.
 - **Never touched by either pass:** the default branch, and any branch a worktree has checked out (read from
   `git worktree list` after the worktree pass, and before the prune, so a worktree whose directory is gone still holds
   its branch; a branch in the middle of a rebase or a bisect lists as detached, so each `rebase-merge/head-name`,
@@ -514,11 +521,11 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
   repo doesn't have are dropped, and one that differs from a repo label only in case is filed under the repo's
   spelling. The type fallback goes by the labels that will actually be applied.
 - **Milestone**, only with `CLAUDE_P3_MILESTONE=auto`: the branch's open PR's, else the one milestone of the
-  issues its commit subjects fix (`fixes #N`), else none. The gate calls `p3-issue.sh <owner/repo> <finding.json>`
-  from the pushing checkout, so the branch is that checkout's. An optional third argument, the PR number, reads
+  issues its commit subjects fix (`fixes #N`), else none. The gate (for a detached HEAD's P3s) calls `p3-issue.sh <owner/repo>
+  <finding.json>` from the pushing checkout, so the branch is that checkout's. An optional third argument, the PR number, reads
   both from GitHub instead (`gh pr view`: the PR's own milestone, else the one milestone of the issues named by
   `fixes/closes/resolves #N` in its commits' messages, subject and body), so it gives the same answer from any
-  checkout of the repo (claude-ship #140; `codex-triage.sh` passes it).
+  checkout of the repo (claude-ship #140; `codex-triage.sh` and `p3-pending.sh file` pass it).
 - **The label map** is read from GitHub (`gh api repos/<slug>/contents/.github/claude-ship/p3-labels`, the default
   branch's), never from the checkout, so it is the slug's whatever repo the cwd is (claude-ship #215). A 404 means
   the repo has no map and the issue is filed with the base labels. Any other failed read (a 5xx, the rate limit,
@@ -527,6 +534,32 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
   the response's own status line (`gh api -i`), not a match on the error text, and a 200 counts only if `gh`
   exited 0 as well (a body cut short leaves the headers and part of the map).
 - **Never lost to its labels.** If filing fails, it retries without the milestone, then without labels.
+
+## `hooks/p3-pending.sh`
+
+Keeps the gate's confirmed P3s pending for a branch until its PR is done (#352), because the code on a PR isn't live, so a
+P3 found in it is no issue yet. The commands, the file's shape and the decisions about what the gate and Claude do with it
+are in `docs/gate.md` › Reviewer pipeline; the reasons for the script's own choices are here.
+
+- **State is in the git common dir** (`--path-format=absolute --git-common-dir`), not a worktree's own git dir, so the gate
+  (which runs in the pushing checkout), `list` (in a linked worktree), and `file` (from the orchestrator's main checkout)
+  read one file. The file name is the branch under the plan files' encoding (`%` → `%25`, `+` → `%2B`, `/` → `+`), so no two
+  branches share it (pitfalls: an encoding that joins path parts).
+- **`add` keeps the first entry for a key.** A P3 found again on a later push isn't replaced, so its `head` stays the commit
+  that first reported it, and the later commits' changes to its region still count.
+- **`file` asks GitHub once for the PR** (`gh pr view <n> --json headRefName,headRefOid,isCrossRepository`) and uses the head
+  branch and commit from it, never the checkout's: a branch name alone also matches a fork's PR. A fork's PR is refused. The PR's
+  head commit is fetched from `refs/pull/<n>/head` when the clone lacks it (a merged PR's branch is gone from origin).
+- **Dropping is a filter, not a verdict.** A P3 whose region a later commit changed would have been reported again by that
+  push's review, so it isn't filed on the strength of the old finding. The region is the 3 lines either side of the finding's
+  line in `head`'s numbering, matched against the hunks of `git diff -U0 --no-renames <head> <PR head>` (a pure insertion
+  counts at the line it follows), or the file is gone. Anything that stops the comparison (the entry's commit or the PR's head
+  unreadable, a diff that fails) drops nothing and the P3 is filed: a P3 filed in error costs an issue, one lost costs the
+  finding. The pathspec is `:(literal)<file>`, so a file name with glob characters is read as itself.
+- **Failure keeps what failed.** Entries that fail to file (and an unreadable line) are written back, and so is anything the
+  gate added while `file` ran (the lines it never read). Exit 1 says some failed; the rerun files only those.
+- **It shares the gate's dedupe**, not a copy: `p3_label_of`, `open_dup` and `read_open_p3s` live in `hooks/review-lib.sh`,
+  which the gate and the eval runner source too. A failed read of the open issues warns and falls back on `p3-filed.tsv`.
 
 ## `hooks/orchestrate-hint.sh`
 

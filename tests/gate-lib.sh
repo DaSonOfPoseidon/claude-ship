@@ -316,6 +316,37 @@ for bad in fail "$tmp/notalist.json"; do
 	}
 done
 
+# The branch's pending P3s (p3-pending.sh, claude-ship #352) are the prompt's "Already pending" list, as data, so a later
+# push doesn't report them again. A title with a line break is one line there; another branch's entries are not listed.
+fixture
+echo 'echo 1' >"$repo/x.sh"
+git -C "$repo" add -A
+g commit -q -m "add x"
+printf '%s' '{"file":"z.sh","line":3,"summary":"novel\nthing","failure_scenario":"f","title":"z.sh: novel\nthing","head":"abc"}' >"$tmp/pending.json"
+(cd "$repo" && sh "$root/hooks/p3-pending.sh" add "$tmp/pending.json" feat)
+printf '%s' '{"file":"o.sh","line":1,"summary":"elsewhere","failure_scenario":"f","title":"o.sh: elsewhere","head":"abc"}' >"$tmp/pending.json"
+(cd "$repo" && sh "$root/hooks/p3-pending.sh" add "$tmp/pending.json" other)
+gate
+kind=code checklist='## Reviews
+
+- check a' pitfalls='# Pitfalls
+
+- p1' false_positives='# False positives
+
+- fp1' threads='' scoped='' base='' filed_list='' pending_list='z.sh: novel thing'
+same pending
+for text in "Already pending for this branch; don't report these again" 'z.sh: novel thing' 'Minor findings an earlier push of this branch already reported'; do
+	grep -qF "$text" "$prompt" || {
+		echo "FAIL (pending): the gate's prompt lacks '$text'"
+		fail=1
+	}
+done
+if grep -qF 'o.sh: elsewhere' "$prompt"; then
+	echo "FAIL (pending): the prompt lists another branch's pending P3"
+	fail=1
+fi
+unset pending_list
+
 # The rules lifted out of the gate.
 (
 	# shellcheck disable=SC1091

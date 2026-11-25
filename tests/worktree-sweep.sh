@@ -515,6 +515,64 @@ want 'path with a space' 0 "removed: $tmp/wt sp feat/sp"
 run
 want 'a final sweep is silent' 0 ''
 
+# --- a merged branch's pending P3s are filed before the branch goes (claude-ship #352). A fake p3-pending.sh logs its call
+# and whether the branch's worktree was still there, prints a line, and fails while $tmp/p3fail exists.
+cat >"$tmp/p3fake" <<EOF
+#!/bin/sh
+echo "\$* wt=\$([ -d "$tmp/wt-p1" ] && echo yes || echo no)" >>"$tmp/p3calls"
+if [ -f "$tmp/p3fail" ]; then
+	echo "failed x: boom"
+	echo "p3-pending: nope" >&2
+	exit 1
+fi
+echo "filed https://github.com/o/r/issues/9"
+EOF
+CLAUDE_P3_PENDING=$tmp/p3fake
+export CLAUDE_P3_PENDING
+rm -f "$tmp/p3calls"
+unit p1
+pr p1 MERGED 901
+unit pcx
+pr pcx CLOSED 904
+run
+want 'merged worktree: its pending P3s are filed first' 0 "p3: filed https://github.com/o/r/issues/9
+removed: $tmp/wt-p1 feat/p1
+kept: $tmp/wt-pcx feat/pcx state: pr-closed 904"
+gone 'p1' p1
+[ "$(cat "$tmp/p3calls")" = "file 901 o/r wt=yes" ] || { echo "FAIL: p3-pending.sh was not run once, for the merged PR, before the removal: $(cat "$tmp/p3calls")"; fail=1; }
+git -C "$work" worktree remove --force "$tmp/wt-pcx"
+git -C "$work" branch -q -D feat/pcx
+# A filing that fails keeps the worktree and the branch, with the reason; once it works the branch goes.
+rm -f "$tmp/p3calls"
+unit p2
+pr p2 MERGED 902
+: >"$tmp/p3fail"
+run
+want 'merged worktree: the filing fails' 0 "p3: failed x: boom
+kept: $tmp/wt-p2 feat/p2 pending P3s weren't all filed (p3-pending.sh file 902 exit 1: p3-pending: nope)"
+alive 'filing failed' p2
+rm "$tmp/p3fail"
+run
+want 'merged worktree: the filing works on the rerun' 0 "p3: filed https://github.com/o/r/issues/9
+removed: $tmp/wt-p2 feat/p2"
+gone 'p2' p2
+# A merged branch with no worktree (the second pass) is handled the same way.
+git -C "$work" switch -q -c feat/p3 main
+commit "$work" 1
+git -C "$work" switch -q main
+pr p3 MERGED 903
+: >"$tmp/p3fail"
+run
+want 'merged branch: the filing fails' 0 "p3: failed x: boom
+kept: - feat/p3 pending P3s weren't all filed (p3-pending.sh file 903 exit 1: p3-pending: nope)"
+git -C "$work" rev-parse -q --verify refs/heads/feat/p3 >/dev/null || { echo "FAIL: the branch was deleted although its P3s weren't filed"; fail=1; }
+rm "$tmp/p3fail"
+run
+want 'merged branch: the filing works' 0 "p3: filed https://github.com/o/r/issues/9
+deleted: feat/p3"
+git -C "$work" rev-parse -q --verify refs/heads/feat/p3 >/dev/null && { echo "FAIL: the branch is still there"; fail=1; }
+unset CLAUDE_P3_PENDING
+
 # --- usage errors exit 2.
 run o/r extra
 want 'extra argument' 2 ''

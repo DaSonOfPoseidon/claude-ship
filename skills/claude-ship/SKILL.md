@@ -92,7 +92,10 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    - When a blocking finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in
      the same push: the class, what to check, and where it bit (PR or issue). The `pitfall-lint.sh` hook then asks for a
      background `ship-lint-author` for the new entry; follow `pitfall-lint.md`, without stopping this task.
-   - The gate files confirmed P3s as issues itself. Don't fix them in this PR.
+   - **The gate's P3s** (confirmed, minor) are not filed as issues while the PR is open: the code isn't live yet. The gate
+     keeps them pending for the branch. Before each commit for the PR (a fix for a gate block, a Codex fix round), run
+     `~/.claude/hooks/p3-pending.sh list` and fix the ones that are relevant and easy in that commit too. Don't make a
+     commit just for them. Whatever is still pending when the PR is done is filed once, at step 5.
 
 ## 3. Request the Codex round
 
@@ -150,7 +153,7 @@ comments API. For each finding, by priority and round:
 Judge the P0–P2 findings (and `P?`, which counts as P1) first. "Another review is coming anyway" means at least
 one of them is valid and gets a commit, and only then is a P3 of the same round judged like any other finding
 (valid: fix it in that push; not valid: answer it; beyond this PR's scope: file an issue). When none of them gets a
-commit, every P3 of the round is filed. This is about Codex's P3s. The gate files its own (step 2).
+commit, every P3 of the round is filed. This is about Codex's P3s. The gate's are kept pending until the PR is done (step 2).
 
 Every finding ends with one outcome (fixed, not valid, deferred to an issue, or beyond this PR's scope → issue), and its
 thread is resolved once it has one. A user-approved fix after round 3 gets one more review, with the same
@@ -197,8 +200,10 @@ The PR is ready for the user when CI is green, the `codex-review` status passes 
 which outside GitHub Actions only prints the status and never sets it, so it can't block the merge; on the bootstrap PR,
 which can't get the status, it prints `success` but sets nothing), and any repo PR gate
 passes (OBDCracker: `scripts/pr-gate.sh`), and every new class of bug this PR's reviews found (gate or
-Codex) has an entry in `docs/pitfalls.md`. Report the rounds used, the issues filed, and anything that
-needed a decision. After round 3, never request another Codex review unless the user asks.
+Codex) has an entry in `docs/pitfalls.md`. Then file the gate's pending P3s: `~/.claude/hooks/p3-pending.sh file <pr>`. It
+drops a P3 whose code a later commit changed, skips one that is already an issue, files the rest (the repo's labels, the
+PR's milestone) and prints a line for each; a failure keeps that P3 pending and makes the exit status 1, so run it again.
+Report the rounds used, the issues filed (that script's `filed` lines included), and anything that needed a decision. After round 3, never request another Codex review unless the user asks.
 
 **Process docs** (review rules, contribution steps): when a review finds a gap in a rule, rewrite the whole
 rule as one table or state list, then check every combination before pushing. Patching one sentence per

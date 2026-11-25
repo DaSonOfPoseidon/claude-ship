@@ -1,8 +1,10 @@
 #!/bin/sh
-# Tests the gate's P3 dedupe (claude-ship #112): a confirmed P3 is not filed again when the repo already has an open
+# Tests the gate's P3 handling. A confirmed P3 is kept pending for the branch (claude-ship #352), not filed: p3-pending.sh
+# holds it until the PR is done. The dedupe is claude-ship #112's: a P3 is not kept again when the repo already has an open
 # P3 issue with the same title (up to case and whitespace) or the same file:line in its first body line, or when the P3
 # file has its key. The match is exact, and a failed read of the open issues falls back on the P3 file without changing
-# the gate's exit code. The gate runs from a copy of hooks/ whose p3-issue.sh is a fake, so nothing is filed for real.
+# the gate's exit code. On a detached HEAD there is no branch to keep one for, and the gate files it as before. The gate
+# runs from a copy of hooks/ whose p3-issue.sh is a fake, so nothing is filed for real.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/tests/lib/shfmt.sh"
@@ -120,6 +122,32 @@ expect_not_filed() {
 	fi
 }
 
+# pending: the titles kept pending for the branch feat of the current fixture, one per line.
+pending() { (cd "$repo" && sh "$tmp/hooks/p3-pending.sh" titles feat); }
+
+expect_pending() {
+	if ! pending | grep -qxF "$2"; then
+		echo "FAIL ($1): '$2' isn't pending; pending: $(pending | tr '\n' '|')"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+
+expect_not_pending() {
+	if pending | grep -qxF "$2"; then
+		echo "FAIL ($1): '$2' is pending"
+		fail=1
+	fi
+}
+
+# Nothing is filed by the gate while a branch is checked out.
+expect_nothing_filed() {
+	if [ -n "$(filed_log)" ]; then
+		echo "FAIL ($1): the gate filed: $(filed_log | tr '\n' '|')"
+		fail=1
+	fi
+}
+
 errs() {
 	grep -qF -- "$2" "$tmp/err" || {
 		echo "FAIL ($1): stderr lacks '$2'"
@@ -140,7 +168,7 @@ cat >"$tmp/open.json" <<'EOT'
 ]
 EOT
 
-# Matching open issues skip the P3 and cache its key; anything that only looks alike is filed.
+# Matching open issues skip the P3 and cache its key; anything that only looks alike is kept pending. Nothing is filed.
 fixture
 {
 	p3 x.sh 5 'quoting BUG'
@@ -157,17 +185,18 @@ push FINDINGS="$tmp/findings.json" ISSUES="$tmp/open.json"
 	sed 's/^/  /' "$tmp/err"
 	fail=1
 }
-expect_not_filed title-case-whitespace 'x.sh: quoting BUG'
-expect_not_filed same-site 'y.sh: a different summary'
-expect_filed novel 'z.sh: novel thing'
-expect_filed title-prefix 'w.sh: prefix'
-expect_filed same-file-other-line 'y.sh: same file, another line'
-expect_filed site-in-later-body-line 'v.sh: cited only in a later body line'
-expect_filed site-on-later-line 'u.sh: cited only on a later line of the body'
+expect_nothing_filed open
+expect_not_pending title-case-whitespace 'x.sh: quoting BUG'
+expect_not_pending same-site 'y.sh: a different summary'
+expect_pending novel 'z.sh: novel thing'
+expect_pending title-prefix 'w.sh: prefix'
+expect_pending same-file-other-line 'y.sh: same file, another line'
+expect_pending site-in-later-body-line 'v.sh: cited only in a later body line'
+expect_pending site-on-later-line 'u.sh: cited only on a later line of the body'
 errs skip-title 'review-gate: skipped P3 "x.sh: quoting BUG": already filed as https://github.com/acme/app/issues/1'
 errs skip-site 'review-gate: skipped P3 "y.sh: a different summary": already filed as https://github.com/acme/app/issues/2'
-errs filed-novel 'review-gate: filed P3 https://github.com/acme/app/issues/99'
-# The skipped ones are in the P3 file with the open issue's URL; the filed ones with the new URL.
+errs kept-novel 'review-gate: P3 kept pending for feat: z.sh: novel thing'
+# The skipped ones are in the P3 file with the open issue's URL; the pending ones are not in it (nothing is filed).
 grep -qF "$(key_of 'x.sh: quoting BUG')	x.sh: quoting BUG (https://github.com/acme/app/issues/1)" "$state/p3-filed.tsv" || {
 	echo "FAIL (open): the P3 file lacks the skipped title match"
 	fail=1
@@ -176,12 +205,33 @@ grep -qF "$(key_of 'y.sh: a different summary')	y.sh: a different summary (https
 	echo "FAIL (open): the P3 file lacks the skipped site match"
 	fail=1
 }
-grep -qF "$(key_of 'z.sh: novel thing')	z.sh: novel thing (https://github.com/acme/app/issues/99)" "$state/p3-filed.tsv" || {
-	echo "FAIL (open): the P3 file lacks the filed P3"
+if grep -qF "$(key_of 'z.sh: novel thing')" "$state/p3-filed.tsv"; then
+	echo "FAIL (open): the P3 file has a P3 that is only pending"
+	fail=1
+fi
+# The pending entry has what filing needs: the reviewed commit, the site and the issue's body.
+entry=$(jq -c 'select(.title == "z.sh: novel thing")' "$state/p3-pending/feat.jsonl")
+[ "$(printf '%s' "$entry" | jq -r .head)" = "$(git -C "$repo" rev-parse HEAD)" ] || {
+	echo "FAIL (open): the pending entry's head isn't the reviewed commit: $entry"
+	fail=1
+}
+printf '%s' "$entry" | jq -e '.file == "z.sh" and .line == 3 and (.body | startswith("Found by the pre-push review gate (P3, verified) at `z.sh:3` in "))' >/dev/null || {
+	echo "FAIL (open): the pending entry lacks its site or body: $entry"
 	fail=1
 }
 
-# A P3 whose key is in the P3 file is not filed, with a good read and with a failed one (today's rule still holds).
+# The same P3 found on a later push is pending once.
+fixture
+p3 z.sh 3 'novel thing' | jq -s . >"$tmp/findings.json"
+push FINDINGS="$tmp/findings.json"
+rm -f "$state"/*.pass "$state"/*.json
+push FINDINGS="$tmp/findings.json"
+[ "$(pending | grep -cxF 'z.sh: novel thing')" = 1 ] || {
+	echo "FAIL (twice): 'z.sh: novel thing' isn't pending exactly once: $(pending | tr '\n' '|')"
+	fail=1
+}
+
+# A P3 whose key is in the P3 file is not kept, with a good read and with a failed one (today's rule still holds).
 for issues in "" fail; do
 	fixture
 	p3 t.sh 1 seen | jq -s . >"$tmp/findings.json"
@@ -193,9 +243,10 @@ for issues in "" fail; do
 		fail=1
 	}
 	expect_not_filed "tsv ${issues:-ok}" 't.sh: seen'
+	expect_not_pending "tsv ${issues:-ok}" 't.sh: seen'
 done
 
-# A failed read warns and changes nothing else: the P3 is filed and the exit code is the one a good read gives.
+# A failed read warns and changes nothing else: the P3 is kept pending and the exit code is the one a good read gives.
 fixture
 {
 	p3 x.sh 5 'quoting BUG'
@@ -207,9 +258,11 @@ push FINDINGS="$tmp/findings.json" ISSUES=fail
 	fail=1
 }
 errs failed-read "review-gate: couldn't read the open P3 issues, so the dedupe uses only $state/p3-filed.tsv."
-expect_filed failed-read 'x.sh: quoting BUG'
+expect_pending failed-read 'x.sh: quoting BUG'
+expect_nothing_filed failed-read
 
-# A blocking finding still blocks, whatever the read did.
+# A blocking finding still blocks, whatever the read did. The message lists the P2 and the branch's pending P3, with
+# the rule for them, and the P3 is kept (not filed).
 fixture
 {
 	p3 x.sh 5 'quoting BUG'
@@ -220,6 +273,42 @@ push FINDINGS="$tmp/findings.json" ISSUES=fail
 	echo "FAIL (blocking): exit $rc (want 2)"
 	fail=1
 }
+errs blocking-p2 '- [P2] b.sh:1 s'
+errs blocking-pending-rule 'Pending P3s: fix the ones that are relevant and easy in this commit too. The rest are filed when the PR is done.'
+errs blocking-pending-p3 'x.sh:5 quoting BUG'
+errs blocking-pending-failure '    Failure: f'
+expect_pending blocking 'x.sh: quoting BUG'
+expect_nothing_filed blocking
+
+# A block with no pending P3 has no "Pending P3s" line.
+fixture
+jq -nc '{file: "b.sh", line: 1, severity: "P2", summary: "s", failure_scenario: "f"}' | jq -s . >"$tmp/findings.json"
+push FINDINGS="$tmp/findings.json"
+[ "$rc" = 2 ] || {
+	echo "FAIL (blocking, no P3): exit $rc (want 2)"
+	fail=1
+}
+if grep -qF 'Pending P3s' "$tmp/err"; then
+	echo "FAIL (blocking, no P3): the message has a pending P3 line"
+	fail=1
+fi
+
+# A detached HEAD has no branch to keep a P3 for: it is filed now, as before, and nothing is pending.
+fixture
+git -C "$repo" checkout -q --detach
+p3 z.sh 3 'novel thing' | jq -s . >"$tmp/findings.json"
+push FINDINGS="$tmp/findings.json"
+[ "$rc" = 0 ] || {
+	echo "FAIL (detached): exit $rc (want 0)"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+expect_filed detached 'z.sh: novel thing'
+errs detached-filed 'review-gate: filed P3 https://github.com/acme/app/issues/99'
+if [ -e "$state/p3-pending" ]; then
+	echo "FAIL (detached): the gate wrote pending state"
+	fail=1
+fi
 
 [ "$fail" = 0 ] && echo "gate-p3: ok"
 exit "$fail"

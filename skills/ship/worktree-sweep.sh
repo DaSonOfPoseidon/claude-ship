@@ -21,6 +21,11 @@
 #   kept: <path> <branch> <reason>     <branch> is "(none)" for a detached worktree
 #   deleted: <branch>                  a branch with no worktree
 #   kept: - <branch> <reason>          a merged or agent branch that still holds something
+#   p3: <line>                         a line of `p3-pending.sh file <pr>`, which runs before a merged branch is deleted (below)
+# A merged branch's pending P3s (the gate's, hooks/p3-pending.sh) are filed before the branch goes, so a PR the user merged by hand
+# doesn't lose them (claude-ship #352): `p3-pending.sh file <pr>` runs once the branch is known to hold nothing more, and when it
+# fails (a filing, or GitHub) the branch and its worktree stay, with a `kept:` line. A PR closed without a merge isn't swept, and
+# its pending file stays. The script is found next to hooks/ in a checkout, else in ~/.claude/hooks (CLAUDE_P3_PENDING names it).
 # It finishes with `git worktree prune`. The main checkout and the checkout it runs in are never touched.
 # Exit 0 when it ran to the end (removing nothing or something), 2 on usage, 1 when git or gh failed: it stops at
 # once, before any further removal and before the prune; what an earlier pass removed stands.
@@ -46,6 +51,9 @@ esac
 state=$(dirname "$0")/unit-state.sh
 [ -f "$state" ] || die "unit-state.sh not found next to the script"
 
+pending=${CLAUDE_P3_PENDING:-$(dirname "$0")/../../hooks/p3-pending.sh}
+[ -f "$pending" ] || pending=$HOME/.claude/hooks/p3-pending.sh
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -53,6 +61,29 @@ trap 'rm -rf "$tmp"' EXIT
 [ -n "$slug" ] || slug=$(gh repo view --json nameWithOwner --jq .nameWithOwner </dev/null) || die "gh repo view failed"
 cur=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
 curphys=$(cd "$cur" && pwd -P) || die "cannot enter $cur"
+
+# file_pending <the first line of unit-state.sh's output, `state: merged <pr>`>: files the merged PR's branch's pending P3s
+# before the branch is deleted, printing its lines as `p3: ...`. Succeeds when none is left pending; otherwise it sets $p3_why
+# and fails, and the caller keeps the branch.
+file_pending() {
+	fp_pr=${1#state: merged }
+	case $fp_pr in
+	'' | *[!0-9]*)
+		p3_why="no PR number to file its pending P3s for"
+		return 1
+		;;
+	esac
+	if [ ! -f "$pending" ]; then
+		p3_why="p3-pending.sh not found, so its pending P3s can't be filed"
+		return 1
+	fi
+	fp_rc=0
+	sh "$pending" file "$fp_pr" "$slug" >"$tmp/p3out" 2>"$tmp/p3err" </dev/null || fp_rc=$?
+	sed 's/^/p3: /' "$tmp/p3out" || :
+	[ "$fp_rc" -eq 0 ] && return 0
+	p3_why="pending P3s weren't all filed (p3-pending.sh file $fp_pr exit $fp_rc: $(head -n 1 "$tmp/p3err" | tr -d '[:cntrl:]'))"
+	return 1
+}
 
 # One record per linked worktree (the first entry is the main checkout and is skipped): path, branch, locked, lock
 # reason, joined with the unit separator since a path can hold spaces or tabs.
@@ -129,6 +160,11 @@ while IFS=$us read -r path branch locked reason; do
 	fi
 	awk '/^!! / { print substr($0, 4) }' "$tmp/status" >"$tmp/ignored" || die "reading the ignored files of $path failed: nothing more was removed"
 	nignored=$(wc -l <"$tmp/ignored" | tr -d ' ')
+
+	if ! file_pending "$first"; then
+		echo "kept: $path $branch $p3_why"
+		continue
+	fi
 
 	if [ -n "$locked" ]; then
 		git worktree unlock "$path" </dev/null || die "git worktree unlock $path failed: nothing more was removed"
@@ -242,6 +278,8 @@ while IFS= read -r ref; do
 		echo "kept: - $b commits the merged PR lacks"
 	elif grep -q '^diverged:' "$tmp/state"; then
 		echo "kept: - $b local and origin diverged"
+	elif ! file_pending "$(head -n 1 "$tmp/state")"; then
+		echo "kept: - $b $p3_why"
 	else
 		git branch -D "$b" >/dev/null </dev/null || die "git branch -D $b failed"
 		echo "deleted: $b"
