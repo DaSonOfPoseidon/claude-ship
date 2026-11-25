@@ -779,7 +779,7 @@ expect_msg 2 "$together" "cd $repo && echo x && git push origin HEAD"
 expect_msg 2 "$together" 'echo x; git push'
 expect_msg 2 "$together" 'git push origin HEAD | tail -3 && git status'
 expect_msg 2 "$together" 'git push origin HEAD; echo done'
-expect_msg 2 "$together" 'git status && git -C . push origin HEAD'
+expect_msg 2 "$together" 'git status && git push origin HEAD'
 expect_msg 2 "$together" 'git status
 git push origin HEAD'
 expect_msg 2 "$together" 'true || git push origin HEAD'
@@ -848,6 +848,11 @@ expect 0 "git push origin HEAD | tail -3; cd $unpassed"
 expect_msg 2 "$together" "echo x; cd $unpassed; git push origin HEAD"
 repo=$unpassed
 expect_msg 2 "$together" "git push origin HEAD; cd $passed"
+# A push that names its own repository (`-C`, `--git-dir`, `--work-tree`) runs elsewhere than the session: left to the pre-push check.
+expect 0 "git status && git -C $passed push origin HEAD"
+expect 0 "git status && git -C . push origin HEAD"
+expect 0 "git status && git --git-dir=$passed/.git push origin HEAD"
+expect 0 "git status && git --work-tree $passed push origin HEAD"
 # A `cd` the gate can't place (nested, in a subshell, `||`, a second one, pushd) leaves the directory unknown: the pre-push check decides.
 expect 0 "(cd $passed; git push origin HEAD)"
 expect 0 "cd $passed || true; git push origin HEAD"

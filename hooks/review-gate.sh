@@ -750,7 +750,8 @@ done
 #   cdlead DIR    with `pushseen`: the one literal argument of the one `cd` of the tree, when it is a command of the call itself (not
 #                 in a subshell, a block, an `if`, a `||`) that every push follows (`echo x; cd a && git status; git push`)
 #   cdunsure      with `pushseen`: a `cd` (or pushd, popd) that is neither that nor one every push precedes (`git push; cd a`, which
-#                 leaves the push where the session is): the directory the push runs in is not known
+#                 leaves the push where the session is), or a push that names its repository (`-C`, `--git-dir`, `--work-tree`):
+#                 the directory the push runs in is not known
 #   cdn N         how many `cd` commands lead it (`cd a && cd b && git push` has two)
 #   cdt DIR       the one literal argument of the one `cd`, when it has exactly one
 #   Cn N          how many `-C` options the git command has
@@ -842,7 +843,10 @@ else
 			([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push") | $c.Pos.Offset]) as $po
 			| ([.. | objects | select(.Type == "CallExpr" and (((.Args // [])[0] | if . == null then null else wv end) | . == "pushd" or . == "popd"))] | length) as $npd
 			| ([(.Stmts // [])[] | select(((.Background // false) | not) and ((.Negated // false) | not)) | andchain[] | select(((.Negated // false) | not) and iscd)]) as $tops
-			| if ($cds | length) == 0 and $npd == 0 then empty
+			| ([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push")
+				| ($c | words)[1:$pg.i] | any(. != null and test("^(-C|--git-dir|--work-tree)"))] | any) as $own
+			| if $own then "cdunsure"
+			elif ($cds | length) == 0 and $npd == 0 then empty
 			elif ($cds | length) == 1 and $npd == 0 and ($tops | length) == 1 then
 				($tops[0].Cmd | words)[1:] as $cw | $tops[0].Cmd.Pos.Offset as $co
 				| if ($po | all(. > $co)) and ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cdlead \($cw[0])"
