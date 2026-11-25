@@ -333,6 +333,7 @@ done
 x.sh')" code
 	check kind-prompt "$(kind_of 'hooks/review-prompt.md')" code
 	check kind-skill "$(kind_of 'skills/ship/SKILL.md')" code
+	check kind-claude-ship-skill "$(kind_of 'skills/claude-ship/SKILL.md')" code
 	check kind-nested-claude "$(kind_of 'docs/CLAUDE.md')" code
 	check kind-agents "$(kind_of 'AGENTS.md')" code
 	check checklist "$(checklist_of '# C

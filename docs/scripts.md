@@ -707,7 +707,7 @@ hook decides, not what Claude Code does with it.
   only with the PR's own number; Write takes the same file as an absolute path under `$HOME`, nothing else
   (no `..`, no other directory, no subdirectory, no other name; the name's repository part must read back as a
   valid slug, with exactly one `+`). The state directory is outside the gate's protected paths (hooks, settings,
-  `skills/ship`, `agents/ship-*`), and holds nothing the gate or the loop reads. A Write's content isn't the
+  `skills/ship`, `skills/claude-ship`, `agents/ship-*`), and holds nothing the gate or the loop reads. A Write's content isn't the
   hook's to judge: `codex-triage.sh` validates the file. With no `HOME`, a Write denies.
 - **Fails closed.** Input that isn't JSON, has no string `tool_name`, `tool_input.command` (Bash) or
   `tool_input.file_path` (Write), or names any other tool, exits 2 with a reason the agent sees. A hook that
@@ -892,7 +892,7 @@ order: shfmt (below), then `settings/claude-ship.json` from main's archive is va
 JSON value holding the gate's `PreToolUse` hook with `timeout` and `onFailure: "block"` exits 1, nothing installed;
 an optional `PostToolUse` (the lint's edit hook) is allowed beside it, with a string `command` and a numeric `timeout` and
 no `onFailure` requirement, and no other event; without `jq` too), then every installed path that has the immutable flag is lifted with `chattr -i`, recursively for
-`skills/ship` and `git-hooks` (an `lsattr` check that a flag is still there stops the install with nothing changed), then the
+`skills/ship`, `skills/claude-ship` and `git-hooks` (an `lsattr` check that a flag is still there stops the install with nothing changed), then the
 files are deployed, then the template is copied to `$CLAUDE_SHIP_MANAGED_DIR/managed-settings.d/claude-ship.json` (default
 `/etc/claude-code`; skipped with a note when that can't be written, i.e. not root) through a temp file and a `mv`, then the
 flags are set again and checked with `lsattr` (a warning naming the paths that lack one, and exit 1 as root;

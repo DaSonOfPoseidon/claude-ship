@@ -73,9 +73,9 @@ done
 # unzip patch, and sed and perl with an in-place option; `@` stands for the path. The form rotates with the writer and the
 # root, so every pair has one form, and each writer and each root gets all three.
 writers='cp /tmp/x @|mv /tmp/x @|rm -rf @|rmdir @|ln -s /tmp/x @|install -m 644 /tmp/x @|tee @|touch @|truncate -s 0 @|dd of=@|rsync /tmp/x @|unlink @|shred @|mkdir @|chmod 600 @|chown me @|chgrp me @|tar xf a.tar -C @|unzip a.zip -d @|patch @ /tmp/p|sed -i s/a/b/ @|perl -pi -e s/a/b/ @'
-# The roots below ~/.claude (hooks, settings, skills/ship, agents/ship-, bin/, git-hooks); the managed directory and the
+# The roots below ~/.claude (hooks, settings, skills/ship, skills/claude-ship, agents/ship-, bin/, git-hooks); the managed directory and the
 # gate's state follow, which have no `~` form.
-claude_roots='hooks/review-gate.sh settings.json skills/ship/SKILL.md agents/ship-implementer.md bin/shfmt git-hooks/pre-push'
+claude_roots='hooks/review-gate.sh settings.json skills/ship/orchestrate.md skills/claude-ship/SKILL.md agents/ship-implementer.md bin/shfmt git-hooks/pre-push'
 oldifs=$IFS
 IFS='|'
 set -f
@@ -103,6 +103,10 @@ done
 # The directories themselves, and the managed directory, are protected like what is in them.
 expect 2 'rm -rf ~/.claude/hooks'
 expect 2 'rm -rf ~/.claude/skills/ship'
+expect 2 'rm -rf ~/.claude/skills/claude-ship'
+expect 2 'rm -rf ~/.claude/skills/claude-ship/'
+expect 2 'cp /tmp/x ~/.claude/skills/claude-ship/SKILL.md'
+expect 2 'mv /tmp/x $HOME/.claude/skills/claude-ship'
 expect 2 'mv ~/.claude/bin /tmp/bin'
 expect 2 'rm -rf /etc/claude-code'
 expect 2 'rm -rf .git/review-gate'
@@ -125,7 +129,9 @@ expect 2 'echo x &> ~/.claude/hooks/x'
 expect 2 'echo x &>> ~/.claude/hooks/x'
 expect 2 'echo x >| ~/.claude/hooks/x'
 expect 2 'echo x <>~/.claude/hooks/x'
-expect 2 'echo x 2>/dev/null >~/.claude/skills/ship/SKILL.md'
+expect 2 'echo x 2>/dev/null >~/.claude/skills/ship/orchestrate.md'
+expect 2 'echo x 2>/dev/null >~/.claude/skills/claude-ship/SKILL.md'
+expect 2 'echo x > ~/.claude/skills/claude-ship'
 expect 2 '{ echo x; } > ~/.claude/hooks/x'
 expect 2 ': > /repo/.git/review-gate/abc.pass'
 expect 2 ': >&1/../.git/review-gate/abc.waived'
@@ -345,7 +351,8 @@ expect 0 'cat ~/.claude/./hooks/review-gate.sh'
 expect 0 'ls ~/.claude//hooks'
 # Reads that name a writing tool as an argument next to a protected file (#195).
 expect 0 'grep curl ~/.claude/hooks/review-gate.sh'
-expect 0 'grep -n tar ~/.claude/skills/ship/SKILL.md'
+expect 0 'grep -n tar ~/.claude/skills/ship/orchestrate.md'
+expect 0 'grep -n tar ~/.claude/skills/claude-ship/SKILL.md'
 expect 0 'grep -rn "curl -o\|wget\|tar -x\|rm " ~/.claude/hooks'
 expect 0 'grep -n sponge ~/.claude/hooks/review-gate.sh | head'
 expect 0 'grep node ~/.claude/hooks/review-gate.sh'
@@ -386,6 +393,9 @@ expect 0 'rm ~/.claude/git-hooks-notes'
 expect 0 'rm ~/.claude/hooks-old/x'
 expect 0 'rm ~/.claude/bin-notes.md'
 expect 0 'rm ~/.claude/skills/ship-notes/x'
+expect 0 'rm ~/.claude/skills/claude-ship-notes/x'
+expect 0 'echo x > ~/.claude/skills/claude-ship-notes/x'
+expect 0 'rm ~/.claude/skills/claude-shipping/x'
 expect 0 'rm ~/.claude/agents/ship'
 expect 0 'rm /etc/claude-codex/y'
 expect 0 'rm /etc/claude-code-notes.md'
@@ -706,6 +716,11 @@ write() {
 }
 write 2 "$tmp/home/.claude/agents/ship-implementer.md"
 write 2 "$tmp/home/.claude/skills/ship/orchestrate.md"
+write 2 "$tmp/home/.claude/skills/claude-ship/SKILL.md"
+write 2 "$tmp/home/.claude/./skills/claude-ship/SKILL.md"
+write 2 "$tmp/home/.claude/skills/claude-ship"
+write 0 "$tmp/home/.claude/skills/claude-ship-notes/x.md"
+write 0 "$tmp/home/.claude/skills/ship-notes/x.md"
 write 2 "$tmp/home/.claude/hooks/review-lib.sh"
 write 2 "$tmp/home/.claude/bin/shfmt"
 # The install's lint config: weakening it would switch the pre-commit lint off for Claude's own commits.

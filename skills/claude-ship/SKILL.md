@@ -1,5 +1,5 @@
 ---
-name: ship
+name: claude-ship
 description: Use when committing, pushing, opening a PR, or handling Codex review findings in a GitHub repo whose CLAUDE_AUTONOMOUS repo variable is true, or when bootstrapping a repo for autonomous commits. Runs the review → push → Codex round loop, capped at 3 rounds. Also covers orchestrated mode (Opus plans, Sonnet implements, one PR at a time): when the orchestrate-hint hook points to it in plan mode, or when the user asks for the PR loop.
 ---
 
@@ -10,11 +10,13 @@ The user's process (2026-10-19). It is built to keep each round cheap and to fin
 **One round** = the pre-push gate passes → push → `@codex review` → triage. Codex runs only when asked
 (automatic review is off), so never push "just to see": batch every fix into one push.
 
-Scripts live next to this file: `~/.claude/skills/ship/`.
+This file is deployed as `~/.claude/skills/claude-ship/SKILL.md`, because Claude Code skips a skill directory named
+`ship` (it reserves the name for a bundled command). Everything it refers to without a path (the scripts, `orchestrate.md`,
+`filing.md`, `pitfall-lint.md`, `templates/`) lives in `~/.claude/skills/ship/`, not beside this file.
 
 ## Orchestrated mode (opt-in)
 
-Read `orchestrate.md` next to this file, and follow it, only when:
+Read `~/.claude/skills/ship/orchestrate.md`, and follow it, only when:
 - the `orchestrate-hint.sh` hook says orchestrated mode is on (plan mode, in a repo whose `CLAUDE_ORCHESTRATE`
   variable is `true`), or
 - the user asks for the PR loop.
@@ -39,12 +41,12 @@ user asks for "the local loop".
 ## 1. Bootstrap (once, when AGENTS.md has no `## Code Review Rules`)
 
 The gate blocks pushes until this exists. On a branch `chore/review-setup`:
-1. Copy `templates/AGENTS.md` to `AGENTS.md` (or add its `## Code Review Rules` section to an existing
+1. Copy `~/.claude/skills/ship/templates/AGENTS.md` to `AGENTS.md` (or add its `## Code Review Rules` section to an existing
    one). Replace the invariants placeholder with the repo's real rules from CLAUDE.md, README and CI.
    Keep them short and repo-specific: what must never break, what input is untrusted, what must stay out
    of the repo.
 2. Add a line `@AGENTS.md` to CLAUDE.md (create it if missing) so the rules aren't duplicated.
-3. Copy `templates/codex-review.yml` to `.github/workflows/codex-review.yml`. It is a short caller (triggers
+3. Copy `~/.claude/skills/ship/templates/codex-review.yml` to `.github/workflows/codex-review.yml`. It is a short caller (triggers
    and permissions) of claude-ship's reusable workflow (`DaSonOfPoseidon/claude-ship/.github/workflows/codex-status.yml@v1`),
    which holds the bot filter and concurrency and calls the action, so the repo keeps no copy of either the
    workflow body or the status script. Its check run is named `codex-review / codex-status`; the required
