@@ -239,8 +239,10 @@ a compound command, and a canonical push from a worktree that tracks `origin/mai
 tests/gate-worktree-upstream.sh). So `compound_push_gate` (`hooks/review-gate.sh`) decides first, once the call is known not to be a canonical push and
 no `gh api` check has blocked it:
 
-- the repo is the one a leading `cd` names, when the tree shows exactly one literal `cd` (as `tree_dirs`), else the session's
-  directory;
+- the repo is the one a `cd` names when it is the only `cd` in the tree, a command of the call itself (not in a subshell, a
+  block, an `if` or a `||`), has one literal directory (as `tree_dirs`) and every push follows it (`cdlead`); with no `cd`, or
+  only one after every push (`git push; cd x`), it is the session's directory. Any other `cd` (or a `pushd`/`popd`) leaves
+  the directory unknown (`cdunsure`), and the call passes to the pre-push check;
 - it passes when that directory isn't a git repo or can't be entered, when HEAD has a `.pass` or a `.waived` in the common
   directory's `review-gate/`, when every push in the call is a tag push (`tag_push`: the pre-push check judges the tag's
   commit), and when no origin push URL is an opted-in repo (`CLAUDE_AUTONOMOUS` not `true`, or unreadable: the pre-push check

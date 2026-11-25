@@ -747,6 +747,10 @@ done
 #                 quoted `sh -c` string) is no command of the tree. compound_push_gate decides on it, with:
 #   pushn N       how many such pushes there are, numbered from 0
 #   pusharg K W   the words after `push` of push K, each a line; `pushbad K` instead when one is not literal (or has a newline)
+#   cdlead DIR    with `pushseen`: the one literal argument of the one `cd` of the tree, when it is a command of the call itself (not
+#                 in a subshell, a block, an `if`, a `||`) that every push follows (`echo x; cd a && git status; git push`)
+#   cdunsure      with `pushseen`: a `cd` (or pushd, popd) that is neither that nor one every push precedes (`git push; cd a`, which
+#                 leaves the push where the session is): the directory the push runs in is not known
 #   cdn N         how many `cd` commands lead it (`cd a && cd b && git push` has two)
 #   cdt DIR       the one literal argument of the one `cd`, when it has exactly one
 #   Cn N          how many `-C` options the git command has
@@ -834,7 +838,17 @@ else
 		| if ($ps | length) == 0 then empty
 		else "pushseen", "pushn \($ps | length)",
 			($ps | to_entries[] | .key as $k
-				| if (.value | any(. == null or contains("\n"))) then "pushbad \($k)" else (.value[] | "pusharg \($k) \(.)") end)
+				| if (.value | any(. == null or contains("\n"))) then "pushbad \($k)" else (.value[] | "pusharg \($k) \(.)") end),
+			([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push") | $c.Pos.Offset]) as $po
+			| ([.. | objects | select(.Type == "CallExpr" and (((.Args // [])[0] | if . == null then null else wv end) | . == "pushd" or . == "popd"))] | length) as $npd
+			| ([(.Stmts // [])[] | select(((.Background // false) | not) and ((.Negated // false) | not)) | andchain[] | select(((.Negated // false) | not) and iscd)]) as $tops
+			| if ($cds | length) == 0 and $npd == 0 then empty
+			elif ($cds | length) == 1 and $npd == 0 and ($tops | length) == 1 then
+				($tops[0].Cmd | words)[1:] as $cw | $tops[0].Cmd.Pos.Offset as $co
+				| if ($po | all(. > $co)) and ($cw | length) == 1 and $cw[0] != null and $cw[0] != "" and ($cw[0] | contains("\n") | not) then "cdlead \($cw[0])"
+				elif ($po | all(. < $co)) then empty
+				else "cdunsure" end
+			else "cdunsure" end
 		end
 	else "cand",
 		"cdn \($init | length)",
@@ -1130,15 +1144,17 @@ EOF
 # unless the call runs `git push` next to other commands (push_jq's `pushseen`), in an opted-in repo whose HEAD has no pass.
 # The gate reviews only a canonical push, and the pre-push check (hooks/git-hook.sh) refuses a push with no pass however it
 # started; blocking up front saves running the commands before the push, which would otherwise run first (claude-ship #349).
-# The repo is the one a leading `cd` names when the tree shows exactly one literal `cd`, else the session's. Whatever can't be read
+# The repo is the one a `cd` names that is the only one in the tree and runs before every push (`cdlead`), else the session's
+# (no `cd`, or only after the push); a `cd` placed any other way (`cdunsure`) leaves it unknown, so the call passes. Whatever can't be read
 # passes (no git repo, no GitHub origin, an unreadable or false CLAUDE_AUTONOMOUS, a `cd` that can't be entered): the pre-push
 # check decides, as it did before. Never returns.
 compound_push_gate() {
 	printf '%s\n' "$ptree" | grep -qx pushseen || exit 0
 	cp_all=$ptree
 	cp_dir=$cwd
-	if [ "$(printf '%s\n' "$ptree" | grep -c '^cda ')" = 1 ] && ! printf '%s\n' "$ptree" | grep -qx cdabad; then
-		cp_dir=$(tree_dirs cda | head -1)
+	printf '%s\n' "$ptree" | grep -qx cdunsure && exit 0
+	if [ "$(printf '%s\n' "$ptree" | grep -c '^cdlead ')" = 1 ]; then
+		cp_dir=$(tree_dirs cdlead | head -1)
 	fi
 	cd "$cp_dir" 2>/dev/null || exit 0
 	cp_head=$(git rev-parse HEAD 2>/dev/null) || exit 0

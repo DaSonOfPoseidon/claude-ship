@@ -840,6 +840,20 @@ expect_msg 2 "$together" "cd $unpassed && git status; git push origin HEAD"
 repo=$unpassed
 expect 0 "cd $passed && git status; git push origin HEAD"
 expect_msg 2 "$together" 'git status; git push origin HEAD'
+# A `cd` that comes after the push, or isn't the command's first, doesn't move the repo the push is judged in.
+repo=$passed
+expect 0 "git push origin HEAD; cd $unpassed"
+expect 0 "git status && git push origin HEAD && cd $unpassed"
+expect 0 "git push origin HEAD | tail -3; cd $unpassed"
+expect_msg 2 "$together" "echo x; cd $unpassed; git push origin HEAD"
+repo=$unpassed
+expect_msg 2 "$together" "git push origin HEAD; cd $passed"
+# A `cd` the gate can't place (nested, in a subshell, `||`, a second one, pushd) leaves the directory unknown: the pre-push check decides.
+expect 0 "(cd $passed; git push origin HEAD)"
+expect 0 "cd $passed || true; git push origin HEAD"
+expect 0 "cd $unpassed; cd $passed; git push origin HEAD"
+expect 0 "pushd $passed && git status; git push origin HEAD"
+expect 0 "echo x; cd $passed && git status; git push origin HEAD"
 
 # A fetch URL that isn't the pushed repo, even one that isn't GitHub's, supplies the review's base and rules.
 fixture /tmp/base.git
