@@ -43,7 +43,7 @@ what each feature does, what triggers it and what it puts in Claude's context. T
 
 | Check | Effect |
 |---|---|
-| A canonical `git push` starts a headless review: a Sonnet finder (P0–P3) and a Haiku verifier; a docs-only change gets a Haiku claims check | Confirmed P0–P2 block; confirmed P3s are filed as issues by `p3-issue.sh`; a pass is recorded in `.git/review-gate/` |
+| A canonical `git push` starts a headless review: a Sonnet finder (P0–P3) and a Haiku verifier; a docs-only change gets a Haiku claims check | Confirmed P0–P2 block; confirmed P3s are kept pending for the branch by `p3-pending.sh` and filed as issues, by `p3-issue.sh`, when the PR is done; a pass is recorded in `.git/review-gate/` |
 | Push shape: HEAD's branch to origin only, or one tag whose commit is on the default branch | Anything else blocks |
 | `core.hooksPath` must point at the deployed stubs | The push blocks otherwise |
 | GitHub MCP write tools (`push_files`, `create_pull_request`, `merge_pull_request`…) | Block |
@@ -52,7 +52,7 @@ what each feature does, what triggers it and what it puts in Claude's context. T
 
 The reviewer sessions get the rules and context from the default branch: the Code Review Rules, an optional `### Path rules`
 subsection, `docs/pitfalls.md`, `docs/false-positives.md` (both optional), the repo's open P3 issues (so they aren't filed
-twice) and the branch diff.
+twice), the branch's pending P3s and the branch diff.
 
 ### C. Git hooks (`hooks/git-hook.sh`, run through the `~/.claude/git-hooks` stubs)
 
@@ -90,7 +90,8 @@ twice) and the branch diff.
 | The skill's description in the session's skill list | Auto | Listed as `claude-ship`: Claude Code skips a user skill whose directory is named `ship` (it reserves the name for a bundled command), so only `SKILL.md` is deployed apart, to `~/.claude/skills/claude-ship/` ([#350](https://github.com/DaSonOfPoseidon/claude-ship/issues/350)). Everything else stays in `~/.claude/skills/ship/`. Prose here still says "the ship skill" |
 | Step 0: check `CLAUDE_AUTONOMOUS` once per session | Auto, when committing or pushing in a GitHub repo | Driven by the skill and that `CLAUDE.md` |
 | Commit on its own, then review, push, `@codex review` and triage, at most 3 rounds | Opt-in: `CLAUDE_AUTONOMOUS` `true` | Otherwise Claude asks before committing |
-| Codex triage by the outcome table (SKILL.md › Triage): rounds 1–2 fix P0–P2; a P3 is fixed only when the same round fixes a P0–P2, else filed; round 3 files P2/P3 and asks about P0/P1 | Opt-in, every Codex round | Codex's findings only (the gate's own P3s are always filed). The rule lives in the skill, so every opted-in repo gets it |
+| Codex triage by the outcome table (SKILL.md › Triage): rounds 1–2 fix P0–P2; a P3 is fixed only when the same round fixes a P0–P2, else filed; round 3 files P2/P3 and asks about P0/P1 | Opt-in, every Codex round | Codex's findings only (the gate's own P3s are kept pending until the PR is done: SKILL.md step 2). The rule lives in the skill, so every opted-in repo gets it |
+| The gate's pending P3s: `p3-pending.sh list` before each commit for the PR (fix the relevant, easy ones in it, never a commit just for them); `p3-pending.sh file <pr>` when the PR is done (step 5), files the rest as issues | Opt-in, every PR | The gate's P3s only; the orchestrator, `worktree-sweep.sh` and the implementer follow the same rule |
 | A finding judged not valid: reply and add a `docs/false-positives.md` entry; a new bug class: a `docs/pitfalls.md` entry | Opt-in, every round | |
 | Bootstrap (`chore/review-setup`: `AGENTS.md` rules, workflow caller, pitfalls and false-positives files, `review:p3` label) | Opt-in: runs by itself when `AGENTS.md` lacks Code Review Rules | |
 | Branch protection requiring `codex-review` | Ask: Claude asks after the bootstrap merges | |
@@ -164,8 +165,8 @@ In order; each step needs the one before it.
 
 - `hooks/review-gate.sh`: a PreToolUse hook that blocks a canonical `git push` until a headless
   review passes (a `git push` that shares its call with other commands is blocked up front when HEAD has no pass; any other push is refused by the pre-push check in `hooks/git-hook.sh`). A Sonnet finder
-  reports P0–P3 findings and a Haiku verifier checks them; confirmed P0–P2 block, and confirmed P3s are filed as
-  issues. Docs-only changes get a Haiku claims check. Prompts are the `hooks/review-*.md` files, built by `hooks/review-lib.sh`. A change to a prompt, model or flag comes with a
+  reports P0–P3 findings and a Haiku verifier checks them; confirmed P0–P2 block, and confirmed P3s are kept pending for the
+  branch (`hooks/p3-pending.sh`) and filed as issues when the PR is done. Docs-only changes get a Haiku claims check. Prompts are the `hooks/review-*.md` files, built by `hooks/review-lib.sh`. A change to a prompt, model or flag comes with a
   before/after `tests/evals/run.sh` result (seeded-bug cases; it costs tokens, so it runs by hand, not in CI;
   [`docs/gate.md`](docs/gate.md#changing-prompts-or-models)).
 - `skills/claude-ship/SKILL.md` and `skills/ship/`: the `ship` skill, listed as `claude-ship` (bootstrap a repo, request Codex reviews, triage by the outcome table,
@@ -278,7 +279,14 @@ gh variable set CLAUDE_P3_MILESTONE --body auto -R <owner/repo>                 
 gh variable set CLAUDE_ORCHESTRATE --body true -R <owner/repo>                     # optional, orchestrated mode
 ```
 
-P3 issues (the gate's, and Codex findings the skill defers) are filed by `hooks/p3-issue.sh` with
+The gate's confirmed P3s are not filed while the PR is open, since its code isn't live: `hooks/p3-pending.sh` keeps them pending
+for the branch (in `.git/review-gate/p3-pending/`), Claude fixes the relevant, easy ones in a commit it makes for the PR anyway
+(the skill's step 2, the implementer's rule: never a commit just for them), and `p3-pending.sh file <pr>` files what is left
+when the PR is done: the skill's step 5, the orchestrator before it merges, or `worktree-sweep.sh` for a branch merged by
+hand. A P3 whose code a later commit changed is dropped, and one that is already an issue is skipped. A detached HEAD has no
+branch to keep a P3 for, and a push to the default branch has no PR to wait for, so their P3s are filed at once.
+
+P3 issues (the gate's once the PR is done, and Codex findings the skill defers) are filed by `hooks/p3-issue.sh` with
 `CLAUDE_P3_LABELS` (default `review:p3`) plus labels by the finding's file, from
 `.github/claude-ship/p3-labels` on the default branch. One rule per line, `<glob> <label>[,<label>...]`; every
 matching rule adds its labels, except that a matching rule's `area:` label replaces the area of every earlier

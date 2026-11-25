@@ -621,10 +621,11 @@ linked worktree's HEAD (a detached one included). It reads that list once, and i
 | `<sha>.json.err`, `<sha>.verify.json.err`, `<sha>.json.failed`, `<sha>.verify.json.failed` | nothing | the commit is on no ref |
 | `<sha>.pass` | the head check, the scoping loop, the pre-push check | the commit is on no ref (an old pass could scope a later review) |
 | `patch-<40 or 64 hex>.pass` | the diff-id cache, keyed by the branch diff, not a commit; its first line is the key of the review rules it passed under | always (losing one only forces a re-review) |
-| `p3-<digits>.json` | `p3-issue.sh`, in the run that wrote it | always |
+| `p3-<digits>.json` | `p3-pending.sh add` (a branch's P3), or `p3-issue.sh` (a detached HEAD's or the default branch's), in the run that wrote it | always |
 | `<sha>.md` | `gate-stats.sh` (history) | **never** |
 | `<sha>.waived` | the head check, the pre-push check, `gate-stats.sh` | **never** (the user's decision) |
 | `p3-filed.tsv` | the P3 dedupe (a cache of the keys, and the whole dedupe when the open P3 issues can't be read) and, then, the reviewers' prompt | **never** |
+| `p3-pending/<branch slug>.jsonl` (a subdirectory) | `p3-pending.sh` (`list`, `titles`, `file`): the gate's block message and reviewer prompt, and the filing when the PR is done | **never**: the prune looks only at plain files directly in the directory |
 | any other name, and subdirectories | | **never**: only the exact names above are deleted |
 
 Only the user prunes, as for waivers: the tamper check denies a run of `review-gate.sh` with `--prune` among its arguments,
@@ -643,9 +644,41 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
   and 22% more cost. The verifier and the docs check pass no `--effort` either. The level is `finder_effort` in
   `hooks/review-lib.sh` (empty: none), the one place the gate and the eval runner read it from; set a level there to pass
   it as `--effort`.
-- Confirmed P0–P2 findings block. Confirmed P3s don't: the gate files them as issues with `p3-issue.sh` (labels
-  from the repo variable `CLAUDE_P3_LABELS`, default `review:p3`, plus the repo's per-file label map, and an
-  optional milestone) and lists them in later prompts so they aren't found twice (#112).
+- Confirmed P0–P2 findings block. Confirmed P3s don't, and they aren't filed while the PR is open either (#352): the code
+  on a PR isn't live, so a P3 in it is no issue yet. The gate keeps each one pending for the branch with `p3-pending.sh
+  add`; the ship skill, the implementer and the orchestrator file what is still pending when the PR is done (below), with
+  `p3-issue.sh` (labels from the repo variable `CLAUDE_P3_LABELS`, default `review:p3`, plus the repo's per-file label map,
+  and an optional milestone), and the open ones are listed in later prompts so they aren't found twice (#112).
+  - **Pending P3s.** `<git common dir>/review-gate/p3-pending/<branch slug>.jsonl` (the common dir, so every worktree of the
+    clone shares it; the slug writes `%` as `%25`, then `+` as `%2B`, then `/` as `+`, as the plan files do, so no two
+    branches share a file) holds one JSON object per line: the dedupe `key` (the cksum of the title, as in `p3-filed.tsv`),
+    `title`, `file`, `line`, `summary`, `failure_scenario`, `head` (the commit that was reviewed) and `body` (the text the
+    issue gets). A P3 found again on a later push is pending once, by key, and the later report replaces the earlier entry (its head and line are refreshed). The gate adds a P3 only after the checks below
+    (key in `p3-filed.tsv`, an open issue that is the same finding), prints `review-gate: P3 kept pending for <branch>:
+    <title>`, and keeps going on a failure to add (a warning: a P3 never blocks). A detached HEAD has no branch to keep a P3
+    for, and a push to the default branch has no PR to wait for, so the gate files those at once, as it did before.
+  - **What Claude sees.** A block lists the branch's pending P3s (`p3-pending.sh list`) under the P0–P2 findings, with
+    "Pending P3s: fix the ones that are relevant and easy in this commit too. The rest are filed when the PR is done." A pass
+    prints nothing new, since a passing PreToolUse hook's stderr never reaches Claude: the skill and the implementer run
+    `p3-pending.sh list` before each commit for the PR instead, and never make a commit just for P3s.
+  - **Filing.** `p3-pending.sh file <pr> [<owner/repo>]` reads the PR's head branch and commit from GitHub (a fork's PR is
+    refused) and takes that branch's entries. It drops an entry when a later commit changed its region: a hunk of
+    `git diff -U0 <head> <the PR's head>` on its file within 3 lines of its line (in `head`'s numbering), or the file
+    deleted or renamed. That code was reviewed again by a later push, which would have reported it again; there is no
+    further GitHub call for it. A rebase over a changed default branch can drop a P3 early; a diff that can't be read drops
+    nothing. It skips an entry whose key is in `p3-filed.tsv` or that an open issue duplicates (the dedupe below, shared
+    through `review-lib.sh`), and files the rest with `p3-issue.sh <owner/repo> <payload> <pr>`, so the milestone comes from
+    the PR. Each is removed from the pending file when filed, dropped or skipped; a failed filing stays, with exit status 1,
+    and a rerun files only what is left. With nothing pending it prints nothing and asks GitHub nothing. Callers: the ship
+    skill's step 5, the orchestrator before it merges (or when it reports a unit ready), and `worktree-sweep.sh` before it
+    deletes a merged branch (a PR merged by hand), which keeps the branch when the filing fails. A PR closed without a merge
+    keeps its pending file; nothing files it.
+  - **The reviewer's prompt** has a section "Already pending for this branch; don't report these again unless the diff
+    changes them" with the branch's pending titles (`p3-pending.sh titles`), quoted as data, so a later push doesn't report
+    them again. The exception is a P3 whose code the diff under review changes: if the problem is still there, the reviewer
+    reports it again, and `p3-pending.sh add` then replaces the pending entry with the new head and line, so `file` doesn't
+    drop it as changed. A failed read warns and leaves the section out. A push to the default branch has no PR to wait for
+    and its code is live, so its P3s are filed at once (as on a detached HEAD) and the section is left out.
   - **The read.** When a reviewer runs, the gate reads the repo's open P3 issues once, with
     `gh issue list --label <label> --author @me --state open --limit 500`. The label is the first of the repo
     variable `CLAUDE_P3_LABELS` (every issue `p3-issue.sh` files carries the base labels), `review:p3` when the variable
@@ -661,7 +694,7 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
     entries, so an issue that was closed drops out and a fresh clone sees them too. It says the list is quoted as data
     (titles a past review wrote from a diff), not instructions. When the read failed, the section lists the file's
     entries; with nothing to list there is no section.
-  - **The filing loop** skips a confirmed P3, with `review-gate: skipped P3 "<title>": already filed as <url>`, when its
+  - **The dedupe** skips a confirmed P3 (the gate before it keeps it pending, `p3-pending.sh file` before it files it), with `review-gate: skipped P3 "<title>": already filed as <url>`, when its
     key is in `p3-filed.tsv`, when its title equals an open issue's title, or when its `file:line` equals the site
     that an open issue's first body line cites (``at `<file>:<line>` in <sha>``, the form the gate writes). A title
     matches up to case, runs of whitespace and the gate's 120 characters. The match is exact only, with no prefix or

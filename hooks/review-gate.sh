@@ -1975,34 +1975,6 @@ touch "$filed"
 open_issues='[]'
 filed_list=
 
-# p3_label_of <owner/repo>: prints the label the gate's P3 issues carry: the first of the repo's CLAUDE_P3_LABELS (the base
-# labels p3-issue.sh puts on every issue), `review:p3` when the variable isn't set or names none. Fails when GitHub can't
-# say, so that a list read under a guessed label (empty for a repo that changed it) never stands in for the P3 file.
-p3_label_of() {
-	if pl_out=$(gh variable get CLAUDE_P3_LABELS -R "$1" 2>&1); then
-		pl_first=$(printf '%s\n' "$pl_out" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -m1 .)
-		echo "${pl_first:-review:p3}"
-		return 0
-	fi
-	case $pl_out in
-	*'not found'* | *'Not Found'*) echo review:p3 ;;
-	*) return 1 ;;
-	esac
-}
-
-# open_dup <title> <file:line>: prints the URL of the first open P3 issue that is the same finding, nothing when none is.
-# The same means exactly: the title is equal up to case, runs of whitespace and the gate's 120 characters, or the issue's
-# first line cites that file:line the way the gate writes it (at `<file>:<line>` in <sha>). No prefix or fuzzy match, since
-# a wrong match drops a real finding without filing it. Reads $open_issues.
-open_dup() {
-	printf '%s' "$open_issues" | jq -r --arg t "$1" --arg s "$2" '
-		def norm: ascii_downcase | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "") | .[0:120];
-		($t | norm) as $nt
-		| [.[] | select(((.title // "") | norm) == $nt
-			or ((.body // "" | split("\n")[0] | try capture("at `(?<site>[^`]+)` in ").site catch null) == $s))
-			| .url][0] // empty'
-}
-
 # The default branch's known false positives, for the finder, the docs check and the verifier, read here (not with the
 # finder's context) because a cached finder run still needs them for the verifier. Upstream only: the branch's own
 # copy is never shown, so it can't add an entry that silences its own review.
@@ -2067,18 +2039,21 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 	# The repo's open P3 issues of the user's own (the ones the gate filed, or the user wrote: never text other people
 	# wrote, since the list goes into the prompt). Unlike the reads above this one decides nothing: a P3 never blocks, so a
 	# failed read warns and the dedupe falls back on the P3 file alone. An empty list is a good read.
-	if p3_label=$(p3_label_of "$slug") &&
-		open_raw=$(gh issue list -R "$slug" --label "$p3_label" --author @me --state open --limit 500 --json number,title,body,url 2>/dev/null) &&
-		open_issues=$(printf '%s' "$open_raw" | jq -ce 'select(type == "array")' 2>/dev/null) &&
-		filed_list=$(printf '%s' "$open_issues" | jq -r '.[] | "\(.title) (\(.url))"' 2>/dev/null); then
+	if read_open_p3s "$slug"; then
 		:
 	else
 		echo "review-gate: couldn't read the open P3 issues, so the dedupe uses only $filed." >&2
-		open_issues='[]'
 		filed_list=$(cut -f2- "$filed") || {
 			echo "Blocked: couldn't read $filed." >&2
 			exit 2
 		}
+	fi
+	# The branch's pending P3s, so the reviewer doesn't report them again. They decide nothing, so a failed read warns.
+	pending_list=
+	if pl_branch=$(git symbolic-ref -q --short HEAD) && [ "$pl_branch" != "$main" ] &&
+		! pending_list=$(sh "$dir/p3-pending.sh" titles "$pl_branch"); then
+		pending_list=
+		echo "review-gate: couldn't read the pending P3s of $pl_branch, so the reviewer may report them again." >&2
 	fi
 	commits=$(git log --format='%h %s' "$upstream"..HEAD) || {
 		echo "Blocked: couldn't list the commits on the branch." >&2
@@ -2145,7 +2120,12 @@ printf '%s' "$findings" | jq -r "$confidence_jq"'.[] |
 	"Confidence: finder \(.confidence | conf), verifier \(.verdict.confidence | conf)\n" +
 	(if .rejected then "Verifier: \(.verdict.reason) (\(.verdict.evidence))\n" else "" end)' >"$report"
 
-# Confirmed P3s become issues, once each.
+# Confirmed P3s are kept pending for the branch, once each (claude-ship #352): the code on a PR isn't live, so a P3 in it
+# is no issue yet. Claude fixes the relevant, easy ones in a commit it makes for the PR anyway, and p3-pending.sh files
+# what is left when the PR is done. A detached HEAD has no branch to keep one for, and a push to the default branch has no
+# PR to wait for and its code is live, so their P3s are filed now.
+p3_branch=$(git symbolic-ref -q --short HEAD) || p3_branch=
+[ "$p3_branch" != "$main" ] || p3_branch=
 printf '%s' "$findings" | jq -c '.[] | select(.severity == "P3" and (.rejected | not))' | while IFS= read -r f; do
 	title=$(printf '%s' "$f" | jq -r '"\(.file): \(.summary)"' | cut -c1-120)
 	key=$(printf '%s' "$title" | cksum | cut -d' ' -f1)
@@ -2155,6 +2135,15 @@ printf '%s' "$findings" | jq -c '.[] | select(.severity == "P3" and (.rejected |
 	if dup=$(open_dup "$title" "$site") && [ -n "$dup" ]; then
 		printf '%s\t%s (%s)\n' "$key" "$title" "$dup" >>"$filed"
 		echo "review-gate: skipped P3 \"$title\": already filed as $dup" >&2
+		continue
+	fi
+	if [ -n "$p3_branch" ]; then
+		printf '%s' "$f" | jq --arg t "$title" --arg c "$head" '{file, line, summary, failure_scenario, title: $t, head: $c}' >"$state/p3-$key.json"
+		if sh "$dir/p3-pending.sh" add "$state/p3-$key.json" "$p3_branch"; then
+			echo "review-gate: P3 kept pending for $p3_branch: $title" >&2
+		else
+			echo "review-gate: couldn't keep P3 \"$title\" pending for $p3_branch" >&2
+		fi
 		continue
 	fi
 	body=$(printf '%s' "$f" | jq -r --arg c "$head" '"Found by the pre-push review gate (P3, verified) at `\(.file):\(.line)` in \($c).\n\n\(.summary)\n\nFailure scenario: \(.failure_scenario)"')
@@ -2180,6 +2169,13 @@ fi
 	echo "Blocked by the pre-push review gate: $blocking blocking finding(s) (review cost \$$cost)."
 	printf '%s' "$findings" | jq -r "$confidence_jq"'.[] | select((.severity | IN("P0", "P1", "P2")) and (.rejected | not))
 		| "- [\(.severity)] \(.file):\(.line) \(.summary) (confidence: finder \(.confidence | conf), verifier \(.verdict.confidence | conf))"'
+	# The branch's pending P3s (this review's included), so the fixes can take the relevant, easy ones along. A failed read
+	# is no reason to block more: `p3-pending.sh list` shows them, and they are filed when the PR is done.
+	if [ -n "$p3_branch" ] && pending=$(sh "$dir/p3-pending.sh" list "$p3_branch" 2>/dev/null) && [ -n "$pending" ]; then
+		echo
+		echo "Pending P3s: fix the ones that are relevant and easy in this commit too. The rest are filed when the PR is done."
+		printf '%s\n' "$pending"
+	fi
 	echo
 	echo "Full report: $report"
 	echo "Fix each valid finding test-first, sweep the branch for the same class of bug, and push all the fixes at once."

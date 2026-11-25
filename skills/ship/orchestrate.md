@@ -45,7 +45,7 @@ context. So delegate anything that doesn't need judgment, and take as few turns 
 | Turn new `docs/pitfalls.md` entries into lint rules on a local branch, in the background (`pitfall-lint.md`) | `ship-lint-author` agent, started from an implementer's `pitfalls:` line | Haiku, high |
 | Run a Codex round: request once the pushed head settles (CI runs alongside), wait, wait for CI and read it, list the findings, file the rule-decided issues and resolve the answered threads | `ship-codex` agent, started by the implementer after each push | Haiku, medium |
 | Fix a red CI inside the PR: read the failing jobs' log tails, fix, push, up to 2 rounds | the `ship-implementer`, from `ship-codex`'s `ci-failures:` block | Sonnet, high |
-| The mechanics under it: wait, list, file issues, CI failures | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`, `ci-failures.sh`) | none |
+| The mechanics under it: wait, list, file issues, CI failures | the ship scripts (`codex-wait.sh`, `codex-findings.sh`, `codex-triage.sh`, `p3-issue.sh`, `p3-pending.sh`, `ci-failures.sh`) | none |
 
 - A trivial unit whose Haiku implementer the gate blocked twice goes to a new Sonnet `ship-implementer`
   (see **Replacing an implementer**).
@@ -243,12 +243,21 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
 6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries). Check
    `codex-review` with `gh pr view <pr> --json statusCheckRollup`, or `~/.claude/skills/ship/codex-status.sh <pr>`, which
    outside GitHub Actions only prints the status and never sets it (on the bootstrap PR it prints `success` but sets nothing).
+   - **The gate's pending P3s** (`hooks/p3-pending.sh`; the gate keeps its confirmed P3s pending for the branch while the PR is
+     open, and the implementer fixes the relevant, easy ones in its own commits) are filed once the unit is done, from the
+     main checkout, by `~/.claude/hooks/p3-pending.sh file <pr> <owner/repo>`: with `merge: yes` right before the merge
+     (sub-step 2 below), with `merge: no` when you tell the user it's ready. Each line it prints (`filed <url>`, `dropped
+     <file>:<line> …`, `skipped …`, `failed …`) goes into step 7's one-line report. Exit 1 means a P3 failed to file and stays
+     pending: with `merge: yes`, merge anyway (the P3s are minor and nothing else waits on them), tell the user, and run it
+     again; `worktree-sweep.sh` also files a merged branch's P3s before it deletes the branch, and keeps the branch when that
+     fails. A PR closed without a merge keeps its pending file, which is left alone.
    - With `merge: yes`:
      1. Stop the implementer's background shells (`TaskStop`, or ask it to; `ListAgents` doesn't list them), then
         remove its worktree (as in **Replacing an implementer**, step 2), after waiting for a
         `ship-lint-author` started from its `pitfalls:` line that is still running (step 4: it reads the file there). Git
         won't delete a branch that a worktree still has checked out.
-     2. From your own checkout, run `gh pr merge <pr> --squash --delete-branch`. Always name the PR: without a
+     2. From your own checkout, run `~/.claude/hooks/p3-pending.sh file <pr> <owner/repo>` (above), then
+        `gh pr merge <pr> --squash --delete-branch`. Always name the PR: without a
         number, gh merges the PR of the branch you're on, not the unit's.
      3. Move the issues it unblocked to the ready label, delete its plan file, and pull the default branch.
      4. Once `ListAgents` shows no live implementer (a lock says nothing about that, see **Resuming** step 1), run
@@ -256,7 +265,7 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
         that hold nothing more (earlier units' too, e.g. after a lost agent id), deletes the leftover branches
         with no worktree (merged PRs', and agents' `worktree-agent-*` ones whose commits are on the default branch),
         and prints a `kept:` line for each worktree or branch that still holds something, and a
-        `deleted-ignored:` line for the git-ignored files a removed worktree took with it. Pass those lines to
+        `deleted-ignored:` line for the git-ignored files a removed worktree took with it, and a `p3:` line for each pending P3 it filed (or failed to file, which keeps the branch) before it deleted a merged branch. Pass those lines to
         the user in step 7's one-line report. Exit 1 (git or gh failed): tell the user what it printed, and go on.
    - With `merge: no`: tell the user it's ready, then go on to the next unit only if it doesn't depend on
      this one.

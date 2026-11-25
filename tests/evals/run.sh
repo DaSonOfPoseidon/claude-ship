@@ -285,8 +285,8 @@ run_case() (
 		commit -q -m "$subject" >/dev/null 2>&1 || broken "couldn't commit the change"
 	head=$(git rev-parse HEAD) || broken "couldn't read HEAD"
 
-	# The inputs the gate reads at this base, with the default branch standing in as `main`. No PR, threads or filed
-	# issues.
+	# The inputs the gate reads at this base, with the default branch standing in as `main`. No PR, threads, filed or
+	# pending issues.
 	main=main
 	upstream=$case_base
 	base=$case_base
@@ -295,6 +295,7 @@ run_case() (
 	pr=
 	threads=
 	filed_list=
+	pending_list=
 	branch_stat=
 	changed=$(git diff --name-only --no-renames "$range") || broken "couldn't list the changed files"
 	if rules=$(rules_of "$upstream"); then

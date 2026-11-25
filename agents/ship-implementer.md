@@ -98,8 +98,11 @@ finding costs a full extra round, so care here is cheaper than speed.
   - **After a third block on this branch,** stop and report.
 - Never work around the gate: no other remote, branch, refspec or force-push it would not allow, and no MCP
   writes.
-- Confirmed P3s from the gate are filed as issues by the gate itself. Don't fix them here. (This is about the gate's
-  P3s. A Codex P3 follows the rule in **Fixing a `fix:` thread**.)
+- Confirmed P3s from the gate are not filed while the PR is open: the gate keeps them pending for the branch. Before each
+  commit (a gate-block fix, a Codex fix round), run `~/.claude/hooks/p3-pending.sh list` and fix the ones that are relevant
+  and easy in that commit too. Never make a commit just for them. The orchestrator files whatever is still pending when the
+  PR is done (`p3-pending.sh file`), so never run `file` yourself. (This is about the gate's P3s. A Codex P3 follows the rule
+  in **Fixing a `fix:` thread**.)
 
 ## Open the PR and run the Codex rounds
 
