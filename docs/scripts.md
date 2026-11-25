@@ -707,7 +707,7 @@ hook decides, not what Claude Code does with it.
   only with the PR's own number; Write takes the same file as an absolute path under `$HOME`, nothing else
   (no `..`, no other directory, no subdirectory, no other name; the name's repository part must read back as a
   valid slug, with exactly one `+`). The state directory is outside the gate's protected paths (hooks, settings,
-  `skills/ship`, `agents/ship-*`), and holds nothing the gate or the loop reads. A Write's content isn't the
+  `skills/ship`, `skills/claude-ship`, `agents/ship-*`), and holds nothing the gate or the loop reads. A Write's content isn't the
   hook's to judge: `codex-triage.sh` validates the file. With no `HOME`, a Write denies.
 - **Fails closed.** Input that isn't JSON, has no string `tool_name`, `tool_input.command` (Bash) or
   `tool_input.file_path` (Write), or names any other tool, exits 2 with a reason the agent sees. A hook that

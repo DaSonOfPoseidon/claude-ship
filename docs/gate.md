@@ -434,7 +434,7 @@ and process substitutions, and inside an unquoted heredoc body, since those run)
 A word is *literal* when all its parts are plain text or quoted text without expansions (escapes and quotes are
 resolved, a leading `~` stays text, `$HOME` and `${HOME}` alone are the home directory); a variable, a substitution,
 a glob, a brace list or `$'...'` makes it *dynamic*, and a dynamic word is not read. The protected paths are the home
-directory, then `.claude/(hooks|git-hooks|skills/ship|bin)` (the directory itself or anything in it),
+directory, then `.claude/(hooks|git-hooks|skills/ship|skills/claude-ship|bin)` (the directory itself or anything in it),
 `.claude/claude-ship` (the same), `.claude/settings*` and `.claude/agents/ship-*`, plus `.git/review-gate` in any repo and the managed settings directory
 `/etc/claude-code` (the whole directory: a policy file added there could override the gate's registration; it is a fixed path
 because Claude Code reads that one, whatever `CLAUDE_SHIP_MANAGED_DIR` says to the installer).
