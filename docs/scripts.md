@@ -892,7 +892,7 @@ order: shfmt (below), then `settings/claude-ship.json` from main's archive is va
 JSON value holding the gate's `PreToolUse` hook with `timeout` and `onFailure: "block"` exits 1, nothing installed;
 an optional `PostToolUse` (the lint's edit hook) is allowed beside it, with a string `command` and a numeric `timeout` and
 no `onFailure` requirement, and no other event; without `jq` too), then every installed path that has the immutable flag is lifted with `chattr -i`, recursively for
-`skills/ship` and `git-hooks` (an `lsattr` check that a flag is still there stops the install with nothing changed), then the
+`skills/ship`, `skills/claude-ship` and `git-hooks` (an `lsattr` check that a flag is still there stops the install with nothing changed), then the
 files are deployed, then the template is copied to `$CLAUDE_SHIP_MANAGED_DIR/managed-settings.d/claude-ship.json` (default
 `/etc/claude-code`; skipped with a note when that can't be written, i.e. not root) through a temp file and a `mv`, then the
 flags are set again and checked with `lsattr` (a warning naming the paths that lack one, and exit 1 as root;

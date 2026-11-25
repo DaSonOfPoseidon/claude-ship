@@ -34,7 +34,7 @@ what each feature does, what triggers it and what it puts in Claude's context. T
 |---|---|
 | `jq` missing, or the tool call unreadable | Blocks every call |
 | `~/.claude/bin/shfmt` missing, or a Bash command it can't parse | Blocks every Bash call |
-| Write or Edit of a protected path (`~/.claude/{hooks,git-hooks,skills/ship,agents/ship-*,bin,claude-ship,settings*}`, `.git/review-gate/`, `/etc/claude-code`), or text that sets `disableAllHooks` | Blocks |
+| Write or Edit of a protected path (`~/.claude/{hooks,git-hooks,skills/ship,skills/claude-ship,agents/ship-*,bin,claude-ship,settings*}`, `.git/review-gate/`, `/etc/claude-code`), or text that sets `disableAllHooks` | Blocks |
 | Bash that writes those paths literally (`cp`, `mv`, `ln`, a redirect, `sed -i`…) | Blocks |
 | The review gate's `--waive` or `--prune`, `gh variable set/delete/remove` on `CLAUDE_AUTONOMOUS`, `CLAUDE_ORCHESTRATE` or `CLAUDE_P3_*`, running `codex-allow.sh`, `chattr` | Blocks (these are User-only) |
 | `git commit --no-verify` or `-n`, `git push --no-verify`, a write of `core.hooksPath` | Blocks |
@@ -83,11 +83,11 @@ twice) and the branch diff.
 | Backfill of existing entries | Ask: the bootstrap offers it once | 8 titles per author |
 | `pitfall-lint.sh pending` | Ask | CLI |
 
-### F. The `ship` skill (`skills/ship/SKILL.md` and its scripts)
+### F. The `ship` skill (`skills/claude-ship/SKILL.md` and, in `skills/ship/`, its scripts)
 
 | Feature | Trigger | Scope |
 |---|---|---|
-| The skill's description in the session's skill list | Auto, in principle | **Known issue:** Claude Code's built-in `/ship` shadows it in the list ([#350](https://github.com/DaSonOfPoseidon/claude-ship/issues/350)). Claude learns of the skill from the user's global `CLAUDE.md` (the user's own file, not deployed) and the hint hook |
+| The skill's description in the session's skill list | Auto | Listed as `claude-ship`: Claude Code skips a user skill whose directory is named `ship` (it reserves the name for a bundled command), so only `SKILL.md` is deployed apart, to `~/.claude/skills/claude-ship/` ([#350](https://github.com/DaSonOfPoseidon/claude-ship/issues/350)). Everything else stays in `~/.claude/skills/ship/`. Prose here still says "the ship skill" |
 | Step 0: check `CLAUDE_AUTONOMOUS` once per session | Auto, when committing or pushing in a GitHub repo | Driven by the skill and that `CLAUDE.md` |
 | Commit on its own, then review, push, `@codex review` and triage, at most 3 rounds | Opt-in: `CLAUDE_AUTONOMOUS` `true` | Otherwise Claude asks before committing |
 | Codex triage by the outcome table (SKILL.md › Triage): rounds 1–2 fix P0–P2; a P3 is fixed only when the same round fixes a P0–P2, else filed; round 3 files P2/P3 and asks about P0/P1 | Opt-in, every Codex round | Codex's findings only (the gate's own P3s are always filed). The rule lives in the skill, so every opted-in repo gets it |
@@ -128,7 +128,7 @@ twice) and the branch diff.
 
 | When | Source | Content |
 |---|---|---|
-| Session start | Claude Code itself | The `ship` skill's description (see #350) and the `ship-*` agents' descriptions |
+| Session start | Claude Code itself | The `claude-ship` skill's description (the `ship` skill, see #350) and the `ship-*` agents' descriptions |
 | Each prompt in plan mode, once per session and repo | `orchestrate-hint.sh` | The orchestrated or local loop hint |
 | Each blocked tool call | `review-gate.sh`, on stderr | Why it blocked, and the findings with their confidence |
 | After each Write, Edit and MultiEdit | `lint.sh hook` | Lint hits (block feedback or context) |
@@ -168,7 +168,7 @@ In order; each step needs the one before it.
   issues. Docs-only changes get a Haiku claims check. Prompts are the `hooks/review-*.md` files, built by `hooks/review-lib.sh`. A change to a prompt, model or flag comes with a
   before/after `tests/evals/run.sh` result (seeded-bug cases; it costs tokens, so it runs by hand, not in CI;
   [`docs/gate.md`](docs/gate.md#changing-prompts-or-models)).
-- `skills/ship/`: the `ship` skill (bootstrap a repo, request Codex reviews, triage by the outcome table,
+- `skills/claude-ship/SKILL.md` and `skills/ship/`: the `ship` skill, listed as `claude-ship` (bootstrap a repo, request Codex reviews, triage by the outcome table,
   at most 3 rounds), its helper scripts, and the templates a bootstrap copies into a repo.
 - `skills/ship/filing.md`: when a session files an issue unasked (a bug in claude-ship's tooling, an agent that didn't
   follow its instructions, a bug in the project outside the task), how, and where. Installed with the skill, so any
@@ -312,7 +312,7 @@ generated/*    skip
 ## Install
 
 ```sh
-./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh), writes the git hook stubs in ~/.claude/git-hooks, fetches shfmt into ~/.claude/bin, registers the gate in /etc/claude-code/managed-settings.d, removes the hooks and ship agents main has dropped, and sets the immutable flag (chattr +i) on all of it
+./install.sh   # deploys origin/main into ~/.claude/hooks, ~/.claude/agents/ship-*.md and ~/.claude/skills/ship (with codex-status.sh) and ~/.claude/skills/claude-ship (the skill's SKILL.md), writes the git hook stubs in ~/.claude/git-hooks, fetches shfmt into ~/.claude/bin, registers the gate in /etc/claude-code/managed-settings.d, removes the hooks and ship agents main has dropped, and sets the immutable flag (chattr +i) on all of it
 ```
 
 `./install.sh` also sets git's global `core.hooksPath` to `~/.claude/git-hooks` when it is unset (any other value is left

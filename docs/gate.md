@@ -534,12 +534,12 @@ out of reach of any command Claude runs, without relying on how the command is s
   machine-wide while the handler it names is per user (`~/.claude/hooks/review-gate.sh`, as in the README's snippet), so
   on a machine with other Claude Code users each of them needs the gate installed, or their tool calls block (the hook
   fails closed); a single-user machine, which this is built for, is unaffected.
-- **The flag.** After deploying it runs `chattr +i` on each file in `hooks/`, `skills/ship` and `git-hooks`
+- **The flag.** After deploying it runs `chattr +i` on each file in `hooks/`, `skills/ship`, `skills/claude-ship` and `git-hooks`
   (recursively), `agents/ship-*.md`, `bin/shfmt`, the drop-in, `managed-settings.d` and the managed directory
   itself (so no other policy file can be added; the directory's other files are neither lifted nor flagged), then checks each with
   `lsattr`. A path that isn't flagged is a warning naming it, and makes the exit 1 when running as root (as another user the flag
   can't be set, which is no fault of the install). Without `chattr` or `lsattr` it warns once and goes on.
-- **Reinstalls.** Before it writes anything (the `rm -rf` of `skills/ship` included), `install.sh` lifts the flag on every
+- **Reinstalls.** Before it writes anything (the `rm -rf` of `skills/ship` and `skills/claude-ship` included), `install.sh` lifts the flag on every
   one of those paths that exists, and stops with nothing changed when one stays flagged (chattr needs root), so an
   install is never half done. Between runs only the user lifts a flag: `! sudo chattr -i <path>`, then edit.
 - **The order.** shfmt is fetched and run first, and then the template is validated, both before anything installed is

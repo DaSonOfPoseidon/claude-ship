@@ -38,7 +38,7 @@ Codex's PR review and the pre-push review gate both follow this section. Rate ev
   bypasses it without root and without the `chattr` the gate denies.
 
 How each finding is handled depends on its priority and on which review found it: the outcome table in
-`skills/ship/SKILL.md` › Triage.
+`skills/claude-ship/SKILL.md` › Triage.
 
 Every finding needs a concrete failure scenario (input or state → wrong result). Don't flag style, naming,
 or anything CI already checks (shellcheck, actionlint).
