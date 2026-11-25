@@ -239,7 +239,7 @@ while IFS=' ' read -r lref lsha rref rsha extra || [ -n "$lref$lsha$rref$rsha" ]
 	if [ -e "$state/$commit.pass" ] || [ -e "$state/$commit.waived" ]; then
 		continue
 	fi
-	refuse "$short ($rref) has no passing review. Run a plain \`git push\` (or \`cd <dir> && git push\`) on its own so the review gate reviews HEAD first. Don't skip this check (\`--no-verify\`, \`core.hooksPath\`); if a review is wrong, ask the user to waive it."
+	refuse "$short ($rref) has no passing review. The usual cause is that the push wasn't alone in its Bash call (a command before it, \`&&\` or \`;\`) or ran from a script, so the review gate never reviewed it; the branch's upstream is not the cause. Run a plain \`git push\` (or \`cd <dir> && git push\`) on its own, with nothing before it, so the review gate reviews HEAD first. Don't skip this check (\`--no-verify\`, \`core.hooksPath\`); if a review is wrong, ask the user to waive it."
 done <"$saved"
 
 run_own "$@"

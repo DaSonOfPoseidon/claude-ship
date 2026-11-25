@@ -163,7 +163,7 @@ In order; each step needs the one before it.
 ## Where it lives
 
 - `hooks/review-gate.sh`: a PreToolUse hook that blocks a canonical `git push` until a headless
-  review passes (any other push is refused by the pre-push check in `hooks/git-hook.sh`). A Sonnet finder
+  review passes (a `git push` that shares its call with other commands is blocked up front when HEAD has no pass; any other push is refused by the pre-push check in `hooks/git-hook.sh`). A Sonnet finder
   reports P0–P3 findings and a Haiku verifier checks them; confirmed P0–P2 block, and confirmed P3s are filed as
   issues. Docs-only changes get a Haiku claims check. Prompts are the `hooks/review-*.md` files, built by `hooks/review-lib.sh`. A change to a prompt, model or flag comes with a
   before/after `tests/evals/run.sh` result (seeded-bug cases; it costs tokens, so it runs by hand, not in CI;

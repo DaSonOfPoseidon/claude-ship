@@ -754,6 +754,93 @@ expect 0 'printf x >> ~/.gitconfig; git push origin HEAD'
 expect 0 'cat x >> ~/.config/git/config; git push origin HEAD'
 expect 0 'cat x >> /etc/gitconfig; git push'
 
+# A `git push` that shares its Bash call with other commands isn't a canonical push, so the gate can't review it, and the
+# pre-push check refuses it unless HEAD already has a pass (claude-ship #349). In an opted-in repo whose HEAD has no pass the
+# gate blocks it up front, saying to run the push alone; with a pass or a waiver, outside an opted-in repo, or when the
+# text only mentions a push, it passes as before.
+expect_msg() {
+	expect "$1" "$3"
+	if [ "$1" = 2 ] && ! grep -q "$2" "$tmp/err"; then
+		echo "FAIL (stderr lacks '$2'): $3"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+}
+together='together with other commands'
+fixture https://github.com/acme/app.git nopass
+expect_msg 2 "$together" 'git status -sb | head -3 && git push -u origin feat'
+expect_msg 2 "$together" 'git branch --unset-upstream && git push'
+expect_msg 2 "$together" 'git config branch.feat.remote origin && git push'
+expect_msg 2 "$together" "echo x; cd $repo && git status --short | head -3; git push origin HEAD"
+expect_msg 2 "$together" 'git push 2>&1 | tail -15; git rev-parse HEAD'
+expect_msg 2 "$together" '(git status; git push origin HEAD)'
+expect_msg 2 "$together" 'git commit -qm x && git push origin HEAD'
+expect_msg 2 "$together" "cd $repo && echo x && git push origin HEAD"
+expect_msg 2 "$together" 'echo x; git push'
+expect_msg 2 "$together" 'git push origin HEAD | tail -3 && git status'
+expect_msg 2 "$together" 'git push origin HEAD; echo done'
+expect_msg 2 "$together" 'git status && git -C . push origin HEAD'
+expect_msg 2 "$together" 'git status
+git push origin HEAD'
+expect_msg 2 "$together" 'true || git push origin HEAD'
+expect_msg 2 'Run the push alone' 'git status && git push'
+# The message says nothing in the call ran.
+expect_msg 2 'Nothing in it ran' 'git status && git push'
+# The push shapes that already block keep their own messages.
+expect_msg 2 'more than the push' 'git push origin HEAD > out.txt'
+expect_msg 2 'more than the push' 'FOO=1 git push origin HEAD'
+expect_msg 2 'more than the push' 'git push origin HEAD &'
+expect_msg 2 'more than the push' 'git push origin HEAD | sh'
+# A `gh api` write next to a push: the api block decides.
+expect_msg 2 'gh api' 'gh api -X DELETE repos/acme/app/git/refs/heads/x && git push'
+# Text that only mentions a push is data, and a command that isn't a push is not the gate's.
+expect 0 'echo "git push"'
+expect 0 'cat <<EOT
+git push origin HEAD
+EOT'
+expect 0 'sh -c "git push"'
+expect 0 'git log --grep push'
+expect 0 'git status && git log --grep "git push"'
+expect 0 'echo x; git status'
+# The pass or the waiver of HEAD lets the same commands through.
+fixture https://github.com/acme/app.git
+expect 0 'git status -sb | head -3 && git push -u origin feat'
+expect 0 'git push 2>&1 | tail -15; git rev-parse HEAD'
+expect 0 '(git status; git push origin HEAD)'
+fixture https://github.com/acme/app.git nopass
+printf 'ok\n' >"$repo/.git/review-gate/$(git -C "$repo" rev-parse HEAD).waived"
+expect 0 'git status && git push origin HEAD'
+# A repo that isn't opted in, or whose opt-in can't be read, is left to the pre-push check.
+mkdir -p "$tmp/offbin" "$tmp/errbin"
+printf '#!/bin/sh\necho false\n' >"$tmp/offbin/gh"
+printf '#!/bin/sh\necho "gh: HTTP 502" >&2\nexit 1\n' >"$tmp/errbin/gh"
+chmod +x "$tmp/offbin/gh" "$tmp/errbin/gh"
+fixture https://github.com/acme/app.git nopass
+for b in offbin errbin; do
+	jq -nc --arg c 'git status && git push origin HEAD' --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH=$tmp/$b:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	if [ "$rc" != 0 ]; then
+		echo "FAIL (exit $rc, want 0, $b): a compound push outside an opted-in repo"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+done
+# Not a git repo.
+repo=$tmp/notarepo
+mkdir -p "$repo"
+expect 0 'git status && git push origin HEAD'
+# The repo is the one a leading `cd` names (the only one), else the session's directory.
+fixture https://github.com/acme/app.git nopass
+unpassed=$repo
+fixture https://github.com/acme/app.git
+passed=$repo
+repo=$passed
+expect_msg 2 "$together" "cd $unpassed && git status; git push origin HEAD"
+repo=$unpassed
+expect 0 "cd $passed && git status; git push origin HEAD"
+expect_msg 2 "$together" 'git status; git push origin HEAD'
+
 # A fetch URL that isn't the pushed repo, even one that isn't GitHub's, supplies the review's base and rules.
 fixture /tmp/base.git
 git -C "$repo" remote set-url --add origin https://github.com/acme/app.git
@@ -838,13 +925,15 @@ expect_review 0 'gh pr create --title t --body "x"' none
 expect_review 0 'gh pr create --title t --body "see git push"' none
 # A real push still gets its review.
 expect_review 2 'git push origin HEAD' started
-expect_review 0 'gh pr comment 7 --body "x" && git push origin HEAD' none
+# A push that shares its call with another command isn't reviewed, and blocks up front instead (#349, below).
+expect_review 2 'gh pr comment 7 --body "x" && git push origin HEAD' none
 
-# The gate starts a review only for a canonical push (docs/gate.md › Command reading); every other command passes, whatever
-# its text says, because the pre-push check (hooks/git-hook.sh) refuses an unreviewed push however it started. None of
-# these starts a review, though HEAD has no pass.
-expect_review 0 'git add -A && git commit -qm x && git push' none
-expect_review 0 'git add -A && git commit -qm x && git push origin HEAD 2>&1 | tail -5' none
+# The gate starts a review only for a canonical push (docs/gate.md › Command reading). A `git push` command that shares its call
+# with others starts none either, and blocks up front while HEAD has no pass: the pre-push check (hooks/git-hook.sh) would
+# refuse it, after the commands before it ran (#349). Every other command passes, whatever its text says, because that check
+# refuses an unreviewed push however it started. None of these starts a review, though HEAD has no pass.
+expect_review 2 'git add -A && git commit -qm x && git push' none
+expect_review 2 'git add -A && git commit -qm x && git push origin HEAD 2>&1 | tail -5' none
 expect_review 0 'cd /tmp && git add -A && git push' none
 expect_review 0 '(cd x; git push)' none
 expect_review 0 "bash -c 'git push'" none
@@ -856,18 +945,18 @@ expect_review 0 'gh pr create --fill' none
 expect_review 0 'timeout 60 git push' none
 expect_review 0 'sudo git push' none
 expect_review 0 'env git push' none
-expect_review 0 'time git push' none
+expect_review 2 'time git push' none
 expect_review 0 'flock /tmp/l git push' none
 expect_review 0 'ssh host git push' none
 expect_review 0 'find . -name x -exec git push \;' none
 expect_review 0 'echo "git push" | sh' none
-expect_review 0 'git push origin HEAD; echo done' none
-expect_review 0 'git push origin HEAD && git status' none
-expect_review 0 'git status && git push origin HEAD' none
-expect_review 0 'true || git push origin HEAD' none
-expect_review 0 'if true; then git push origin HEAD; fi' none
-expect_review 0 'f(){ git push; }; f' none
-expect_review 0 'cat x | git push origin HEAD' none
+expect_review 2 'git push origin HEAD; echo done' none
+expect_review 2 'git push origin HEAD && git status' none
+expect_review 2 'git status && git push origin HEAD' none
+expect_review 2 'true || git push origin HEAD' none
+expect_review 2 'if true; then git push origin HEAD; fi' none
+expect_review 2 'f(){ git push; }; f' none
+expect_review 2 'cat x | git push origin HEAD' none
 expect_review 0 'x=git; $x push' none
 expect_review 0 '$(echo git) push' none
 # A heredoc written to a file, whose body mentions a push or a PR (claude-ship #193), and a word shaped like an assignment

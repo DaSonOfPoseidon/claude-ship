@@ -112,7 +112,9 @@ review finds a new class.
   push: a leading `cd <dir> &&`, harmless redirects (`2>&1`, `/dev/null`) and trailing pipes into read-only
   filters (`tail`, `head`, `cat`, `grep`). A longer chain (`git commit && git push`, a push behind `sh -c`, `eval` or a
   script) is not something the gate reads: it is not a canonical push, so the pre-push check judges the commit that
-  really gets pushed. Run the commit in its own command first anyway; a chain is only refused later. A `cd` or `git -C`
+  really gets pushed. Run the commit in its own command first anyway; a chain is refused later, after the commands before the
+  push ran, unless the gate can read the push in it and blocks it up front when HEAD has no pass (claude-ship #349: a refusal
+  that late was blamed on the branch's upstream, and the cause was the chain). A `cd` or `git -C`
   that may not run (`true || cd /tmp; git push`) is such a chain, so the gate follows a directory only for a canonical
   push, where the `cd` surely runs first (claude-ship #135).
 - **A path is compared as text before it is resolved.** The tamper check matched `~/.claude/hooks` as a word, so
