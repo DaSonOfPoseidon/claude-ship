@@ -58,7 +58,7 @@ twice) and the branch diff.
 
 | Feature | Trigger | Scope |
 |---|---|---|
-| Runs the repo's own `.git/hooks/<name>` first (git stops reading it once `core.hooksPath` is set) | Auto | Every repo, everyone's git |
+| Chains to the repo's own `.git/hooks/<name>` (git stops reading it once `core.hooksPath` is set); for Claude's commits and pushes it runs after the lint or the review check passes | Auto | Every repo, everyone's git |
 | `pre-push`: refuses a push of a commit with no `.pass` or `.waived` in the review state, however the push started (`gh pr create` included) | Opt-in: the destination repo has `CLAUDE_AUTONOMOUS` `true` | Claude's pushes only |
 | `pre-commit`: lints the staged lines and refuses the commit on an error-level hit | Auto | Claude's commits, every repo |
 | The user's own pushes and commits | Never checked | A command the user runs with `!` counts as Claude's |
