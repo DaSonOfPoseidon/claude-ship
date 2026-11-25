@@ -310,5 +310,22 @@ if [ -e "$state/p3-pending" ]; then
 	fail=1
 fi
 
+# A push to the default branch has no PR to wait for and its code is live: its P3s are filed now, and nothing is pending.
+fixture
+git -C "$repo" branch -m feat master
+p3 z.sh 3 'novel thing' | jq -s . >"$tmp/findings.json"
+push FINDINGS="$tmp/findings.json"
+[ "$rc" = 0 ] || {
+	echo "FAIL (default branch): exit $rc (want 0)"
+	sed 's/^/  /' "$tmp/err"
+	fail=1
+}
+expect_filed default-branch 'z.sh: novel thing'
+errs default-branch-filed 'review-gate: filed P3 https://github.com/acme/app/issues/99'
+if [ -e "$state/p3-pending" ]; then
+	echo "FAIL (default branch): the gate wrote pending state"
+	fail=1
+fi
+
 [ "$fail" = 0 ] && echo "gate-p3: ok"
 exit "$fail"

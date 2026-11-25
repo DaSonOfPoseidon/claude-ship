@@ -284,7 +284,7 @@ for the branch (in `.git/review-gate/p3-pending/`), Claude fixes the relevant, e
 (the skill's step 2, the implementer's rule: never a commit just for them), and `p3-pending.sh file <pr>` files what is left
 when the PR is done: the skill's step 5, the orchestrator before it merges, or `worktree-sweep.sh` for a branch merged by
 hand. A P3 whose code a later commit changed is dropped, and one that is already an issue is skipped. A detached HEAD has no
-branch to keep a P3 for, so its P3s are filed at once.
+branch to keep a P3 for, and a push to the default branch has no PR to wait for, so their P3s are filed at once.
 
 P3 issues (the gate's once the PR is done, and Codex findings the skill defers) are filed by `hooks/p3-issue.sh` with
 `CLAUDE_P3_LABELS` (default `review:p3`) plus labels by the finding's file, from

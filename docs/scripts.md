@@ -521,7 +521,7 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
   repo doesn't have are dropped, and one that differs from a repo label only in case is filed under the repo's
   spelling. The type fallback goes by the labels that will actually be applied.
 - **Milestone**, only with `CLAUDE_P3_MILESTONE=auto`: the branch's open PR's, else the one milestone of the
-  issues its commit subjects fix (`fixes #N`), else none. The gate (for a detached HEAD's P3s) calls `p3-issue.sh <owner/repo>
+  issues its commit subjects fix (`fixes #N`), else none. The gate (for the P3s of a detached HEAD or a push to the default branch) calls `p3-issue.sh <owner/repo>
   <finding.json>` from the pushing checkout, so the branch is that checkout's. An optional third argument, the PR number, reads
   both from GitHub instead (`gh pr view`: the PR's own milestone, else the one milestone of the issues named by
   `fixes/closes/resolves #N` in its commits' messages, subject and body), so it gives the same answer from any
@@ -545,8 +545,10 @@ are in `docs/gate.md` › Reviewer pipeline; the reasons for the script's own ch
   (which runs in the pushing checkout), `list` (in a linked worktree), and `file` (from the orchestrator's main checkout)
   read one file. The file name is the branch under the plan files' encoding (`%` → `%25`, `+` → `%2B`, `/` → `+`), so no two
   branches share it (pitfalls: an encoding that joins path parts).
-- **`add` keeps the first entry for a key.** A P3 found again on a later push isn't replaced, so its `head` stays the commit
-  that first reported it, and the later commits' changes to its region still count.
+- **`add` replaces the entry for a key.** A P3 found again on a later push gets that push's `head` and line. The reviewer is
+  told to report a pending P3 again when the diff changes code near it and the problem is still there, and the refreshed head
+  makes `file` count only the changes made after that report; an entry nobody reported again keeps its old head, so a later
+  change to its region drops it.
 - **`file` asks GitHub once for the PR** (`gh pr view <n> --json headRefName,headRefOid,isCrossRepository`) and uses the head
   branch and commit from it, never the checkout's: a branch name alone also matches a fork's PR. A fork's PR is refused. The PR's
   head commit is fetched from `refs/pull/<n>/head` when the clone lacks it (a merged PR's branch is gone from origin).
@@ -555,7 +557,8 @@ are in `docs/gate.md` › Reviewer pipeline; the reasons for the script's own ch
   line in `head`'s numbering, matched against the hunks of `git diff -U0 --no-renames <head> <PR head>` (a pure insertion
   counts at the line it follows), or the file is gone. Anything that stops the comparison (the entry's commit or the PR's head
   unreadable, a diff that fails) drops nothing and the P3 is filed: a P3 filed in error costs an issue, one lost costs the
-  finding. The pathspec is `:(literal)<file>`, so a file name with glob characters is read as itself.
+  finding. The pathspec is `:(top,literal)<file>`: `top` anchors it at the repository root, as the finding's path is, whatever directory
+  `file` runs from, and `literal` reads a file name with glob characters as itself.
 - **Failure keeps what failed.** Entries that fail to file (and an unreadable line) are written back, and so is anything the
   gate added while `file` ran (the lines it never read). Exit 1 says some failed; the rerun files only those.
 - **It shares the gate's dedupe**, not a copy: `p3_label_of`, `open_dup` and `read_open_p3s` live in `hooks/review-lib.sh`,

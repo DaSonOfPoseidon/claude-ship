@@ -178,10 +178,16 @@ check "entry body" "$(jq -r 'select(.file == "a.txt") | .body' "$pf")" "Found by
 first problem
 
 Failure scenario: fails when x"
-# The same P3 again is pending once, and a later head doesn't replace the first.
+# The same P3 again is pending once, and the later report refreshes its head and line: the reviewer reports a pending P3
+# again when a later push changed code near it and the problem is still there, and `file` must then not drop it as changed.
 add a.txt 10 'first problem' abc123
 check "add twice: lines" "$(wc -l <"$pf" | tr -d ' ')" 2
-check "add twice: head kept" "$(jq -r 'select(.file == "a.txt") | .head' "$pf")" "$h1"
+check "add twice: head refreshed" "$(jq -r 'select(.file == "a.txt") | .head' "$pf")" abc123
+add a.txt 12 'first problem' def456
+check "add thrice: lines" "$(wc -l <"$pf" | tr -d ' ')" 2
+check "add thrice: line refreshed" "$(jq -r 'select(.file == "a.txt") | .line' "$pf")" 12
+check "add thrice: body refreshed" "$(jq -r 'select(.file == "a.txt") | .body' "$pf" | head -1)" "Found by the pre-push review gate (P3, verified) at \`a.txt:12\` in def456."
+check "add thrice: the other entry kept" "$(jq -r 'select(.file == "b.txt") | .head' "$pf")" "$h1"
 # A branch given by name, and the list of another branch.
 finding c.txt 3 'other' >"$tmp/finding.json"
 (cd "$repo" && sh "$tmp/hooks/p3-pending.sh" add "$tmp/finding.json" other/branch)
@@ -252,6 +258,22 @@ grep -qF 'pr view 12 -R acme/app' "$tmp/gh-log" || {
 	echo "FAIL (file, other branch): filed $(filed_log)"
 	fail=1
 }
+
+# From a subdirectory of the repository the finding's path is still the repository's: a P3 whose line a later commit
+# changed is dropped, not filed.
+fixture
+add a.txt 10 'a10 the line'
+add b.txt 5 'b5 file untouched'
+edit_line a.txt 10 'changed ten'
+commit "fix it"
+c2=$(g rev-parse --short HEAD)
+prjson
+mkdir -p "$repo/sub/dir"
+PP_DIR=$repo/sub/dir pp file 12
+check "subdirectory: status" "$rc" 0
+check "subdirectory: output" "$(sed 's#https://github.com/acme/app/issues/[0-9]*#<url>#' "$tmp/out")" "dropped a.txt:10 (changed in $c2)
+filed <url>"
+PP_DIR=
 
 # A later commit changes a.txt:10, deletes gone.txt and inserts after c.txt:20. Entries whose region it touched are
 # dropped; the rest are filed, with the PR's number, and recorded in the P3 file.

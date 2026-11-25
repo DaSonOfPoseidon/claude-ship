@@ -8,6 +8,7 @@ tests/git-hook.sh        area:gate
 tests/evals/*            area:gate
 tests/lib/*              area:gate
 tests/p3-issue.sh        area:gate
+tests/p3-pending.sh      area:gate
 tests/explorer-bash.sh   area:skill
 skills/*                 area:skill
 agents/*                 area:skill

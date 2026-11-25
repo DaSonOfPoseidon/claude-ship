@@ -5,7 +5,8 @@
 # live, so a P3 found in it is no issue yet. Claude fixes the relevant, easy ones in a commit it makes for the PR anyway,
 # and what is still pending when the PR is done is filed once, by `file`.
 #
-#   p3-pending.sh add <finding.json> [<branch>]   keep a P3 pending (the review gate; the branch defaults to the current one)
+#   p3-pending.sh add <finding.json> [<branch>]   keep a P3 pending, or refresh it when it is (the review gate; the branch
+#                                                 defaults to the current one)
 #   p3-pending.sh list [<branch>]                 the branch's pending P3s, `<file>:<line> <summary>` and its failure scenario
 #   p3-pending.sh titles [<branch>]               their titles, one per line (the reviewer's "already pending" list)
 #   p3-pending.sh file <pr> [<owner/repo>]        file what is still pending for the PR's head branch, once
@@ -78,8 +79,13 @@ add)
 		die "can't read $2"
 	pf=$(pfile_of "$branch") || exit 1
 	mkdir -p "$pdir" || die "can't create $pdir"
-	# One entry per key: a P3 found again on a later push is pending once.
-	if [ -f "$pf" ] && jq -r .key "$pf" 2>/dev/null | grep -qxF "$key"; then
+	# One entry per key: a P3 found again on a later push is pending once, and the later report replaces the earlier one. The
+	# reviewer reports a pending P3 again when a later push changed code near it and the problem is still there, and `file`
+	# drops a P3 whose region changed after its head, so the refreshed head and line keep it from being dropped.
+	if [ -f "$pf" ]; then
+		grep -v "^{\"key\":\"$key\"," "$pf" >"$pf.new" || [ $? -eq 1 ] || die "can't read $pf"
+		printf '%s\n' "$entry" >>"$pf.new" || die "can't write $pf.new"
+		mv -f "$pf.new" "$pf" || die "can't write $pf"
 		exit 0
 	fi
 	printf '%s\n' "$entry" >>"$pf" || die "can't write $pf"
@@ -173,7 +179,7 @@ region_changed() {
 	if git cat-file -e "$3:$1" 2>/dev/null && ! git cat-file -e "$prhead:$1" 2>/dev/null; then
 		return 0
 	fi
-	rc_hunks=$(git diff -U0 --no-color --no-renames "$3" "$prhead" -- ":(literal)$1" 2>/dev/null) || return 1
+	rc_hunks=$(git diff -U0 --no-color --no-renames "$3" "$prhead" -- ":(top,literal)$1" 2>/dev/null) || return 1
 	printf '%s\n' "$rc_hunks" | awk -v l="$2" '
 		/^@@ / {
 			split($2, o, ",")
@@ -207,7 +213,7 @@ while IFS= read -r line; do
 	ehead=$(printf '%s\n' "$line" | jq -r .head)
 
 	if [ -n "$havehead" ] && git cat-file -e "$ehead^{commit}" 2>/dev/null && region_changed "$efile" "$eline" "$ehead"; then
-		sha=$(git log -n 1 --format=%h "$ehead..$prhead" -- ":(literal)$efile" 2>/dev/null) || sha=
+		sha=$(git log -n 1 --format=%h "$ehead..$prhead" -- ":(top,literal)$efile" 2>/dev/null) || sha=
 		[ -n "$sha" ] || sha=$(printf '%s' "$prhead" | cut -c1-7)
 		echo "dropped $efile:$eline (changed in $sha)"
 		continue

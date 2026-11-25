@@ -2050,7 +2050,8 @@ if ! jq -e '.structured_output.findings' "$out" >/dev/null 2>&1; then
 	fi
 	# The branch's pending P3s, so the reviewer doesn't report them again. They decide nothing, so a failed read warns.
 	pending_list=
-	if pl_branch=$(git symbolic-ref -q --short HEAD) && ! pending_list=$(sh "$dir/p3-pending.sh" titles "$pl_branch"); then
+	if pl_branch=$(git symbolic-ref -q --short HEAD) && [ "$pl_branch" != "$main" ] &&
+		! pending_list=$(sh "$dir/p3-pending.sh" titles "$pl_branch"); then
 		pending_list=
 		echo "review-gate: couldn't read the pending P3s of $pl_branch, so the reviewer may report them again." >&2
 	fi
@@ -2121,8 +2122,10 @@ printf '%s' "$findings" | jq -r "$confidence_jq"'.[] |
 
 # Confirmed P3s are kept pending for the branch, once each (claude-ship #352): the code on a PR isn't live, so a P3 in it
 # is no issue yet. Claude fixes the relevant, easy ones in a commit it makes for the PR anyway, and p3-pending.sh files
-# what is left when the PR is done. A detached HEAD has no branch to keep one for, so its P3s are filed now.
+# what is left when the PR is done. A detached HEAD has no branch to keep one for, and a push to the default branch has no
+# PR to wait for and its code is live, so their P3s are filed now.
 p3_branch=$(git symbolic-ref -q --short HEAD) || p3_branch=
+[ "$p3_branch" != "$main" ] || p3_branch=
 printf '%s' "$findings" | jq -c '.[] | select(.severity == "P3" and (.rejected | not))' | while IFS= read -r f; do
 	title=$(printf '%s' "$f" | jq -r '"\(.file): \(.summary)"' | cut -c1-120)
 	key=$(printf '%s' "$title" | cksum | cut -d' ' -f1)

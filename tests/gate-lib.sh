@@ -335,7 +335,7 @@ kind=code checklist='## Reviews
 
 - fp1' threads='' scoped='' base='' filed_list='' pending_list='z.sh: novel thing'
 same pending
-for text in "Already pending for this branch; don't report these again" 'z.sh: novel thing' 'Minor findings an earlier push of this branch already reported'; do
+for text in "Already pending for this branch; don't report these again unless the diff changes them" 'z.sh: novel thing' 'Minor findings an earlier push of this branch already reported' 'it again (the same title), so it stays pending'; do
 	grep -qF "$text" "$prompt" || {
 		echo "FAIL (pending): the gate's prompt lacks '$text'"
 		fail=1
