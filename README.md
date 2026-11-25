@@ -151,8 +151,8 @@ In order; each step needs the one before it.
 3. **Bootstrap.** While `AGENTS.md` has no `## Code Review Rules`, the gate blocks pushes there; the `ship` skill's bootstrap
    opens a `chore/review-setup` PR with them, the workflow caller and the pitfalls files. Merge that PR before step 4.
 4. **Branch protection.** Once the bootstrap PR has merged, require the `codex-review` status on the default branch, so a
-   merge waits for Codex. Earlier, the bootstrap PR could never get the status (the workflow caller isn't on the default
-   branch yet) and couldn't merge.
+   merge waits for Codex. Not earlier: Codex reports a clean review by editing a comment, which runs the default branch's
+   workflow (the caller isn't there yet), so the bootstrap PR would never get a passing status and couldn't merge.
 5. **Optional**, each on its own:
    - P3 issue labels: `CLAUDE_P3_LABELS`, `CLAUDE_P3_TYPE_LABEL`, `CLAUDE_P3_MILESTONE` and `.github/claude-ship/p3-labels`.
    - Lint tuning: `~/.claude/claude-ship/lint` for this install, `.github/claude-ship/lint` for a repo (Hygiene lint, below).
