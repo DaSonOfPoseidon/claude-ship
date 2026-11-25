@@ -149,8 +149,10 @@ In order; each step needs the one before it.
 2. **Opt a repo in.** `! gh variable set CLAUDE_AUTONOMOUS --body true -R <owner/repo>` (Per-repo opt-in, below). From then on
    pushes in that repo are reviewed and Claude commits on its own.
 3. **Bootstrap.** While `AGENTS.md` has no `## Code Review Rules`, the gate blocks pushes there; the `ship` skill's bootstrap
-   opens a `chore/review-setup` PR with them, the workflow caller and the pitfalls files.
-4. **Branch protection.** Require the `codex-review` status on the default branch, so a merge waits for Codex.
+   opens a `chore/review-setup` PR with them, the workflow caller and the pitfalls files. Merge that PR before step 4.
+4. **Branch protection.** Once the bootstrap PR has merged, require the `codex-review` status on the default branch, so a
+   merge waits for Codex. Earlier, the bootstrap PR could never get the status (the workflow caller isn't on the default
+   branch yet) and couldn't merge.
 5. **Optional**, each on its own:
    - P3 issue labels: `CLAUDE_P3_LABELS`, `CLAUDE_P3_TYPE_LABEL`, `CLAUDE_P3_MILESTONE` and `.github/claude-ship/p3-labels`.
    - Lint tuning: `~/.claude/claude-ship/lint` for this install, `.github/claude-ship/lint` for a repo (Hygiene lint, below).
