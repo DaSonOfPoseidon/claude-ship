@@ -217,7 +217,7 @@ Write | Edit | MultiEdit | NotebookEdit)
 	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq '\.claude/settings'; then
 		written=$(printf '%s' "$input" | jq -r '.tool_input | [.content, .new_string, (.edits // [] | .[].new_string)] | map(. // "") | join("\n")') || unreadable "text written"
 	fi
-	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|git-hooks/|settings|skills/ship/|agents/ship-|bin/|claude-ship(/|$))|\.git/review-gate(/|$)|^/etc/claude-code(/|$)" ||
+	if printf '%s\n%s\n' "$path" "$rpath" | grep -Eq "^$hn_re/\.claude/(hooks/|git-hooks/|settings|skills/(ship/|claude-ship(/|$))|agents/ship-|bin/|claude-ship(/|$))|\.git/review-gate(/|$)|^/etc/claude-code(/|$)" ||
 		printf '%s' "$written" | grep -q disableAllHooks; then
 		echo "Blocked: the review gate's script, prompts, settings and state are the user's to change." >&2
 		exit 2
@@ -301,7 +301,7 @@ fi
 # prot_res is the protected paths as a regex for jq, for a path already resolved (an absolute, folded one): the gate's files
 # under the home directory (the directories with or without the slash after them), `.git/review-gate` in any repo, and
 # /etc/claude-code, the managed settings directory the gate is registered in (claude-ship #189).
-prot_res="^$hn_re/\\.claude/((hooks|git-hooks|skills/ship|bin|claude-ship)(/|\$)|settings|agents/ship-)|/\\.git/review-gate(/|\$)|^/etc/claude-code(/|\$)"
+prot_res="^$hn_re/\\.claude/((hooks|git-hooks|skills/ship|skills/claude-ship|bin|claude-ship)(/|\$)|settings|agents/ship-)|/\\.git/review-gate(/|\$)|^/etc/claude-code(/|\$)"
 # narrow_res is the part of it a `cd` is followed for: the targets the immutable flag does not cover, the gate state, the
 # settings and the install's lint config, `~/.claude/claude-ship/` (docs/gate.md › Tamper protection).
 narrow_res="^$hn_re/\\.claude/(settings|claude-ship(/|\$))|/\\.git/review-gate(/|\$)"

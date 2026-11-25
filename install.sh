@@ -1,7 +1,8 @@
 #!/bin/sh
 # Deploys claude-ship's origin/main into ~/.claude: the gate, its prompts and the orchestrate hint (hooks/), the
 # ship agents (agents/) and the ship skill (skills/ship/, with the action's codex-status.sh, which only prints
-# the status outside GitHub Actions), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh, run first: a gate without shfmt blocks every Bash call, so a
+# the status outside GitHub Actions; its entry point SKILL.md is deployed apart, as skills/claude-ship/SKILL.md, because
+# Claude Code skips a skill directory named `ship`, #350), a pinned shfmt in bin/ (scripts/fetch-shfmt.sh, run first: a gate without shfmt blocks every Bash call, so a
 # failure there stops the install before anything is changed, #189), and the git hook
 # stubs in git-hooks/, which it points git's global core.hooksPath at when that is unset (any other value makes the exit
 # non-zero; docs/gate.md › Pre-push check). Only main
@@ -56,6 +57,7 @@ fi
 lock_list() {
 	for f in "$tmp"/hooks/*; do printf '1 %s\n' "$dest/hooks/${f##*/}"; done
 	printf 'r %s\n' "$dest/skills/ship"
+	printf 'r %s\n' "$dest/skills/claude-ship"
 	for f in "$tmp"/agents/ship-*.md; do printf '1 %s\n' "$dest/agents/${f##*/}"; done
 	# The files main has dropped (see $tmp/stale below): flagged by an earlier install, so lifted before they are removed.
 	while IFS= read -r f; do printf '1 %s\n' "$f"; done <"$tmp/stale"
@@ -127,7 +129,7 @@ if git -C "$repo" log --no-renames --format= --name-only origin/main -- hooks ag
 else
 	echo "install: warning: couldn't read origin/main's history, so files main has dropped weren't removed." >&2
 fi
-# Lift the flags on everything this script is about to write (also the rm -rf of skills/ship below), and check that it
+# Lift the flags on everything this script is about to write (also the rm -rf of skills/ship and skills/claude-ship below), and check that it
 # worked: a flag that can't be lifted (not root) must stop the install before the first write, not half way through it.
 if command -v chattr >/dev/null 2>&1 && command -v lsattr >/dev/null 2>&1; then have_chattr=1; fi
 if [ -n "$have_chattr" ]; then
@@ -185,8 +187,12 @@ while IFS= read -r f; do
 	rm -f "$f"
 	echo "Removed $f (no longer in origin/main)."
 done <"$tmp/stale"
-rm -rf "$dest/skills/ship"
+# Claude Code skips a skill directory named `ship` (it reserves the name for a bundled command, #350), so the skill's entry
+# point goes to skills/claude-ship/ and the rest stays in skills/ship/, where every script and doc path points. Each is
+# replaced whole, so the SKILL.md an older install left in skills/ship goes with it.
+rm -rf "$dest/skills/ship" "$dest/skills/claude-ship"
 cp -R "$tmp/skills/ship" "$dest/skills/ship"
+cp -R "$tmp/skills/claude-ship" "$dest/skills/claude-ship"
 cp "$tmp/scripts/codex-status.sh" "$dest/skills/ship/codex-status.sh"
 # The gate reads every Bash command with shfmt (#135). Copied beside its place and moved in, so it is never half-written.
 cp "$tmp/shfmt" "$dest/bin/.shfmt.new"

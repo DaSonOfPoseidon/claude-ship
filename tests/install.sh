@@ -127,7 +127,7 @@ if ! GIT_CONFIG_GLOBAL="$tmp/gitconfig-main" CLAUDE_HOME="$tmp/dest" sh "$tmp/ch
 	sed 's/^/  /' "$tmp/out"
 	fail=1
 fi
-for f in main-installer-ran bin/shfmt hooks/review-gate.sh hooks/review-lib.sh hooks/orchestrate-hint.sh skills/ship/SKILL.md \
+for f in main-installer-ran bin/shfmt hooks/review-gate.sh hooks/review-lib.sh hooks/orchestrate-hint.sh skills/claude-ship/SKILL.md \
 	skills/ship/orchestrate.md skills/ship/filing.md skills/ship/codex-status.sh agents/ship-explorer.md agents/ship-implementer.md \
 	agents/ship-codex.md agents/ship-lint-author.md hooks/codex-bash.sh hooks/pitfall-lint.sh agents/mine.md; do
 	[ -e "$tmp/dest/$f" ] || {
@@ -138,6 +138,21 @@ done
 # No ship agent runs on Opus (AGENTS.md › Project invariants), and the lint author is a Haiku agent in its own worktree
 # (claude-ship #313): its frontmatter keeps it cheap and keeps its commits off every other checkout.
 fm() { awk -v key="$2" '/^---[ \t]*$/ { n++; next } n == 1 && index($0, key ": ") == 1 { sub(/^[^:]*:[ \t]*/, ""); print; exit }' "$1"; }
+# Claude Code skips a skill directory named `ship` (it reserves the name for a bundled command, claude-ship #350), so the
+# skill's entry point is deployed as skills/claude-ship/SKILL.md, named claude-ship, and only that file: the scripts and
+# the other files stay under skills/ship/, and SKILL.md isn't left there.
+[ "$(fm "$tmp/dest/skills/claude-ship/SKILL.md" name)" = claude-ship ] || {
+	echo "FAIL: skills/claude-ship/SKILL.md isn't named claude-ship"
+	fail=1
+}
+[ ! -e "$tmp/dest/skills/ship/SKILL.md" ] || {
+	echo "FAIL: skills/ship/SKILL.md was deployed (Claude Code would skip it, and the old name would linger)"
+	fail=1
+}
+[ "$(ls "$tmp/dest/skills/claude-ship")" = SKILL.md ] || {
+	echo "FAIL: skills/claude-ship holds more than SKILL.md"
+	fail=1
+}
 for a in "$root"/agents/ship-*.md; do
 	case $(fm "$a" model) in
 	sonnet | haiku) ;;
@@ -500,7 +515,7 @@ has agent-hook-missing "ship-noexec names ~/.claude/hooks/not-exec.sh, which isn
 lacks agent-hook-missing "ship-explorer names"
 lacks agent-hook-missing "ship-codex names"
 has agent-hook-missing "The gate is registered"
-[ -e "$tmp/case-agent-hook-missing/skills/ship/SKILL.md" ] || {
+[ -e "$tmp/case-agent-hook-missing/skills/claude-ship/SKILL.md" ] || {
 	echo "FAIL: agent-hook-missing: the skill wasn't deployed"
 	fail=1
 }
@@ -831,7 +846,7 @@ flag_install fresh "$fd" "$fm"
 expect fresh 0 0
 for f in "$root"/hooks/*; do want_flagged fresh "$fd/hooks/${f##*/}"; done
 for f in "$root"/agents/ship-*.md; do want_flagged fresh "$fd/agents/${f##*/}"; done
-for f in skills/ship skills/ship/SKILL.md skills/ship/codex-status.sh bin/shfmt git-hooks git-hooks/pre-push git-hooks/pre-commit; do
+for f in skills/ship skills/ship/orchestrate.md skills/ship/codex-status.sh skills/claude-ship skills/claude-ship/SKILL.md bin/shfmt git-hooks git-hooks/pre-push git-hooks/pre-commit; do
 	want_flagged fresh "$fd/$f"
 done
 for f in managed-settings.d managed-settings.d/claude-ship.json; do want_flagged fresh "$fm/$f"; done
@@ -862,7 +877,7 @@ want_lift() {
 }
 for f in "$root"/hooks/*; do want_lift "-i $fd/hooks/${f##*/}"; done
 for f in "$root"/agents/ship-*.md; do want_lift "-i $fd/agents/${f##*/}"; done
-for f in "-i $fd/bin/shfmt" "-R -i $fd/skills/ship" "-R -i $fd/git-hooks" "-i $fm/managed-settings.d/claude-ship.json" "-i $fm/managed-settings.d" "-i $fm"; do
+for f in "-i $fd/bin/shfmt" "-R -i $fd/skills/ship" "-R -i $fd/skills/claude-ship" "-R -i $fd/git-hooks" "-i $fm/managed-settings.d/claude-ship.json" "-i $fm/managed-settings.d" "-i $fm"; do
 	want_lift "$f"
 done
 grep -qxF -- "-R -i $fm | old gate" "$STUB_STATE/log" && {
@@ -891,6 +906,32 @@ cmp -s "$tmp/flagged.before" "$tmp/flagged.after" || {
 	echo "FAIL: again: the gate wasn't redeployed"
 	fail=1
 }
+
+# An install over a tree from before claude-ship #350 (skills/ship/SKILL.md flagged, no skills/claude-ship yet): the flag on
+# skills/ship is lifted before it is replaced, the old SKILL.md goes, and the new directory is created and flagged.
+fdu=$tmp/flags-upgrade
+fresh_dest "$fdu"
+mkdir -p "$fdu/skills/ship"
+printf 'old skill\n' >"$fdu/skills/ship/SKILL.md"
+printf 'old\n' >"$fdu/skills/ship/orchestrate.md"
+find "$fdu/skills/ship" >>"$STUB_STATE/flagged"
+: >"$STUB_STATE/log"
+flag_install upgrade "$fdu" "$tmp/flags-managed-upgrade"
+expect upgrade 0 0
+want_lift_any() {
+	grep -qE -- "^$1 " "$STUB_STATE/log" || {
+		echo "FAIL: upgrade: no lift: $1"
+		fail=1
+	}
+}
+want_lift_any "-R -i $fdu/skills/ship"
+[ ! -e "$fdu/skills/ship/SKILL.md" ] && [ -f "$fdu/skills/ship/orchestrate.md" ] && [ -f "$fdu/skills/claude-ship/SKILL.md" ] || {
+	echo "FAIL: upgrade: skills/ship/SKILL.md should be gone, orchestrate.md and skills/claude-ship/SKILL.md deployed"
+	fail=1
+}
+want_flagged upgrade "$fdu/skills/claude-ship"
+want_flagged upgrade "$fdu/skills/claude-ship/SKILL.md"
+want_flagged upgrade "$fdu/skills/ship"
 
 # A flag that can't be lifted (chattr fails: not root) stops the install before it writes anything: the files stay as
 # they were, never half replaced.

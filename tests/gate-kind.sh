@@ -104,6 +104,7 @@ change docs-two haiku README.md docs/guide.md
 # Behaviour in a .md file, or any other file: the finder.
 change prompt sonnet hooks/review-prompt.md
 change skill sonnet skills/ship/SKILL.md
+change claude-ship-skill sonnet skills/claude-ship/SKILL.md
 change agent sonnet agents/a.md
 change claude-skill sonnet .claude/skills/x/SKILL.md
 change agents-md sonnet AGENTS.md
@@ -111,6 +112,7 @@ change nested-claude-md sonnet sub/CLAUDE.md
 change docs-agents-md sonnet docs/AGENTS.md
 change docs-claude-md sonnet docs/CLAUDE.md
 change mixed sonnet README.md skills/ship/SKILL.md
+change mixed-claude-ship sonnet README.md skills/claude-ship/SKILL.md
 change script sonnet scripts/tool.sh
 change image sonnet pic.png
 
