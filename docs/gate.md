@@ -657,6 +657,10 @@ Choices are the user's (2026-10-19). Usage is a Claude Pro plan, so no reviewer 
     (key in `p3-filed.tsv`, an open issue that is the same finding), prints `review-gate: P3 kept pending for <branch>:
     <title>`, and keeps going on a failure to add (a warning: a P3 never blocks). A detached HEAD has no branch to keep a P3
     for, and a push to the default branch has no PR to wait for, so the gate files those at once, as it did before.
+  - **Codex's P3s share the list** (#352). `codex-triage.sh` adds a Codex P3 of round 1 or 2 that no commit fixes to the same
+    file with `p3-pending.sh add` (outcome `pending`), with Codex's own text as the `body` and the thread's line, or none. It
+    is fixed in a later commit for the PR if relevant and easy, or filed with the gate's when the PR is done. The reviewer's
+    "already pending" list holds their titles too. Round 3 or later files them at once, as no later commit is coming.
   - **What Claude sees.** A block lists the branch's pending P3s (`p3-pending.sh list`) under the P0–P2 findings, with
     "Pending P3s: fix the ones that are relevant and easy in this commit too. The rest are filed when the PR is done." A pass
     prints nothing new, since a passing PreToolUse hook's stderr never reaches Claude: the skill and the implementer run

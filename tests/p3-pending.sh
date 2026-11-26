@@ -463,5 +463,67 @@ check "merged PR: status" "$rc" 0
 check "merged PR: output" "$(sed 's#https://github.com/acme/app/issues/[0-9]*#<url>#' "$tmp/out")" "dropped a.txt:3 (changed in $(git -C "$repo" rev-parse --short "$prhead"))
 filed <url>"
 
+# A finding with its own body (Codex's P3s, claude-ship #352) keeps that body; one without a body (the gate's) gets the
+# gate's text; a body that isn't a string is refused.
+fixture
+jq -nc --arg h "$h1" '{file: "a.txt", line: 4, summary: "s", failure_scenario: "", title: "a.txt: from codex", head: $h,
+	body: "Codex says so at `a.txt:4` (PR 5).\n\nSecond paragraph."}' >"$tmp/finding.json"
+pp add "$tmp/finding.json"
+check "add with a body: status" "$rc" 0
+check "add with a body: stored" "$(jq -r .body "$pf")" "Codex says so at \`a.txt:4\` (PR 5).
+
+Second paragraph."
+check "add with a body: summary kept" "$(jq -r .summary "$pf")" s
+add b.txt 5 'from the gate'
+check "add without a body: the gate's text" "$(jq -r 'select(.file == "b.txt") | .body | split("\n")[0]' "$pf")" "Found by the pre-push review gate (P3, verified) at \`b.txt:5\` in $h1."
+jq -nc --arg h "$h1" '{file: "a.txt", line: 4, summary: "s", failure_scenario: "", title: "a.txt: bad body", head: $h, body: 5}' >"$tmp/finding.json"
+pp add "$tmp/finding.json"
+check "add with a non-string body: status" "$rc" 1
+check "add with a non-string body: nothing stored" "$(wc -l <"$pf" | tr -d ' ')" 2
+
+# A Codex comment with no line: `line: null` is stored, listed without a line, and `file` drops the entry when any later
+# commit changed its file (or removed it), and files it otherwise.
+fixture
+nullline() {
+	jq -nc --arg f "$1" --arg t "$2" --arg h "$h1" '{file: $f, line: null, summary: $t, failure_scenario: "", title: "\($f): \($t)", head: $h,
+		body: "Codex found \($t) in `\($f)`."}' >"$tmp/finding.json"
+	(cd "$repo" && sh "$tmp/hooks/p3-pending.sh" add "$tmp/finding.json")
+}
+nullline a.txt 'no line a'
+nullline b.txt 'no line b'
+nullline gone.txt 'no line gone'
+add c.txt 3 'with a line'
+check "null line: stored as null" "$(jq -r 'select(.file == "a.txt") | .line | type' "$pf")" null
+pp list
+check "null line: list (no line, no empty Failure line)" "$(out)" "a.txt no line a
+b.txt no line b
+gone.txt no line gone
+c.txt:3 with a line
+    Failure: fails when x"
+jq -nc --arg h "$h1" '{file: "a.txt", summary: "s", failure_scenario: "", title: "a.txt: no line key", head: $h}' >"$tmp/finding.json"
+pp add "$tmp/finding.json"
+check "add without a line key: status" "$rc" 1
+jq -nc --arg h "$h1" '{file: "a.txt", line: "3", summary: "s", failure_scenario: "", title: "a.txt: string line", head: $h}' >"$tmp/finding.json"
+pp add "$tmp/finding.json"
+check "add with a string line: status" "$rc" 1
+edit_line a.txt 28 'far from anything'
+rm "$repo/gone.txt"
+commit "later"
+c2=$(g rev-parse --short HEAD)
+prjson
+pp file 12
+check "null line, file: status" "$rc" 0
+check "null line, file: output" "$(sed 's#https://github.com/acme/app/issues/[0-9]*#<url>#' "$tmp/out")" "dropped a.txt (changed in $c2)
+filed <url>
+dropped gone.txt (changed in $c2)
+filed <url>"
+check "null line, file: filed" "$(filed_log | sed 's/^acme\/app pr=12 //')" "b.txt: no line b
+c.txt: with a line"
+check "null line, file: the body goes to the issue" "$(sed -n 1p "$tmp/bodies")" 'Codex found no line b in `b.txt`.'
+[ ! -e "$pf" ] || {
+	echo "FAIL (null line, file): the pending file is left"
+	fail=1
+}
+
 [ "$fail" = 0 ] && echo "p3-pending: ok"
 exit "$fail"

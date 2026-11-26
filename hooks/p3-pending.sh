@@ -1,13 +1,14 @@
 #!/bin/sh
 # Source: github.com/DaSonOfPoseidon/claude-ship (hooks/), deployed into ~/.claude by its install.sh from main.
 #
-# The review gate's confirmed P3s, kept pending for the branch until its PR is done (claude-ship #352): code on a PR isn't
-# live, so a P3 found in it is no issue yet. Claude fixes the relevant, easy ones in a commit it makes for the PR anyway,
+# The review gate's confirmed P3s and Codex's (claude-ship #352), kept pending for the branch until its PR is done: code
+# on a PR isn't live, so a P3 found in it is no issue yet. Claude fixes the relevant, easy ones in a commit it makes for the PR anyway,
 # and what is still pending when the PR is done is filed once, by `file`.
 #
-#   p3-pending.sh add <finding.json> [<branch>]   keep a P3 pending, or refresh it when it is (the review gate; the branch
-#                                                 defaults to the current one)
-#   p3-pending.sh list [<branch>]                 the branch's pending P3s, `<file>:<line> <summary>` and its failure scenario
+#   p3-pending.sh add <finding.json> [<branch>]   keep a P3 pending, or refresh it when it is (the review gate, and codex-triage.sh for
+#                                                 Codex's, which passes the PR's branch; it defaults to the current one)
+#   p3-pending.sh list [<branch>]                 the branch's pending P3s, `<file>:<line> <summary>` (`<file> <summary>` when it has no
+#                                                 line) and its failure scenario, when it has one
 #   p3-pending.sh titles [<branch>]               their titles, one per line (the reviewer's "already pending" list)
 #   p3-pending.sh file <pr> [<owner/repo>]        file what is still pending for the PR's head branch, once
 #
@@ -15,15 +16,16 @@
 # the branch with `%` written `%25`, then `+` written `%2B`, then `/` written `+` (as orchestrate.md's plan files).
 # One JSON object per line: key (the cksum of the title, the gate's p3-filed.tsv key), title, file, line, summary,
 # failure_scenario, head (the commit that was reviewed) and body (the text the issue gets). `add` takes a JSON with
-# file, line, summary, failure_scenario, title and head.
+# file, line (a number, or null for a Codex comment that has no line), summary, failure_scenario (may be ""), title and
+# head, and optionally a string body: the issue gets that text, where the gate's findings (no body) get a standard one.
 #
 # `file` drops a P3 when a later commit changed its region: a hunk of `git diff -U0 <head> <the PR's head>` on its file
-# that touches the 3 lines either side of its line (in <head>'s numbering), or the file gone. Those lines were reviewed
-# again by a later push, which would have reported them again. It asks GitHub nothing about that. What is left is filed
+# that touches the 3 lines either side of its line (in <head>'s numbering), or the file gone; for a P3 with no line, any
+# change to its file. Those lines were reviewed again by a later push, which would have reported them again. It asks GitHub nothing about that. What is left is filed
 # with p3-issue.sh (labels, milestone from the PR) and its key recorded in p3-filed.tsv, unless that file already has the
 # key or an open issue is the same finding (the gate's dedupe, review-lib.sh). A P3 that fails to file stays pending and
 # makes the exit status 1, so a rerun files only what is left. One line per P3 on stdout:
-#   filed <url>   |   dropped <file>:<line> (changed in <sha>)   |   skipped <title>: already filed as <url>   |   failed <title>: <why>
+#   filed <url>   |   dropped <file>:<line> (changed in <sha>; just <file> when it has no line)   |   skipped <title>: already filed as <url>   |   failed <title>: <why>
 # With nothing pending it prints nothing and exits 0, and it asks GitHub nothing. A closed PR that was never merged is
 # left alone: nobody runs `file` for it, and its pending file stays until the branch is used again.
 # Exit 0 when it ran to the end, 1 when something failed, 2 on bad usage.
@@ -69,13 +71,16 @@ case $cmd in
 add)
 	[ $# -ge 2 ] && [ $# -le 3 ] || usage
 	branch=$(branch_arg "${3:-}") || exit 1
-	jq -e 'type == "object" and (.file | type == "string") and (.line | type == "number") and (.summary | type == "string")
-		and (.failure_scenario | type == "string") and (.title | type == "string") and (.head | type == "string")' "$2" >/dev/null 2>&1 ||
-		die "$2 needs the fields file, line, summary, failure_scenario, title and head"
+	# line is a number, or null for a comment that has none; body is optional, but a string when given.
+	jq -e 'type == "object" and (.file | type == "string") and has("line") and (.line | type == "number" or . == null)
+		and (.summary | type == "string") and (.failure_scenario | type == "string") and (.title | type == "string")
+		and (.head | type == "string") and (.body == null or (.body | type == "string"))' "$2" >/dev/null 2>&1 ||
+		die "$2 needs the fields file, line (a number or null), summary, failure_scenario, title and head, and a string body when it has one"
 	title=$(jq -r .title "$2") || die "can't read $2"
 	key=$(printf '%s' "$title" | cksum | cut -d' ' -f1)
 	entry=$(jq -c --arg k "$key" '{key: $k, title, file, line, summary, failure_scenario, head,
-		body: "Found by the pre-push review gate (P3, verified) at `\(.file):\(.line)` in \(.head).\n\n\(.summary)\n\nFailure scenario: \(.failure_scenario)"}' "$2") ||
+		body: (if .body != null then .body
+			else "Found by the pre-push review gate (P3, verified) at `\(.file):\(.line)` in \(.head).\n\n\(.summary)\n\nFailure scenario: \(.failure_scenario)" end)}' "$2") ||
 		die "can't read $2"
 	pf=$(pfile_of "$branch") || exit 1
 	mkdir -p "$pdir" || die "can't create $pdir"
@@ -99,7 +104,8 @@ list | titles)
 	pf=$(pfile_of "$branch") || exit 1
 	[ -s "$pf" ] || exit 0
 	if [ "$cmd" = list ]; then
-		jq -r '"\(.file):\(.line) \(.summary | gsub("[[:cntrl:]]+"; " "))\n    Failure: \(.failure_scenario | gsub("[[:cntrl:]]+"; " "))"' "$pf" ||
+		jq -r '(if .line == null then .file else "\(.file):\(.line)" end) + " " + (.summary | gsub("[[:cntrl:]]+"; " "))
+			+ (if (.failure_scenario // "" | length) > 0 then "\n    Failure: " + (.failure_scenario | gsub("[[:cntrl:]]+"; " ")) else "" end)' "$pf" ||
 			die "can't read $pf"
 	else
 		jq -r '.title | gsub("[[:cntrl:]]+"; " ")' "$pf" || die "can't read $pf"
@@ -180,6 +186,11 @@ region_changed() {
 		return 0
 	fi
 	rc_hunks=$(git diff -U0 --no-color --no-renames "$3" "$prhead" -- ":(top,literal)$1" 2>/dev/null) || return 1
+	# No line (null): any change to the file counts.
+	if [ "$2" = null ]; then
+		[ -n "$rc_hunks" ]
+		return
+	fi
 	printf '%s\n' "$rc_hunks" | awk -v l="$2" '
 		/^@@ / {
 			split($2, o, ",")
@@ -199,7 +210,7 @@ while IFS= read -r line; do
 	[ -n "$line" ] || continue
 	printf '%s\n' "$line" >>"$tmp/read"
 	if ! printf '%s\n' "$line" | jq -e 'type == "object" and (.key | type == "string" and test("^[0-9]+$")) and (.title | type == "string")
-		and (.file | type == "string") and (.line | type == "number" and . >= 0 and . == floor) and (.head | type == "string")
+		and (.file | type == "string") and (.line == null or (.line | type == "number" and . >= 0 and . == floor)) and (.head | type == "string")
 		and (.body | type == "string")' >/dev/null 2>&1; then
 		echo "failed (unreadable entry): $line"
 		printf '%s\n' "$line" >>"$tmp/keep"
@@ -210,12 +221,15 @@ while IFS= read -r line; do
 	etitle=$(printf '%s\n' "$line" | jq -r '.title | gsub("[[:cntrl:]]+"; " ")')
 	efile=$(printf '%s\n' "$line" | jq -r .file)
 	eline=$(printf '%s\n' "$line" | jq -r .line)
+	# A comment with no line (line: null) is named by its file alone.
+	esite=$efile:$eline
+	[ "$eline" != null ] || esite=$efile
 	ehead=$(printf '%s\n' "$line" | jq -r .head)
 
 	if [ -n "$havehead" ] && git cat-file -e "$ehead^{commit}" 2>/dev/null && region_changed "$efile" "$eline" "$ehead"; then
 		sha=$(git log -n 1 --format=%h "$ehead..$prhead" -- ":(top,literal)$efile" 2>/dev/null) || sha=
 		[ -n "$sha" ] || sha=$(printf '%s' "$prhead" | cut -c1-7)
-		echo "dropped $efile:$eline (changed in $sha)"
+		echo "dropped $esite (changed in $sha)"
 		continue
 	fi
 	if prev=$(grep -m1 "^$ekey	" "$filed"); then
@@ -223,7 +237,7 @@ while IFS= read -r line; do
 		echo "skipped $etitle: already filed as ${url:-the P3 file}"
 		continue
 	fi
-	if dup=$(open_dup "$etitle" "$efile:$eline") && [ -n "$dup" ]; then
+	if dup=$(open_dup "$etitle" "$esite") && [ -n "$dup" ]; then
 		printf '%s\t%s (%s)\n' "$ekey" "$etitle" "$dup" >>"$filed"
 		echo "skipped $etitle: already filed as $dup"
 		continue

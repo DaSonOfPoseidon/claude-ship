@@ -92,10 +92,11 @@ The gate blocks pushes until this exists. On a branch `chore/review-setup`:
    - When a blocking finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in
      the same push: the class, what to check, and where it bit (PR or issue). The `pitfall-lint.sh` hook then asks for a
      background `ship-lint-author` for the new entry; follow `pitfall-lint.md`, without stopping this task.
-   - **The gate's P3s** (confirmed, minor) are not filed as issues while the PR is open: the code isn't live yet. The gate
-     keeps them pending for the branch. Before each commit for the PR (a fix for a gate block, a Codex fix round), run
-     `~/.claude/hooks/p3-pending.sh list` and fix the ones that are relevant and easy in that commit too. Don't make a
-     commit just for them. Whatever is still pending when the PR is done is filed once, at step 5.
+   - **P3s** (the gate's confirmed ones, and Codex's of rounds 1 and 2, step 4) are not filed as issues while the PR is
+     open: the code isn't live yet. They are kept pending for the branch. Before each commit for the PR (a fix for a gate
+     block, a Codex fix round), run `~/.claude/hooks/p3-pending.sh list` and fix the ones that are relevant and easy in
+     that commit too. Don't make a commit just for them. Whatever is still pending when the PR is done is filed once, at
+     step 5.
 
 ## 3. Request the Codex round
 
@@ -148,14 +149,17 @@ comments API. For each finding, by priority and round:
 |---|---|---|
 | P0 / P1 | fix | **stop and ask the user**: fix or defer (a P0 is always fixed) |
 | P2 | fix | file an issue |
-| P3 and lower | fix if this round also fixes a P0–P2 finding, else file an issue | file an issue |
+| P3 and lower | fix if this round also fixes a P0–P2 finding, else keep it pending | file an issue |
 
 Judge the P0–P2 findings (and `P?`, which counts as P1) first. "Another review is coming anyway" means at least
 one of them is valid and gets a commit, and only then is a P3 of the same round judged like any other finding
-(valid: fix it in that push; not valid: answer it; beyond this PR's scope: file an issue). When none of them gets a
-commit, every P3 of the round is filed. This is about Codex's P3s. The gate's are kept pending until the PR is done (step 2).
+(valid: fix it in that push; not valid: answer it; beyond this PR's scope: keep it pending). When none of them gets a
+commit, every P3 of the round is kept pending. A pending P3 is not an issue yet, like the gate's (step 2): the PR's code
+isn't live, so it is fixed in a later commit for the PR if it is relevant and easy, and filed when the PR is done (step 5).
+In round 3 or later no later commit is coming, so a P3 is filed.
 
-Every finding ends with one outcome (fixed, not valid, deferred to an issue, or beyond this PR's scope → issue), and its
+Every finding ends with one outcome (fixed, not valid, deferred to an issue, kept pending, or beyond this PR's scope →
+pending in rounds 1–2, issue later), and its
 thread is resolved once it has one. A user-approved fix after round 3 gets one more review, with the same
 right-hand column.
 
@@ -170,16 +174,22 @@ right-hand column.
 - **File an issue:** reply on the thread with the issue's link, then resolve it. The issue is filed with
   `~/.claude/hooks/p3-issue.sh`, which applies the repo's labels and milestone the same way the gate does for
   its P3s.
+- **Keep it pending** (a P3 of round 1 or 2 that isn't fixed in this round): reply on the thread that it is kept pending,
+  then resolve it. `codex-triage.sh` takes a `pending` entry and adds the P3 to `~/.claude/hooks/p3-pending.sh`'s list for
+  the PR's branch, the list the gate's P3s are on. It is fixed in a later commit for the PR if it is relevant and easy
+  (step 2), and filed when the PR is done (step 5).
 - When a finding is a new class of bug (no entry in `docs/pitfalls.md` covers it), add one in the same push. The
   `pitfall-lint.sh` hook may then ask for a background `ship-lint-author` (`pitfall-lint.md`).
 
 **Apply the outcomes in one call.** Write the triage to a JSON file in your scratchpad with the Write tool:
-`[{"thread": "<id>", "outcome": "not-valid" | "issue" | "fixed" | "resolve", "reply": "<text>", "issue":
-{"file": "<path>", "title": "<path>: <summary>", "body": "<finding>"}}]` (`issue` only for that outcome; `reply`
-is not needed for `resolve`; thread ids as `codex-findings.sh` prints them). Then run
+`[{"thread": "<id>", "outcome": "not-valid" | "issue" | "pending" | "fixed" | "resolve", "reply": "<text>", "issue":
+{"file": "<path>", "title": "<path>: <summary>", "body": "<finding>"}, "pending": {"file": "<path>", "line": <n or null>,
+"title": "<path>: <summary>", "body": "<finding>"}}]` (`issue` and `pending` only for their outcome, `line` is `null` when
+`codex-findings.sh` printed `?`; `reply` is not needed for `resolve`; thread ids as `codex-findings.sh` prints them). Then run
 `~/.claude/skills/ship/codex-triage.sh <pr> <that file> [owner/repo]` from the PR's checkout (or, with the
 repository, from any checkout of it: the milestone then comes from the PR on GitHub). For each entry it files the
-issue (adding its link to the reply), posts the reply and resolves the thread; a `resolve` entry only resolves
+issue (adding its link to the reply) or adds the pending P3 to the PR branch's list (it reads the PR's branch and head
+once first), posts the reply and resolves the thread; a `resolve` entry only resolves
 the thread, for one that already has its reply (an implementer replied to it). Include a fixed thread only once
 its fix is committed, so the reply can name the commit. It validates the whole file before any call and stops
 at the first failure, naming the threads done: check that thread for a half-applied reply before rerunning
@@ -190,7 +200,7 @@ Then:
 - **Something was fixed:** go back to step 2 (the gate reviews only the new commits) and request the next
   round. A P3 is fixed only in a round that fixes something else, so every P3 of that round has an outcome
   before the push: none is left open into the next round.
-- **Nothing was fixed** (everything was filed or answered, the round's P3s included): the script has already run
+- **Nothing was fixed** (everything was filed, kept pending or answered, the round's P3s included): the script has already run
   `gh workflow run codex-review.yml` so the status rechecks with the resolved threads. No new round is needed.
 
 ## 5. Done
@@ -200,7 +210,7 @@ The PR is ready for the user when CI is green, the `codex-review` status passes 
 which outside GitHub Actions only prints the status and never sets it, so it can't block the merge; on the bootstrap PR,
 which can't get the status, it prints `success` but sets nothing), and any repo PR gate
 passes (OBDCracker: `scripts/pr-gate.sh`), and every new class of bug this PR's reviews found (gate or
-Codex) has an entry in `docs/pitfalls.md`. Then file the gate's pending P3s: `~/.claude/hooks/p3-pending.sh file <pr>`. It
+Codex) has an entry in `docs/pitfalls.md`. Then file the pending P3s (the gate's and Codex's): `~/.claude/hooks/p3-pending.sh file <pr>`. It
 drops a P3 whose code a later commit changed, skips one that is already an issue, files the rest (the repo's labels, the
 PR's milestone) and prints a line for each; a failure keeps that P3 pending and makes the exit status 1, so run it again.
 Report the rounds used, the issues filed (that script's `filed` lines included), and anything that needed a decision. After round 3, never request another Codex review unless the user asks.
