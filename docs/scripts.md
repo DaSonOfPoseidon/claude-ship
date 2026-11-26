@@ -340,14 +340,25 @@ whatever checkout its parent was in. It passes the PR to `p3-issue.sh`, so the m
 from the cwd's branch.
 
 - **Input** is a JSON array written with the Write tool, so reply text never passes through shell quoting. Each
-  entry has `thread`, `outcome` (`not-valid`, `issue`, `fixed` or `resolve`), `reply` (required except for
-  `resolve`), and `issue` (`file`, `title`, `body`) exactly when the outcome is `issue`. The whole file is
-  validated first: any invalid entry, or an empty array (a caller bug), exits 2 before any call.
+  entry has `thread`, `outcome` (`not-valid`, `issue`, `pending`, `fixed` or `resolve`), `reply` (required except for
+  `resolve`), `issue` (`file`, `title`, `body`) exactly when the outcome is `issue`, and `pending` (`file`, `line` (a
+  non-negative integer, or `null` for a comment with no line), `title`, `body`) exactly when it is `pending`. The whole
+  file is validated first: any invalid entry, or an empty array (a caller bug), exits 2 before any call.
 - **Per entry**, in order: for `issue`, `p3-issue.sh` files it (found next to `hooks/`, else
   `~/.claude/hooks/`) and its URL is appended to the reply; then the reply (`addPullRequestReviewThreadReply`),
   then `resolveReviewThread`. Both are on the gate's mutation allowlist. The reply goes in as a `-f` variable,
   never in the query text and never `-F` (which reads a value starting with `@` as a file), so quoted Codex
   text can't alter the mutation.
+- **A `pending` entry keeps a P3 for the PR's branch** instead of filing it (#352): the PR's code isn't live in rounds 1 and 2,
+  and a later commit for the PR may fix the P3. The script reads the PR once before any call
+  (`gh pr view <pr> -R <slug> --json headRefName,headRefOid,isCrossRepository`) and stops, with nothing done, when the read fails,
+  the PR is a fork's (the branch name alone would also match another repo's) or `p3-pending.sh` (found next to `hooks/`, else
+  `~/.claude/hooks/`; `CLAUDE_P3_PENDING` is the tests') is missing. Each entry then runs `p3-pending.sh add` with
+  `{file, line, title, body, summary: <title>, failure_scenario: "", head: <the PR's head commit>}` and the branch, replies
+  with the reply text alone (no URL) and resolves. A failed add stops the run before that thread's reply, and a rerun is safe:
+  `add` replaces the entry for the same title. The state is in the git common dir, so the script must run from a checkout of
+  the repo. The `body` is what the issue gets when `p3-pending.sh file` files it. Codex's P3s of round 3 or later are `issue`
+  entries instead: no later commit is coming.
 - **A `fixed` entry** replies and resolves too. In orchestrated mode the implementer has already replied on the
   threads it fixed, so the orchestrator puts those in the same file as `resolve` entries: only
   `resolveReviewThread` runs for them, and any `reply` on them is ignored.
@@ -356,7 +367,8 @@ from the cwd's branch.
   posted reply, so check the thread before rerunning with the finished threads removed from the file. When
   `failed:` is `recheck (workflow)`, every thread is already done: run only `gh workflow run codex-review.yml -R
   <slug> -f pr=<pr>` again (or push a commit), never the triage file, which would be empty and exit 2.
-- **Ends with the status recheck** (`gh workflow run codex-review.yml`) only when no entry is `fixed`: a fix
+- **Ends with the status recheck** (`gh workflow run codex-review.yml`) only when no entry is `fixed` (a `pending` entry
+  doesn't count, as it has no push coming): a fix
   means a push and a new request, which recheck it anyway. A `resolve` entry doesn't count, because its fix was
   pushed before the thread was resolved, so the push-triggered run saw it open; without the recheck the status
   could stay `failure` over resolved threads (at round 3 no next request follows).
@@ -537,14 +549,18 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
 
 ## `hooks/p3-pending.sh`
 
-Keeps the gate's confirmed P3s pending for a branch until its PR is done (#352), because the code on a PR isn't live, so a
-P3 found in it is no issue yet. The commands, the file's shape and the decisions about what the gate and Claude do with it
+Keeps the gate's confirmed P3s, and Codex's of rounds 1 and 2 (`codex-triage.sh`'s `pending` outcome), pending for a branch
+until its PR is done (#352), because the code on a PR isn't live, so a P3 found in it is no issue yet. The commands, the file's shape and the decisions about what the gate and Claude do with it
 are in `docs/gate.md` › Reviewer pipeline; the reasons for the script's own choices are here.
 
 - **State is in the git common dir** (`--path-format=absolute --git-common-dir`), not a worktree's own git dir, so the gate
   (which runs in the pushing checkout), `list` (in a linked worktree), and `file` (from the orchestrator's main checkout)
   read one file. The file name is the branch under the plan files' encoding (`%` → `%25`, `+` → `%2B`, `/` → `+`), so no two
   branches share it (pitfalls: an encoding that joins path parts).
+- **A Codex P3 differs in two fields.** It comes with its own `body` (stored as the issue's text, where the gate's entries get a
+  standard one) and possibly `line: null`, for a Codex comment that has no line. `file` drops a no-line entry when any later
+  commit changed its file (there is no region to compare), and `list` prints it as `<file> <summary>`. An empty
+  `failure_scenario` leaves out the `Failure:` line.
 - **`add` replaces the entry for a key.** A P3 found again on a later push gets that push's `head` and line. The reviewer is
   told to report a pending P3 again when the diff changes code near it and the problem is still there, and the refreshed head
   makes `file` count only the changes made after that report; an entry nobody reported again keeps its old head, so a later

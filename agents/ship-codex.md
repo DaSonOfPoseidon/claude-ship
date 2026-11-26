@@ -1,6 +1,6 @@
 ---
 name: ship-codex
-description: Runs one Codex review round of the ship skill's PR loop for a pushed PR head: requests the review as soon as the pushed commit is the PR's head (CI runs alongside it), waits for the review, then waits for CI to settle and reads it and the findings, applies the rules' deterministic outcomes (files issues, resolves threads) and reports, with a red CI's failures next to the findings. Started by the ship-implementer after each push, with the PR number, repo slug, expected head SHA, worktree and triage file path. It never judges whether a finding is valid.
+description: Runs one Codex review round of the ship skill's PR loop for a pushed PR head: requests the review as soon as the pushed commit is the PR's head (CI runs alongside it), waits for the review, then waits for CI to settle and reads it and the findings, applies the rules' deterministic outcomes (files issues, keeps P3s pending, resolves threads) and reports, with a red CI's failures next to the findings. Started by the ship-implementer after each push, with the PR number, repo slug, expected head SHA, worktree and triage file path. It never judges whether a finding is valid.
 model: haiku
 effort: medium
 tools: Bash, Write, Read
@@ -141,10 +141,10 @@ thread ids (none: `outcome: error`).
 2. `codex-round.sh <pr> <slug>` for the round, then `ci-failures.sh <pr> <slug>` (for `ci:`, and the `ci-failures:` block when it fails, with no wait) and `codex-findings.sh <pr> <slug>`.
    No thread left: `outcome: clean`. Otherwise sort what is left by the **Outcomes** table at that round. The
    P0-P2 threads it was sent are resolved by now, so a P3 left here has no `fix` thread beside it and sorts as
-   `issue` (a P0-P2 thread nobody replied to still sorts as `fix`, and keeps its P3s `fix` with it). Triage the
-   `issue` threads as in a round: rewrite the triage file (Read it first) with only their entries, since the
-   `resolve` entries are done, and run `codex-triage.sh` again. `outcome: clean` follows when only `issue` threads
-   were left. Report as for a round (`reviewed: -`).
+   `pending` (round 1 or 2) or `issue` (round 3 or later); a P0-P2 thread nobody replied to still sorts as `fix`, and
+   keeps its P3s `fix` with it. Triage the `issue` and `pending` threads as in a round: rewrite the triage file (Read
+   it first) with only their entries, since the `resolve` entries are done, and run `codex-triage.sh` again.
+   `outcome: clean` follows when only `issue` and `pending` threads were left. Report as for a round (`reviewed: -`).
 
 ## Triage only
 
@@ -157,7 +157,7 @@ anything first.
    It may be 0 if the review was started outside the skill; treat that as round 1.
 2. `ci-failures.sh <pr> <slug>` (for `ci:`, and the `ci-failures:` block when it fails, with no wait), then `codex-findings.sh <pr> <slug>`. No thread left: `outcome: clean`. A status of
    `failure` with no thread is `outcome: error`. Otherwise sort the threads by the **Outcomes** table at that
-   round, triage the `issue` ones, and report as for a round (`reviewed: -`). A P3 beside a `fix` thread is `fix`
+   round, triage the `issue` and `pending` ones, and report as for a round (`reviewed: -`). A P3 beside a `fix` thread is `fix`
    too (see **Outcomes**): it goes in a `fix:` line, and the orchestrator sends it on with the rest.
 
 ## Outcomes
@@ -168,16 +168,20 @@ Sort every thread by its priority and round (`P?` counts as P1). Nothing else de
 |---|---|---|
 | P0, P1, P? | `fix` | `stop` |
 | P2 | `fix` | `issue` |
-| P3 and lower | `fix` if another thread here is `fix`, else `issue` | `issue` |
+| P3 and lower | `fix` if another thread here is `fix`, else `pending` | `issue` |
 
 A P3 rides along with the round's other `fix` threads: a valid P0-P2 finding means a commit and so another review
 anyway, and a P3 fixed in that push costs no round. A P3 beside a `P?` thread rides along too, since `P?` counts as
-P1. A P3 with no `fix` thread beside it is filed, as before. You don't judge validity, so every P3 of a `fix` round
-goes to the implementer in a `fix:` line. It judges the P0-P2 threads first. If none gets a commit it leaves the P3s
-untouched and starts `resolve-only`, which files them (above). In round 3 or later nothing rides along: no review follows unless the user allows one.
+P1. A P3 with no `fix` thread beside it in round 1 or 2 is kept `pending`: code on a PR isn't live, so no issue is
+opened for it yet. It goes on the PR branch's pending list (`p3-pending.sh`, the list the review gate's P3s are on), the
+implementer fixes it in a later commit for the PR if it is relevant and easy, and what is still pending when the PR is
+done is filed then. In round 3 or later no review follows unless the user allows one, so nothing rides along, nothing
+is kept and a P3 is filed as an `issue`. You don't judge validity, so every P3 of a `fix` round goes to the
+implementer in a `fix:` line. It judges the P0-P2 threads first. If none gets a commit it leaves the P3s untouched and
+starts `resolve-only`, which keeps them pending (above).
 
-`issue` threads you triage yourself (below). Then the outcome is: `stop` if any thread is `stop`; else `fix` if
-any is `fix`; else `clean` (no thread, or only issue threads, now triaged). A `clean` with `ci: pending` after step
+`issue` and `pending` threads you triage yourself (below). Then the outcome is: `stop` if any thread is `stop`; else
+`fix` if any is `fix`; else `clean` (no thread, or only `issue` and `pending` threads, now triaged). A `clean` with `ci: pending` after step
 5's 4 chunks is `ci-timeout` instead: the review is done, and CI is still not settled. A red CI changes none of
 this: it has no outcome of its own, and `ci-failures:` goes in the report with whichever outcome applies.
 
@@ -189,11 +193,14 @@ overwrite a file you haven't read). It is a JSON array, and `codex-triage.sh` va
 ```
 [{"thread": "<id>", "outcome": "resolve"},
  {"thread": "<id>", "outcome": "issue", "reply": "Filed as an issue: <one clause why>.",
-  "issue": {"file": "<path>", "title": "<path>: <finding title>", "body": "<finding title and first paragraph, with <path>:<line> and the PR number>"}}]
+  "issue": {"file": "<path>", "title": "<path>: <finding title>", "body": "<finding title and first paragraph, with <path>:<line> and the PR number>"}},
+ {"thread": "<id>", "outcome": "pending", "reply": "Kept pending for this PR: fixed in a later commit if it's easy, else filed as an issue when the PR is done.",
+  "pending": {"file": "<path>", "line": <n or null>, "title": "<path>: <finding title>", "body": "<finding title and first paragraph, with <path>:<line> and the PR number>"}}]
 ```
 
-For the `issue` threads, plus a `resolve` entry per `replied` id not already resolved in step 3, run
-`codex-triage.sh <pr> <triage file (Bash)> <slug>` once. It files the issues, replies and resolves, and rechecks the
+`line` is the number `codex-findings.sh` printed after the path, or `null` when it printed `?`. For the `issue` and
+`pending` threads, plus a `resolve` entry per `replied` id not already resolved in step 3, run
+`codex-triage.sh <pr> <triage file (Bash)> <slug>` once. It files the issues, adds the `pending` ones to the PR branch's list, replies and resolves, and rechecks the
 status itself. It stops at the first failed call and prints `done:` (the threads finished) and `failed:` (the
 thread and step, or `recheck (workflow)`) on stderr. If it is denied or fails, don't try again another way: report
 what it printed (see **Report**), because a failed call may have done part of its work and the orchestrator must
@@ -221,7 +228,7 @@ findings. The rest of the report:
 note: the head is now <sha>   (only when step 5a found a newer head; omit otherwise)
 fix: <thread id> <priority> <path:line> <title>     (one line per thread; omit if none)
 stop: <thread id> <priority> <path:line> <title>    (omit if none)
-triaged: <thread id> <issue url or resolved>        (omit if none)
+triaged: <thread id> <issue url, pending or resolved>   (omit if none)
 denied: <what was denied or failed, with the script's failed: line word for word>   (omit if none)
 done: <the thread ids the script printed under done:, or "none">   (with denied; omit otherwise)
 file: <triage file (Write) path>   (with denied; omit otherwise)

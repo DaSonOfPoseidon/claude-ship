@@ -113,11 +113,11 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
    implementer starts a `ship-codex` agent after each push, which requests the review as soon as the pushed commit is
    the PR's head (it doesn't wait for CI), waits for it, then waits for CI to settle and reads it and the findings
    (a red CI goes to the implementer with the failing jobs' log tails, next to the round's findings), and applies
-   the rule-decided outcomes (the ship skill's step 4 table: a P3 is filed as an
-   issue unless the round also has a P0-P2 finding, and then it goes to the implementer with the other fixes; P2 in
-   round 3 is filed). The implementer reads each finding it is sent in full and judges it, the P0-P2 ones first: it
+   the rule-decided outcomes (the ship skill's step 4 table: in round 1 or 2 a P3 is kept pending
+   unless the round also has a P0-P2 finding, and then it goes to the implementer with the other fixes; in round 3 a P2
+   or P3 is filed as an issue). The implementer reads each finding it is sent in full and judges it, the P0-P2 ones first: it
    fixes the valid ones, answers the invalid ones with evidence, fixes or answers the round's P3s too if it
-   committed anything (if not, `ship-codex` files them), pushes, and starts the next round, up to 3 rounds. You are not
+   committed anything (if not, `ship-codex` keeps them pending), pushes, and starts the next round, up to 3 rounds. You are not
    in that loop: you wait for its final report.
 4. **Read its report.** Its `codex:` line is the last round's outcome, and its `ci:` line is CI's.
    - **No report:** the agent ended (an error, a usage-limit stop, a killed session) and its last result has no
@@ -218,7 +218,7 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      not your HEAD, and to request again after exit 3 run, from the implementer's worktree,
      `cd <worktree> && ~/.claude/skills/ship/codex-round.sh <pr>` and only below 3
      `cd <worktree> && ~/.claude/skills/ship/codex-request.sh <pr> <slug> <head sha>`.
-   - Triage with `codex-findings.sh` and the ship skill's step 4 table. **Not valid / file an issue:** write the
+   - Triage with `codex-findings.sh` and the ship skill's step 4 table. **Not valid / file an issue / keep pending:** write the
      entries to a JSON file with the Write tool and run `~/.claude/skills/ship/codex-triage.sh <pr> <file> <slug>`
      (format in the ship skill's step 4) from any checkout of the repo; it is yours to run since subagents can't resolve
      threads (#100). When the round also sends fixes, hold these entries and run the file once after the
@@ -235,16 +235,17 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
        commit, so another review comes anyway), and tell the implementer to judge the P0-P2 findings first and
        to touch the P3s only if one of those gets a commit. If its report shows a commit, the P3s are among its
        `replied:` threads: resolve them like the rest. If it shows none, the P3s are untouched: add them to the
-       round's triage file as `issue` entries (the **Not valid / file an issue** format) in that same call, and
-       don't request the next round.
+       round's triage file as `pending` entries (round 1 or 2; `issue` entries from round 3, the **Not valid / file an
+       issue** format) in that same call, and don't request the next round.
    - **Nothing to fix:** the script has already rechecked the status (`gh workflow run codex-review.yml`).
 
    Then wait again. Rounds are capped at 3 as in the ship skill.
 6. **Done** when the ship skill's step 5 holds (CI, `codex-review`, any repo PR gate, pitfalls entries). Check
    `codex-review` with `gh pr view <pr> --json statusCheckRollup`, or `~/.claude/skills/ship/codex-status.sh <pr>`, which
    outside GitHub Actions only prints the status and never sets it (on the bootstrap PR it prints `success` but sets nothing).
-   - **The gate's pending P3s** (`hooks/p3-pending.sh`; the gate keeps its confirmed P3s pending for the branch while the PR is
-     open, and the implementer fixes the relevant, easy ones in its own commits) are filed once the unit is done, from the
+   - **The pending P3s** (`hooks/p3-pending.sh`; the gate keeps its confirmed P3s, and `ship-codex` Codex's P3s of rounds 1
+     and 2, pending for the branch while the PR is open, and the implementer fixes the relevant, easy ones in its own
+     commits) are filed once the unit is done, from the
      main checkout, by `~/.claude/hooks/p3-pending.sh file <pr> <owner/repo>`: with `merge: yes` right before the merge
      (sub-step 2 below), with `merge: no` when you tell the user it's ready. Each line it prints (`filed <url>`, `dropped
      <file>:<line> …`, `skipped …`, `failed …`) goes into step 7's one-line report. Exit 1 means a P3 failed to file and stays
