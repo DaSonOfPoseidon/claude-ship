@@ -859,6 +859,140 @@ expect 0 "cd $passed || true; git push origin HEAD"
 expect 0 "cd $unpassed; cd $passed; git push origin HEAD"
 expect 0 "pushd $passed && git status; git push origin HEAD"
 expect 0 "echo x; cd $passed && git status; git push origin HEAD"
+# Only a `cd` that starts its statement's `&&` chain surely runs before the push (claude-ship #356, #354): in `test -d a && cd a`
+# the `cd` is conditional, so the directory is unknown, whichever repo has the pass (the pre-push check decides).
+repo=$passed
+expect 0 "test -d $unpassed && cd $unpassed; git push origin HEAD"
+expect 0 "git status && cd $unpassed; git push origin HEAD"
+expect 0 "git status && cd $unpassed && git push origin HEAD"
+expect 0 "true || cd $unpassed && git push origin HEAD"
+expect 0 "if true; then cd $unpassed; fi; git push origin HEAD"
+repo=$unpassed
+expect 0 "test -d $passed && cd $passed; git push origin HEAD"
+expect 0 "git status && cd $passed; git push origin HEAD"
+expect 0 "true || cd $passed && git push origin HEAD"
+expect 0 "if true; then cd $passed; fi; git push origin HEAD"
+# A `cd` that starts a statement's chain still counts, wherever the statement is.
+repo=$passed
+expect_msg 2 "$together" "echo x; cd $unpassed && git status; git push origin HEAD"
+expect_msg 2 "$together" "cd $unpassed && git status && git status; git push origin HEAD"
+repo=$unpassed
+expect 0 "cd $passed && git status; git push origin HEAD"
+
+# compound_push_gate blocks only a push that surely sends HEAD's branch to origin (claude-ship #354): another remote, another
+# refspec, a delete, `--all`, `--tags` and any option outside the canonical push's list are left to the pre-push check.
+repo=$unpassed
+for c in \
+	'git push origin --delete x' \
+	'git push origin :x' \
+	'git push -d origin x' \
+	'git push --delete origin x' \
+	'git push upstream HEAD' \
+	'git push upstream' \
+	'git push origin other-branch' \
+	'git push origin HEAD:other' \
+	'git push origin HEAD:refs/tags/x' \
+	'git push origin feat:other' \
+	'git push origin refs/heads/other' \
+	'git push origin HEAD feat:other' \
+	'git push origin ""' \
+	'git push --all origin' \
+	'git push --mirror origin' \
+	'git push --tags' \
+	'git push --tags origin' \
+	'git push --repo=upstream HEAD' \
+	'git push --repo upstream' \
+	'git push -o x origin HEAD' \
+	'git push -- origin HEAD' \
+	'git push --follow-tags origin HEAD' \
+	'git push HEAD' \
+	'git push https://github.com/acme/app.git HEAD' \
+	'git push "$r" HEAD'; do
+	expect 0 "git status && $c"
+	expect 0 "$c; git status"
+done
+# One push the gate is sure of is enough, wherever it stands.
+expect_msg 2 "$together" 'git push origin --delete x; git push origin HEAD'
+expect_msg 2 "$together" 'git push origin HEAD; git push origin --delete x'
+expect_msg 2 "$together" 'git push upstream HEAD && git push'
+# What it does block: HEAD's branch to origin, in each spelling, with the options of the canonical list, however many pushes.
+for c in \
+	'git push' \
+	'git push origin' \
+	'git push origin HEAD' \
+	'git push origin feat' \
+	'git push origin refs/heads/feat' \
+	'git push origin HEAD:feat' \
+	'git push origin HEAD:refs/heads/feat' \
+	'git push origin feat:feat' \
+	'git push origin +HEAD' \
+	'git push origin +feat:refs/heads/feat' \
+	'git push -u origin HEAD' \
+	'git push --set-upstream origin feat' \
+	'git push -f origin HEAD' \
+	'git push --force-with-lease origin HEAD' \
+	'git push --force-with-lease=feat:abc origin feat' \
+	'git push --force-if-includes origin HEAD' \
+	'git push -q -v -n --progress --atomic origin HEAD' \
+	'git push --dry-run' \
+	'git push -f'; do
+	expect_msg 2 "$together" "git status && $c"
+	expect_msg 2 "$together" "$c; git status"
+done
+expect_msg 2 "$together" 'git status -sb | head -3 && git push -u origin feat'
+expect_msg 2 "$together" "cd $unpassed && git status; git push"
+# A push that names no remote goes where the config says: the branch's pushRemote, else remote.pushDefault, else the branch's remote.
+git -C "$repo" config branch.feat.pushRemote upstream
+expect 0 'git status && git push'
+expect 0 'git status && git push -u'
+expect_msg 2 "$together" 'git status && git push origin HEAD'
+git -C "$repo" config branch.feat.pushRemote origin
+expect_msg 2 "$together" 'git status && git push'
+git -C "$repo" config --unset branch.feat.pushRemote
+git -C "$repo" config remote.pushDefault upstream
+expect 0 'git status && git push'
+git -C "$repo" config branch.feat.pushRemote origin
+expect_msg 2 "$together" 'git status && git push'
+git -C "$repo" config --unset branch.feat.pushRemote
+git -C "$repo" config remote.pushDefault origin
+expect_msg 2 "$together" 'git status && git push'
+git -C "$repo" config --unset remote.pushDefault
+git -C "$repo" config branch.feat.remote upstream
+expect 0 'git status && git push'
+git -C "$repo" config branch.feat.remote origin
+expect_msg 2 "$together" 'git status && git push'
+git -C "$repo" config --unset branch.feat.remote
+expect_msg 2 "$together" 'git status && git push'
+# A detached HEAD has no branch to compare: left to the pre-push check.
+git -C "$repo" checkout -q --detach
+expect 0 'git status && git push origin HEAD'
+expect 0 'git status && git push'
+git -C "$repo" checkout -q feat
+# A config value that can't be read leaves the remote unknown (an explicit `origin` needs no config).
+mkdir -p "$tmp/cfgbin"
+cat >"$tmp/cfgbin/git" <<EOF
+#!/bin/sh
+case "\$*" in
+"config --get branch.feat.pushRemote")
+	echo "fatal: bad config line 1 in file .git/config" >&2
+	exit 128
+	;;
+esac
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$tmp/cfgbin/git"
+for c in 'git status && git push' 'git status && git push origin HEAD'; do
+	jq -nc --arg c "$c" --arg d "$repo" '{tool_name: "Bash", tool_input: {command: $c}, cwd: $d}' |
+		PATH=$tmp/cfgbin:$tmp/bin:$PATH sh "$root/hooks/review-gate.sh" >/dev/null 2>"$tmp/err"
+	rc=$?
+	want=0
+	[ "$c" = 'git status && git push origin HEAD' ] && want=2
+	if [ "$rc" != "$want" ]; then
+		echo "FAIL (exit $rc, want $want, config unreadable): $c"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+	fi
+done
 
 # A fetch URL that isn't the pushed repo, even one that isn't GitHub's, supplies the review's base and rules.
 fixture /tmp/base.git

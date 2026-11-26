@@ -239,14 +239,24 @@ a compound command, and a canonical push from a worktree that tracks `origin/mai
 tests/gate-worktree-upstream.sh). So `compound_push_gate` (`hooks/review-gate.sh`) decides first, once the call is known not to be a canonical push and
 no `gh api` check has blocked it:
 
-- the repo is the one a `cd` names when it is the only `cd` in the tree, a command of the call itself (not in a subshell, a
-  block, an `if` or a `||`), has one literal directory (as `tree_dirs`) and every push follows it (`cdlead`); with no `cd`, or
-  only one after every push (`git push; cd x`), it is the session's directory. Any other `cd` (or a `pushd`/`popd`), and a
-  push that names its own repository (`-C`, `--git-dir`, `--work-tree`), leave the directory unknown (`cdunsure`), and the call passes to the pre-push check;
+- the repo is the one a `cd` names when it is the only `cd` in the tree, the first command of its statement's `&&` chain (so it
+  surely runs: `cd a && git status; git push` and `echo x; cd a; git push` qualify, `test -d a && cd a; git push` doesn't), a
+  command of the call itself (not in a subshell, a block, an `if` or a `||`), has one literal directory (as `tree_dirs`) and
+  every push follows it (`cdlead`); with no `cd`, or only one after every push (`git push; cd x`), it is the session's
+  directory. Any other `cd` (or a `pushd`/`popd`), and a push that names its own repository (`-C`, `--git-dir`,
+  `--work-tree`), leave the directory unknown (`cdunsure`), and the call passes to the pre-push check;
 - it passes when that directory isn't a git repo or can't be entered, when HEAD has a `.pass` or a `.waived` in the common
-  directory's `review-gate/`, when every push in the call is a tag push (`tag_push`: the pre-push check judges the tag's
-  commit), and when no origin push URL is an opted-in repo (`CLAUDE_AUTONOMOUS` not `true`, or unreadable: the pre-push check
-  decides, as before);
+  directory's `review-gate/`, and when no origin push URL is an opted-in repo (`CLAUDE_AUTONOMOUS` not `true`, or unreadable:
+  the pre-push check decides, as before);
+- it passes unless one push of the call is one it is sure sends HEAD's branch to origin (`cp_sure`). That is a push `pushbad`
+  doesn't flag (every word literal), with only the options a canonical push may have (`push_scope`'s list: `-u`, `-f`,
+  `--force-with-lease`, `-q`, `-v`, `-n`, `--dry-run`, `--progress`, `--atomic`, ...: so no `--delete`, `-d`, `--all`,
+  `--mirror`, `--tags`, `--repo`, `-o`), whose remote is `origin` (named, or, with none named, the one the config gives:
+  the branch's `pushRemote`, else `remote.pushDefault`, else the branch's `remote`, else `origin`; a config read that fails
+  counts as unknown), and whose refspecs, if any, send `HEAD`, the branch or `refs/heads/<branch>` (a leading `+` is fine) to
+  the branch. A delete (`:x`), a tag, another branch or remote, a detached HEAD, or anything else leaves that push to the
+  pre-push check, so `git status && git push origin --delete x`, `... git push upstream HEAD` and `... git push --tags`
+  pass, a tag push included (the pre-push check judges the tag's commit). One sure push among others is enough to block;
 - otherwise it blocks, before anything in the call runs, saying to run the push alone (`git push ...` or `cd <dir> && git
   push ...`, a `2>&1 | tail -N` after it is fine) and the other commands in their own calls.
 

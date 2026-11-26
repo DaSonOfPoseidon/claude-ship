@@ -116,7 +116,8 @@ review finds a new class.
   push ran, unless the gate can read the push in it and blocks it up front when HEAD has no pass (claude-ship #349: a refusal
   that late was blamed on the branch's upstream, and the cause was the chain). A `cd` or `git -C`
   that may not run (`true || cd /tmp; git push`) is such a chain, so the gate follows a directory only for a canonical
-  push, where the `cd` surely runs first (claude-ship #135).
+  push, where the `cd` surely runs first (claude-ship #135), or for a compound push's `cd` that starts its statement's
+  `&&` chain (`test -d a && cd a; git push` leaves the directory unknown: claude-ship #356).
 - **A path is compared as text before it is resolved.** The tamper check matched `~/.claude/hooks` as a word, so
   `~/.claude/./hooks/x`, `~/.claude//hooks/x`, `${HOME}/…`, `~user/…`, `cd ~/.claude && rm hooks/x`, `true || cd
   ~/.claude; rm hooks/x`, `~/.claude/$x/…` and `curl -o` into the same directory all passed (claude-ship #187). The

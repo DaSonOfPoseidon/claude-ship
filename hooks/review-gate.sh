@@ -748,7 +748,8 @@ done
 #   pushn N       how many such pushes there are, numbered from 0
 #   pusharg K W   the words after `push` of push K, each a line; `pushbad K` instead when one is not literal (or has a newline)
 #   cdlead DIR    with `pushseen`: the one literal argument of the one `cd` of the tree, when it is a command of the call itself (not
-#                 in a subshell, a block, an `if`, a `||`) that every push follows (`echo x; cd a && git status; git push`)
+#                 in a subshell, a block, an `if`, a `||`) that starts its statement's `&&` chain, so it surely runs, and that
+#                 every push follows (`echo x; cd a && git status; git push`; not `test -d a && cd a; git push`)
 #   cdunsure      with `pushseen`: a `cd` (or pushd, popd) that is neither that nor one every push precedes (`git push; cd a`, which
 #                 leaves the push where the session is), or a push that names its repository (`-C`, `--git-dir`, `--work-tree`):
 #                 the directory the push runs in is not known
@@ -842,7 +843,7 @@ else
 				| if (.value | any(. == null or contains("\n"))) then "pushbad \($k)" else (.value[] | "pusharg \($k) \(.)") end),
 			([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push") | $c.Pos.Offset]) as $po
 			| ([.. | objects | select(.Type == "CallExpr" and (((.Args // [])[0] | if . == null then null else wv end) | . == "pushd" or . == "popd"))] | length) as $npd
-			| ([(.Stmts // [])[] | select(((.Background // false) | not) and ((.Negated // false) | not)) | andchain[] | select(((.Negated // false) | not) and iscd)]) as $tops
+			| ([(.Stmts // [])[] | select(((.Background // false) | not) and ((.Negated // false) | not)) | andchain[0] | select(((.Negated // false) | not) and iscd)]) as $tops
 			| ([.. | objects | select(.Type == "CallExpr") | . as $c | ({Cmd: .} | gitinfo) as $pg | select($pg != null and $pg.sub == "push")
 				| ($c | words)[1:$pg.i] | any(. != null and test("^(-C|--git-dir|--work-tree)"))] | any) as $own
 			| if $own then "cdunsure"
@@ -1144,14 +1145,79 @@ EOF
 	esac
 	git check-ref-format "$tp_ref" && git show-ref --verify -q "$tp_ref"
 }
+# cp_sure <K>: succeeds when push K of the tree (the `pusharg` lines of cp_all) surely sends HEAD's branch to origin, from the
+# directory compound_push_gate is in. Whatever it can't pin down fails: a word that isn't literal (`pushbad`) or is empty; an option
+# outside push_scope's list (`--delete`, `-d`, `--all`, `--mirror`, `--tags`, `--repo`, `-o`, `--`); a remote other than `origin`,
+# named or (for a push that names none) the one the config gives: the branch's pushRemote, else remote.pushDefault, else the
+# branch's remote, else origin; a refspec whose source isn't HEAD or the branch (a delete `:x`, a tag, another branch) or whose
+# destination isn't the branch; a config value that can't be read (an unset key is no failure); and a detached HEAD, which has no
+# branch to compare (the push fails anyway). No refspec is fine. push_scope isn't reused: it reads the whole call and takes one
+# push only. What changes a bare push's refs (push.default, remote.origin.push) isn't read here: the pre-push check decides.
+cp_sure() {
+	cs_k=$1
+	printf '%s\n' "$cp_all" | grep -qx "pushbad $cs_k" && return 1
+	cs_branch=$(git symbolic-ref -q --short HEAD) || return 1
+	cs_remote=
+	while IFS= read -r cs_l; do
+		case $cs_l in a:*) cs_a=${cs_l#a:} ;; *) continue ;; esac
+		case $cs_a in
+		'') return 1 ;;
+		-u | --set-upstream | -f | --force | --force-with-lease | --force-with-lease=* | --force-if-includes | \
+			-q | --quiet | -v | --verbose | -n | --dry-run | --progress | --atomic) ;;
+		-*) return 1 ;;
+		*)
+			if [ -z "$cs_remote" ]; then
+				cs_remote=$cs_a
+				continue
+			fi
+			cs_src=${cs_a#+}
+			cs_src=${cs_src%%:*}
+			case $cs_src in
+			HEAD | "$cs_branch" | "refs/heads/$cs_branch") ;;
+			*) return 1 ;;
+			esac
+			case $cs_a in
+			*:*)
+				case ${cs_a#*:} in
+				"$cs_branch" | "refs/heads/$cs_branch") ;;
+				*) return 1 ;;
+				esac
+				;;
+			esac
+			;;
+		esac
+	done <<EOF
+$(printf '%s\n' "$cp_all" | sed -n "s/^pusharg $cs_k /a:/p")
+EOF
+	if [ -z "$cs_remote" ]; then
+		cs_found=
+		for cs_key in "branch.$cs_branch.pushRemote" remote.pushDefault "branch.$cs_branch.remote"; do
+			cs_v=$(git config --get "$cs_key")
+			case $? in
+			0)
+				cs_remote=$cs_v
+				cs_found=1
+				break
+				;;
+			1) ;;
+			*) return 1 ;;
+			esac
+		done
+		[ -n "$cs_found" ] || cs_remote=origin
+	fi
+	[ "$cs_remote" = origin ]
+}
 # What happens to a call that is not a canonical push (and starts no `gh api` check that decides first): it exits here, passing
-# unless the call runs `git push` next to other commands (push_jq's `pushseen`), in an opted-in repo whose HEAD has no pass.
-# The gate reviews only a canonical push, and the pre-push check (hooks/git-hook.sh) refuses a push with no pass however it
-# started; blocking up front saves running the commands before the push, which would otherwise run first (claude-ship #349).
-# The repo is the one a `cd` names that is the only one in the tree and runs before every push (`cdlead`), else the session's
-# (no `cd`, or only after the push); a `cd` placed any other way (`cdunsure`) leaves it unknown, so the call passes. Whatever can't be read
-# passes (no git repo, no GitHub origin, an unreadable or false CLAUDE_AUTONOMOUS, a `cd` that can't be entered): the pre-push
-# check decides, as it did before. Never returns.
+# unless the call runs `git push` next to other commands (push_jq's `pushseen`), in an opted-in repo whose HEAD has no pass, and
+# one of those pushes surely sends HEAD's branch to origin (cp_sure). The gate reviews only a canonical push, and the pre-push
+# check (hooks/git-hook.sh) refuses a push with no pass however it started; blocking up front only saves running the commands
+# before the push, which would otherwise run first (claude-ship #349). So it blocks only when it is sure, and leaves every
+# other push to the pre-push check (claude-ship #354): a push to another remote, of another ref, a delete, `--all`, `--tags`, and
+# one whose directory isn't known. The repo is the one a `cd` names that is the only one in the tree, starts its statement's
+# `&&` chain (so it surely runs) and runs before every push (`cdlead`), else the session's (no `cd`, or only after the push); a
+# `cd` placed any other way (`cdunsure`) leaves it unknown. Whatever can't be read passes too (no git repo, no GitHub origin, an
+# unreadable or false CLAUDE_AUTONOMOUS, a `cd` that can't be entered): the pre-push check decides, as it did before.
+# Never returns.
 compound_push_gate() {
 	printf '%s\n' "$ptree" | grep -qx pushseen || exit 0
 	cp_all=$ptree
@@ -1166,20 +1232,20 @@ compound_push_gate() {
 	if [ -e "$cp_state/review-gate/$cp_head.pass" ] || [ -e "$cp_state/review-gate/$cp_head.waived" ]; then
 		exit 0
 	fi
-	# Pushes that are all tag pushes (tag_push) send no HEAD: the pre-push check judges the tag's commit, so they need no pass.
+	# Only a push that surely sends HEAD's branch to origin (cp_sure) is worth blocking: any other, a tag push included, is left to
+	# the pre-push check.
 	cp_n=$(printf '%s\n' "$cp_all" | sed -n 's/^pushn //p')
-	cp_tags=
-	case $cp_n in '' | *[!0-9]*) ;; *) [ "$cp_n" -gt 0 ] && cp_tags=1 ;; esac
+	case $cp_n in '' | *[!0-9]*) exit 0 ;; esac
+	cp_sure_k=
 	cp_i=0
-	while [ -n "$cp_tags" ] && [ "$cp_i" -lt "$cp_n" ]; do
-		ptree=$(printf '%s\n' "$cp_all" | sed -n "s/^pusharg $cp_i /a /p")
-		push_shape=ok
-		if printf '%s\n' "$cp_all" | grep -qx "pushbad $cp_i" || ! tag_push; then
-			cp_tags=
+	while [ "$cp_i" -lt "$cp_n" ]; do
+		if cp_sure "$cp_i"; then
+			cp_sure_k=1
+			break
 		fi
 		cp_i=$((cp_i + 1))
 	done
-	[ -z "$cp_tags" ] || exit 0
+	[ -n "$cp_sure_k" ] || exit 0
 	for cp_slug in $(push_slugs); do
 		case $cp_slug in '?'*) continue ;; esac
 		if cp_flag=$(autonomous "$cp_slug") && [ -n "$cp_flag" ]; then
