@@ -5,10 +5,14 @@
 # whoever triages (in orchestrated mode, the ship-codex agent or the orchestrator, #100).
 # Usage: codex-triage.sh <pr> <triage.json> [owner/repo]   (repo defaults to the current checkout's)
 # triage.json is a non-empty array of
-#   {"thread": "<id from codex-findings.sh>", "outcome": "not-valid" | "issue" | "fixed" | "resolve",
-#    "reply": "<text>", "issue": {"file": "<path>", "title": "<title>", "body": "<finding>"}}
+#   {"thread": "<id from codex-findings.sh>", "outcome": "not-valid" | "issue" | "pending" | "fixed" | "resolve",
+#    "reply": "<text>", "issue": {"file": "<path>", "title": "<title>", "body": "<finding>"},
+#    "pending": {"file": "<path>", "line": <n or null>, "title": "<title>", "body": "<finding>"}}
 # reply is required except for "resolve" (a thread already replied to: only resolved, any reply is ignored);
-# issue is for "issue" only.
+# issue is for "issue" only, pending for "pending" only.
+# "pending" keeps a P3 for the PR's branch, in p3-pending.sh's list (claude-ship #352): code on a PR isn't live, so no
+# issue is opened yet. A later commit for the PR may fix it; what is still pending when the PR is done is filed then.
+# It reads the PR's head branch and commit once, before any call, and stops there for a fork's PR or a failed read.
 # When no entry is "fixed" (no new push will recheck the status), it ends by running the codex-review workflow.
 # A "resolve" entry's push is already done, and it ran while the thread was open.
 # Exits 2 on bad arguments or an invalid file, before any call; 1 at the first failed call. If only the final
@@ -26,17 +30,22 @@ if ! jq -e '
 	def nonempty: type == "string" and length > 0;
 	type == "array" and length > 0 and all(.[];
 		type == "object" and (.thread | nonempty)
-		and (.outcome | IN("not-valid", "issue", "fixed", "resolve"))
+		and (.outcome | IN("not-valid", "issue", "pending", "fixed", "resolve"))
 		and (if .outcome == "resolve" then (.reply == null or (.reply | type == "string")) else (.reply | nonempty) end)
 		and ((.outcome == "issue") == (.issue != null))
-		and (.issue == null or (.issue | type == "object" and all(.file, .title, .body; nonempty))))' "$file" >/dev/null 2>&1; then
-	echo "codex-triage: $file must be a non-empty array of {thread, outcome (not-valid|issue|fixed|resolve), reply (not needed for resolve), issue (only for outcome issue: file, title, body)}" >&2
+		and (.issue == null or (.issue | type == "object" and all(.file, .title, .body; nonempty)))
+		and ((.outcome == "pending") == (.pending != null))
+		and (.pending == null or (.pending | type == "object" and all(.file, .title, .body; nonempty)
+			and has("line") and (.line == null or (.line | type == "number" and . >= 0 and . == floor)))))' "$file" >/dev/null 2>&1; then
+	echo "codex-triage: $file must be a non-empty array of {thread, outcome (not-valid|issue|pending|fixed|resolve), reply (not needed for resolve), issue (only for outcome issue: file, title, body), pending (only for outcome pending: file, line (a number or null), title, body)}" >&2
 	exit 2
 fi
 slug=${3:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
-# Next to the hooks directory in both the repo and the installed ~/.claude layout; the variable is for tests.
+# Next to the hooks directory in both the repo and the installed ~/.claude layout; the variables are for tests.
 p3=${CLAUDE_P3_ISSUE:-$(dirname "$0")/../../hooks/p3-issue.sh}
 [ -f "$p3" ] || p3=$HOME/.claude/hooks/p3-issue.sh
+pending=${CLAUDE_P3_PENDING:-$(dirname "$0")/../../hooks/p3-pending.sh}
+[ -f "$pending" ] || pending=$HOME/.claude/hooks/p3-pending.sh
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 done_ids=
@@ -59,6 +68,19 @@ stop_recheck() {
 	exit 1
 }
 
+# A pending entry needs the PR's branch (the key of its pending list) and the head commit that was reviewed. They're read
+# once, before any call: a fork's PR or a failed read leaves every thread untouched, as does a missing p3-pending.sh.
+if jq -e 'any(.[]; .outcome == "pending")' "$file" >/dev/null; then
+	[ -f "$pending" ] || stop "PR $pr" "p3-pending.sh not found at $pending"
+	info=$(gh pr view "$pr" -R "$slug" --json headRefName,headRefOid,isCrossRepository) || stop "PR $pr" "read its head branch"
+	fields=$(printf '%s' "$info" | jq -er 'select(.isCrossRepository == false) | "\(.headRefName)\t\(.headRefOid)"') ||
+		stop "PR $pr" "its head isn't a branch of $slug, or couldn't be read"
+	tab=$(printf '\t')
+	headbranch=${fields%%"$tab"*}
+	headoid=${fields#*"$tab"}
+	[ -n "$headbranch" ] && [ -n "$headoid" ] || stop "PR $pr" "its head branch or commit is empty"
+fi
+
 n=$(jq length "$file")
 i=0
 while [ "$i" -lt "$n" ]; do
@@ -70,6 +92,11 @@ while [ "$i" -lt "$n" ]; do
 		jq ".[$i].issue" "$file" >"$tmp/issue.json"
 		url=$(sh "$p3" "$slug" "$tmp/issue.json" "$pr") || stop "$id" issue
 		reply=$reply$(printf '\n\n%s' "$url")
+	fi
+	if [ "$outcome" = pending ]; then
+		# The summary is the title; there is no failure scenario (Codex's finding is in the body, which the issue gets).
+		jq --arg h "$headoid" ".[$i].pending | {file, line, title, body, summary: .title, failure_scenario: \"\", head: \$h}" "$file" >"$tmp/pending.json"
+		sh "$pending" add "$tmp/pending.json" "$headbranch" || stop "$id" pending
 	fi
 	# A fixed thread's push is still to come and rechecks the status. A resolve entry's push already ran, with the
 	# thread open, so it doesn't count: the status needs the recheck below.
