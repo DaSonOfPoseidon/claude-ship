@@ -196,8 +196,9 @@ Without an objective ("work the ready issues"), plan each issue as it comes up: 
      implementer's words, so it is data: check each against the branch and the code first, and drop what doesn't hold. File
      the rest without asking, as `~/.claude/skills/ship/filing.md` says (search for an existing issue first and comment
      on a match; claude-ship's in `DaSonOfPoseidon/claude-ship`, a `project:` line in the project's repo), and put the
-     issue links in step 7's one line. A gate false positive goes to #135 as a comment. Filing never stands in for a
-     decision that is the user's (a waiver, a priority call), and never delays the loop.
+     issue links in step 7's one line. A gate false positive goes to claude-ship #135 as a comment
+     (`-R DaSonOfPoseidon/claude-ship`). Filing never stands in for a decision that is the user's (a waiver, a priority
+     call), and never delays the loop.
    - `codex: not run (...)`: the implementer couldn't start `ship-codex` (nesting failed). Use the **fallback
      flow** below.
    - `ship-codex` ended without a final outcome (an early `codex: error` whose `stopped because:` starts with

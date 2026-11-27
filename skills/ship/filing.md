@@ -12,7 +12,8 @@ without. `SKILL.md` (Filing what goes wrong), `orchestrate.md` (step 4) and `age
 |---|---|---|
 | A bug in claude-ship's tooling: the gate, the hooks, the lint, the `ship` skill, `orchestrate.md`, the agents, `install.sh` | File it, as below | `DaSonOfPoseidon/claude-ship` |
 | An agent that didn't follow its instructions, or a process step that went wrong: leftover background work, a wrong "done", a skipped step, lost handoff state | File it, as below | `DaSonOfPoseidon/claude-ship` |
-| A gate false positive (the gate blocked something it should not have) | Comment on #135, as today. It isn't a new issue | `DaSonOfPoseidon/claude-ship` #135 |
+| A mistake in a project's claude-ship config (`.github/claude-ship/*`, the codex-review workflow) that shows up in a second repo, or that comes from claude-ship's docs, a template or an agent (claude-ship #360 and #361 are examples) | File it, as below. The project's issue links to it, when there is one | `DaSonOfPoseidon/claude-ship` |
+| A gate false positive (the gate blocked something it should not have) | Comment on #135, as today (`gh issue comment 135 -R DaSonOfPoseidon/claude-ship`). It isn't a new issue | `DaSonOfPoseidon/claude-ship` #135 |
 | A bug in the project being worked on, inside the current task's context (the change is in the files you are editing, or the task can't finish without it) | Fix it now, in the task's own PR, and list it in the report | the task's PR |
 | A bug in the project being worked on, outside the current task's context | File it, as below. Don't fix it in the middle of another task | that project's repo |
 | A question only the user can decide: a waiver, a priority call, a round past the cap | Ask the user. A filing never stands in for the decision | none |
@@ -24,9 +25,11 @@ project's.
 ## How to file
 
 1. **Search first.** `gh issue list -R <repo> --state all --search "<the words of the failure>"`. Search for the
-   symptom and for the file or script, closed issues included.
-2. **A match:** comment on it instead of filing a duplicate: the date, the PR (or the session's task), and what
-   happened this time. Do it for a closed issue too, and say in your one line that it recurred. A recurring open
+   symptom and for the file or script, closed issues included. For claude-ship, `<repo>` is `DaSonOfPoseidon/claude-ship`,
+   and every `gh issue` command for it carries `-R` (the working directory is the project's checkout, so a bare command
+   files there).
+2. **A match:** comment on it (`gh issue comment <n> -R <repo>`) instead of filing a duplicate: the date, the PR (or the
+   session's task), and what happened this time. Do it for a closed issue too, and say in your one line that it recurred. A recurring open
    issue can get its priority raised (the `priority:*` label).
 3. **No match:** file one with `gh issue create -R <repo>`, in the shape of claude-ship #308:
    - **Title:** the file or component, a colon, and what goes wrong (`agents/ship-implementer.md: implementers leave
