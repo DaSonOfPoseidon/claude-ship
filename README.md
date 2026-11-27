@@ -304,7 +304,9 @@ If no label is a type (`bug`, `documentation`, `enhancement`, `type:*`), `CLAUDE
 Labels the repo doesn't have are skipped. Give every path its triage labels (an area per path, and a `*` rule
 for priority and status), because the PR loop only picks up labeled issues. With `CLAUDE_P3_MILESTONE=auto`, the
 issue goes in the milestone of the branch's open PR, else of the one milestone its commits' `fixes #N` issues
-share, else none.
+share, else none. A P3 on `.github/workflows/codex-review.yml`, when the copy is byte-identical to claude-ship's template
+(`skills/ship/templates/codex-review.yml`), is a bug in the template: it is filed in claude-ship instead, with no
+milestone and without naming a private repo (`docs/scripts.md` › `hooks/p3-issue.sh`).
 
 The repo then needs `AGENTS.md` › `## Code Review Rules` (the skill's bootstrap writes it). Codex reads the
 same section. An optional `### Path rules` subsection of it gives per-path instructions in a fenced block, one
