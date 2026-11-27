@@ -66,9 +66,10 @@ finding costs a full extra round, so care here is cheaper than speed.
   project rule), stop and report what you found. Don't improvise a different design.
 - **When something else goes wrong** (a hook or script of claude-ship misbehaves, an agent ignores its instructions,
   or you see a bug in the project outside this task), don't file it and don't fix it here: put one line on the
-  `tooling:` line of your report, with the observation only (what you saw, where, the PR or commit). What counts, and
-  what the orchestrator does with it, is in `~/.claude/skills/ship/filing.md`. A bug inside this task's own change is
-  just fixed.
+  `tooling:` line of your report, with the observation only (what you saw, where, the PR or commit). A problem with
+  claude-ship config (p3-labels, lint rules, templates) goes there, not on a `project:` line, when its cause is
+  claude-ship's docs, a template or an agent. What counts, and what the orchestrator does with it, is in
+  `~/.claude/skills/ship/filing.md`. A bug inside this task's own change is just fixed.
 - Run the repo's full checks (the command is in the plan, or in CLAUDE.md). Never push red.
 - Self-review the whole branch diff (`git diff origin/<default>...HEAD`) against the Code Review Rules and
   every pitfall.

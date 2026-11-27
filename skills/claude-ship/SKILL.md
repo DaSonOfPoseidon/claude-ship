@@ -224,6 +224,7 @@ finding moves the gap somewhere else, and each move costs a round (OBDCracker #1
 A bug in claude-ship's own tooling (the gate, the hooks, the lint, this skill, the agents, `install.sh`), an agent that
 didn't follow its instructions, or a process step that went wrong (leftover background work, a wrong "done", a skipped
 step) is filed as an issue in `DaSonOfPoseidon/claude-ship` without asking, and the user gets one line about it. A bug in
-the project being worked on is fixed now when it belongs to the task, and otherwise filed in that project's repo. What
-counts, the search for an existing issue first, the issue's shape and labels, and what stays with the user (waivers,
-priorities; gate false positives go to #135) are in `~/.claude/skills/ship/filing.md`.
+the project being worked on is fixed now when it belongs to the task, and otherwise filed in that project's repo. Every
+`gh issue` command for claude-ship carries `-R DaSonOfPoseidon/claude-ship`, since the working directory is the project's
+checkout. What counts, the search for an existing issue first, the issue's shape and labels, and what stays with the user
+(waivers, priorities; gate false positives go to claude-ship #135) are in `~/.claude/skills/ship/filing.md`.
