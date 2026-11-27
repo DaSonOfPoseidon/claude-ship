@@ -19,10 +19,21 @@ cat >"$tmp/bin/gh" <<EOF
 #!/bin/sh
 case "\$1 \$2" in
 "variable get") eval "[ -n \"\\\${V_\$3+x}\" ] && echo \"\\\$V_\$3\"" ;;
-"repo view") echo main ;;
+"repo view")
+	# --json isPrivate answers REPO_PRIVATE (false unless set; REPO_PRIVATE=fail makes gh fail), any other read the
+	# default branch.
+	case " \$* " in
+	*" isPrivate "*)
+		[ "\${REPO_PRIVATE:-}" != fail ] || exit 1
+		echo "\${REPO_PRIVATE:-false}" ;;
+	*) echo main ;;
+	esac ;;
 "label list") cat "$tmp/labels" ;;
 "api -i")
-	case " \$* " in *" repos/acme/app/contents/.github/claude-ship/p3-labels "*) ;; *) exit 1 ;; esac
+	case " \$* " in
+	*" repos/acme/app/contents/.github/claude-ship/p3-labels "* | *" repos/"*"/"[Cc]laude-[Ss]hip"/contents/.github/claude-ship/p3-labels "*) ;;
+	*) exit 1 ;;
+	esac
 	if [ "\${MAP_STATUS:-}" = 500 ]; then
 		printf 'HTTP/2.0 500 Internal Server Error\\r\\nContent-Type: application/json\\r\\n\\r\\n{"message":"Server Error"}\\n'
 		exit 1
@@ -37,6 +48,12 @@ case "\$1 \$2" in
 	fi
 	printf 'HTTP/2.0 200 OK\\r\\nContent-Type: application/vnd.github.raw\\r\\n\\r\\n'
 	cat "$tmp/map" ;;
+"api repos/"*)
+	# A raw read of the project's workflow at the PR's head (what p3-issue.sh compares with the template): COPY_FILE
+	# is what the contents API serves for ref=abc123, anything else (or a COPY_FAIL) fails as gh does on a 404.
+	[ -z "\${COPY_FAIL:-}" ] || exit 1
+	[ "\$2" = "repos/acme/app/contents/.github/workflows/codex-review.yml?ref=abc123" ] || exit 1
+	cat "\${COPY_FILE:?}" ;;
 "pr list")
 	# gh pr list ... --json milestone,isCrossRepository --jq <expr>: PR_MS is the milestone of one PR of this
 	# repository, PR_JSON the whole list instead (a fork's PR among it), and PR_FAIL makes gh fail. The caller's own
@@ -57,6 +74,7 @@ case "\$1 \$2" in
 	# gh pr view <pr> -R slug --json milestone|commits --jq ...: PRV_MS is the PR's milestone, PRV_COMMITS its
 	# commit messages (one per line, the way the --jq prints them).
 	case " \$* " in
+	*" headRefOid "*) [ -z "\${OID_FAIL:-}" ] && echo abc123 ;;
 	*" milestone "*) echo "\${PRV_MS:-}" ;;
 	*" commits "*) printf '%s\n' "\${PRV_COMMITS:-}" ;;
 	*) exit 1 ;;
@@ -96,8 +114,9 @@ scripts/*                       area:ci,area:typo
 docs/special.md                 area:ci
 late/special.md                 area:ci
 late/*                          area:docs,documentation
+skills/*                        area:core
 
-*                               status:ready
+*                             status:ready
 EOF
 repo=$tmp/repo
 git init -q -b main "$repo"
@@ -321,6 +340,100 @@ PR_MS=X expect src/x.c review:p3,milestone:later,status:ready ''
 P3_DIR=$repo PR_MS=X expect src/x.c review:p3,milestone:later,status:ready ''
 P3_DIR=$repo MS_3=Y expect src/x.c review:p3,milestone:later,status:ready ''
 unset P3_PR P3_DIR
+
+# An unedited copy of claude-ship's template (the only file the bootstrap copies verbatim) is a bug in the template, so
+# it is filed in claude-ship, under the template's path and labels, with no milestone and no private repo name. An
+# edited copy, any other file, a slug that is claude-ship and a failed read stay as they are.
+tpl=$root/skills/ship/templates/codex-review.yml
+wf=.github/workflows/codex-review.yml
+twant=skills/ship/templates/codex-review.yml
+# mkcopy <dir> <file>: a checkout whose HEAD holds <file> as the workflow.
+mkcopy() {
+	git init -q -b main "$1"
+	mkdir -p "$1/.github/workflows"
+	cp "$2" "$1/$wf"
+	echo hi >"$1/docs.md"
+	git -C "$1" add -A
+	git -C "$1" -c user.name=t -c user.email=t@t commit -q -m copy
+}
+mkcopy "$tmp/same" "$tpl"
+cp "$tpl" "$tmp/edited.yml"
+echo '# ours' >>"$tmp/edited.yml"
+mkcopy "$tmp/edit" "$tmp/edited.yml"
+# Command substitution would drop the last newline: a copy without it is a different file.
+printf '%s' "$(cat "$tpl")" >"$tmp/nonl.yml"
+mkcopy "$tmp/nonl" "$tmp/nonl.yml"
+# What the fake contents API serves for the PR's head.
+export COPY_FILE=$tpl
+# tfile <file> <title>: files it from P3_DIR (the identical copy's checkout by default) in P3_SLUG (acme/app), and
+# leaves what it was filed with in $tmp/args.
+tfile() {
+	jq -n --arg f "$1" --arg t "$2" '{file: $f, title: $t, body: "b > c"}' >"$tmp/finding.json"
+	rm -f "$tmp/args"
+	(cd "${P3_DIR:-$tmp/same}" && PATH=$tmp/bin:$PATH sh "$root/hooks/p3-issue.sh" "${P3_SLUG:-acme/app}" "$tmp/finding.json" ${P3_PR:+"$P3_PR"}) >"$tmp/out" 2>"$tmp/err" || {
+		echo "FAIL: $1 wasn't filed ($2)"
+		sed 's/^/  /' "$tmp/err"
+		fail=1
+		return 1
+	}
+}
+argof() { grep -A1 -x -- "$1" "$tmp/args" | sed -n 2p; }
+# tcheck <what> <slug> <title> <first body line> <milestone> [<labels>]: what the last tfile filed.
+tcheck() {
+	want_labels=${6-}
+	got_body=$(grep -A1 -x -- --body "$tmp/args" | sed -n 2p)
+	got_labels=$(grep -A1 -x -- --label "$tmp/args" | grep -vx -e --label -e -- | paste -sd, -)
+	if [ "$(argof -R)" != "$2" ] || [ "$(argof --title)" != "$3" ] || [ "$got_body" != "$4" ] ||
+		[ "$(argof --milestone)" != "$5" ] || { [ -n "$want_labels" ] && [ "$got_labels" != "$want_labels" ]; }; then
+		echo "FAIL: $1: filed in '$(argof -R)' as '$(argof --title)', body '$got_body', milestone '$(argof --milestone)', labels '$got_labels'"
+		echo "      want '$2' '$3' '$4' '$5' '$want_labels'"
+		fail=1
+	fi
+}
+own='b > c'
+labels_t=review:p3,milestone:later,area:core,status:ready
+from='Filed from an unedited copy in acme/app.'
+# Without a PR the copy is the checkout's HEAD. CLAUDE_P3_MILESTONE is auto here, and still no milestone is looked up.
+tfile "$wf" "$wf: bad trigger" &&
+	tcheck "identical copy" DaSonOfPoseidon/claude-ship "$twant: bad trigger" "$from" '' "$labels_t"
+# A private repo's name never reaches claude-ship: not when gh says so, and not when it can't say.
+for priv in true fail; do
+	REPO_PRIVATE=$priv tfile "$wf" "$wf: bad trigger" &&
+		tcheck "identical copy of a private repo ($priv)" DaSonOfPoseidon/claude-ship "$twant: bad trigger" 'Filed from an unedited copy in a private repo.' ''
+	grep -q acme/app "$tmp/args" && {
+		echo "FAIL: the private repo's name reached the issue ($priv)"
+		fail=1
+	}
+done
+# A title that doesn't start with the path stays as it is.
+tfile "$wf" "weak pin in the workflow" &&
+	tcheck "title without the path" DaSonOfPoseidon/claude-ship "weak pin in the workflow" "$from" ''
+# With a PR the copy is the one at the PR's head on GitHub, from any checkout, and the PR's milestone isn't used.
+(
+	export P3_PR=7 P3_DIR=$tmp/elsewhere PRV_MS=X
+	tfile "$wf" "$wf: bad trigger" &&
+		tcheck "identical copy at the PR's head" DaSonOfPoseidon/claude-ship "$twant: bad trigger" "$from" '' "$labels_t"
+	# The same file, edited at the head: the project's, with the PR's milestone.
+	COPY_FILE=$tmp/edited.yml tfile "$wf" "$wf: bad trigger" &&
+		tcheck "edited copy at the PR's head" acme/app "$wf: bad trigger" "$own" X
+	# A failed read of the head or of the file is the project's too, filed as before.
+	OID_FAIL=1 tfile "$wf" "$wf: bad trigger" && tcheck "failed head lookup" acme/app "$wf: bad trigger" "$own" X
+	COPY_FAIL=1 tfile "$wf" "$wf: bad trigger" && tcheck "failed file read" acme/app "$wf: bad trigger" "$own" X
+	: >"$tmp/empty.yml"
+	COPY_FILE=$tmp/empty.yml tfile "$wf" "$wf: bad trigger" && tcheck "empty file" acme/app "$wf: bad trigger" "$own" X
+	exit "$fail"
+) || fail=1
+# Edited by a line or by the last newline, not in the table, no copy at HEAD, and claude-ship's own slug.
+P3_DIR=$tmp/edit tfile "$wf" "$wf: bad trigger" && tcheck "edited copy" acme/app "$wf: bad trigger" "$own" ''
+P3_DIR=$tmp/nonl tfile "$wf" "$wf: bad trigger" && tcheck "copy without its last newline" acme/app "$wf: bad trigger" "$own" ''
+tfile docs.md "docs.md: x" && tcheck "file not in the table" acme/app "docs.md: x" "$own" ''
+P3_DIR=$repo tfile "$wf" "$wf: bad trigger" && tcheck "no copy at HEAD" acme/app "$wf: bad trigger" "$own" ''
+P3_SLUG=DaSonOfPoseidon/claude-ship tfile "$wf" "$wf: bad trigger" &&
+	tcheck "claude-ship's own copy" DaSonOfPoseidon/claude-ship "$wf: bad trigger" "$own" ''
+P3_SLUG=dasonofposeidon/Claude-Ship tfile "$wf" "$wf: bad trigger" &&
+	tcheck "claude-ship in another case" dasonofposeidon/Claude-Ship "$wf: bad trigger" "$own" ''
+CLAUDE_SHIP_SLUG=acme/app tfile "$wf" "$wf: bad trigger" && tcheck "CLAUDE_SHIP_SLUG names the slug" acme/app "$wf: bad trigger" "$own" ''
+unset COPY_FILE
 
 [ "$fail" = 0 ] && echo "p3-issue: ok"
 exit "$fail"

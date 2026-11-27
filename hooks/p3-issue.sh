@@ -25,6 +25,54 @@ file=$(jq -er .file "$2") && title=$(jq -er .title "$2") && body=$(jq -er .body 
 	exit 1
 }
 
+# An unedited copy of a file that claude-ship's bootstrap copies verbatim (the table below: the project's path, then the
+# template's) is a bug in the template, so its finding goes to claude-ship, not the project (claude-ship's own repo, or
+# CLAUDE_SHIP_SLUG). The copy is the PR head's on GitHub with a PR, else the cwd's HEAD (the gate), and counts only if it
+# matches the template byte for byte; the template is read from the install or the repo (hooks/ and skills/ sit side by
+# side in both). Anything else, a failed read included, files in the project as before. The routed issue is public: it
+# names the source repo only when gh says it isn't private, takes the template's path (and so its labels), and has no
+# milestone, since the project's means nothing in claude-ship.
+retargeted=
+tpl=
+case $file in
+.github/workflows/codex-review.yml) tpl=skills/ship/templates/codex-review.yml ;;
+esac
+ship=${CLAUDE_SHIP_SLUG:-DaSonOfPoseidon/claude-ship}
+
+# unedited: succeeds when the project's copy of $file is byte-identical to the template.
+unedited() {
+	tpldir=$(cd "$(dirname "$0")/../skills/ship/templates" 2>/dev/null && pwd) && [ -f "$tpldir/${tpl##*/}" ] || return 1
+	copy=$(mktemp "${TMPDIR:-/tmp}/p3-issue.XXXXXX") || return 1
+	if [ -n "$pr" ]; then
+		oid=$(gh pr view "$pr" -R "$slug" --json headRefOid --jq .headRefOid 2>/dev/null)
+		case $oid in
+		'' | *[!0-9a-f]*) oid= ;;
+		esac
+		[ -n "$oid" ] && gh api "repos/$slug/contents/$file?ref=$oid" -H 'Accept: application/vnd.github.raw' >"$copy" 2>/dev/null
+	else
+		git show "HEAD:$file" >"$copy" 2>/dev/null
+	fi && cmp -s "$copy" "$tpldir/${tpl##*/}"
+	same=$?
+	rm -f "$copy"
+	return "$same"
+}
+
+if [ -n "$tpl" ] && [ "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ship" | tr '[:upper:]' '[:lower:]')" ] && unedited; then
+	# Named only when gh says it is public: a failed lookup must not leak a private repo's name.
+	where="a private repo"
+	[ "$(gh repo view "$slug" --json isPrivate --jq .isPrivate 2>/dev/null)" = false ] && where=$slug
+	case $title in
+	"$file"*) title=$tpl${title#"$file"} ;;
+	esac
+	body="Filed from an unedited copy in $where.
+
+$body"
+	slug=$ship
+	file=$tpl
+	pr=
+	retargeted=1
+fi
+
 var() {
 	gh variable get "$1" -R "$slug" 2>/dev/null
 }
@@ -32,7 +80,7 @@ var() {
 # The default branch's remote ref, as GitHub names the branch, fetched; empty if either fails. Only the milestone's
 # commit range uses it.
 base=
-if main=$(gh repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) &&
+if [ -z "$retargeted" ] && main=$(gh repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null) &&
 	git check-ref-format "refs/heads/$main" && git fetch -q origin "+refs/heads/$main:refs/remotes/origin/$main" 2>/dev/null; then
 	base=refs/remotes/origin/$main
 fi
@@ -143,7 +191,7 @@ fixed_milestone() {
 }
 
 milestone=
-if [ "$(var CLAUDE_P3_MILESTONE)" = auto ]; then
+if [ -z "$retargeted" ] && [ "$(var CLAUDE_P3_MILESTONE)" = auto ]; then
 	if [ -n "$pr" ]; then
 		# From GitHub only: the cwd's branch and commits can be any checkout's. A failed lookup is no milestone, as
 		# for the branch's (the issue is still filed).

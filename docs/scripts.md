@@ -545,6 +545,14 @@ reads a command naming `~/.claude/hooks` with a `>` anywhere in it as a write.
   filed without its area and status labels never reaches the PR loop's queue (claude-ship #179). The status is
   the response's own status line (`gh api -i`), not a match on the error text, and a 200 counts only if `gh`
   exited 0 as well (a body cut short leaves the headers and part of the map).
+- **An unedited template copy goes to claude-ship.** The bootstrap copies `skills/ship/templates/codex-review.yml` to
+  `.github/workflows/codex-review.yml` verbatim, so a finding on that file, when the project's copy matches the
+  template byte for byte, is a bug in the template and not the project's. It is filed in claude-ship
+  (`DaSonOfPoseidon/claude-ship`, or `CLAUDE_SHIP_SLUG`) with the template's path in the title and for the label map,
+  no milestone, and a first body line `Filed from an unedited copy in <repo>.` (`a private repo` unless `gh` says the
+  repo is public, so the public issue never names a private repo). The copy is the PR head's file on GitHub when the PR
+  is given, else `git show HEAD:<file>` in the cwd (the gate). An edited copy, any other file, claude-ship's own repo,
+  or a read that fails (the head, the file or the template) files in the project as before.
 - **Never lost to its labels.** If filing fails, it retries without the milestone, then without labels.
 
 ## `hooks/p3-pending.sh`
